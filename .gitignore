@@ -1,7 +1,7 @@
 node_modules/
 .next/
 data/
-profile/
+profile/*
 !profile/profile.example.yaml
 .env
 *.tsbuildinfo

@@ -1,0 +1,18 @@
+# JobSeeker OS 用户档案 — 复制为 profile.yaml 并填入真实信息
+name: ""
+email: ""
+phone: ""
+linkedin: ""
+github: ""
+school: ""
+degree: ""
+grad_date: ""            # YYYY-MM
+work_auth:
+  status: ""             # 如 F-1 / citizen / H1B
+  needs_sponsorship: true
+targets:
+  primary: newgrad       # newgrad | intern
+  secondary: intern
+directions:              # 方向 slug: 梯队
+  swe_general: 1
+daily_minutes_budget: 90
