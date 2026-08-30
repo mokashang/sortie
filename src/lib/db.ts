@@ -2,9 +2,13 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 
-const SCHEMA = fs.readFileSync(path.join(process.cwd(), "src/lib/schema.sql"), "utf8");
-
 export type DB = Database.Database;
+
+// Read lazily (inside openDb, not at module import time) so importing this module never
+// touches the filesystem on its own — safe under Next's various build/runtime bundling modes.
+function readSchema(): string {
+  return fs.readFileSync(path.join(process.cwd(), "src/lib/schema.sql"), "utf8");
+}
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -14,14 +18,16 @@ export function openDb(file?: string): DB {
   const db = new Database(dbFile);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.exec(SCHEMA);
+  db.pragma("user_version = 1"); // migration hook for later plans
+  db.exec(readSchema());
   return db;
 }
 
-let singleton: DB | null = null;
+// Hang the singleton on globalThis (rather than a module-scoped variable) so it survives
+// Next dev's Fast Refresh / HMR module re-evaluation instead of silently reopening the db.
+const globalForDb = globalThis as unknown as { __jsdb?: DB };
 export function getDb(): DB {
-  if (!singleton) singleton = openDb();
-  return singleton;
+  return (globalForDb.__jsdb ??= openDb());
 }
 
 export function logEvent(

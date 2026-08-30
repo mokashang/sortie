@@ -13,4 +13,16 @@ describe("fingerprint", () => {
   it("tolerates missing location", () => {
     expect(fingerprint("A", "B", null)).toBe(fingerprint("A", "B", ""));
   });
+
+  it("collides accented and unaccented company names (NFKD diacritic strip)", () => {
+    expect(fingerprint("Nestlé", "Data Scientist", "Vevey")).toBe(
+      fingerprint("Nestle", "Data Scientist", "Vevey")
+    );
+  });
+
+  it("does not collide different Japanese company names (widened unicode keep-class)", () => {
+    expect(fingerprint("日本電気株式会社", "エンジニア", "東京")).not.toBe(
+      fingerprint("株式会社日立製作所", "エンジニア", "東京")
+    );
+  });
 });

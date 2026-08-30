@@ -2,8 +2,10 @@ import crypto from "crypto";
 
 function norm(s: string | null | undefined): string {
   return (s ?? "")
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
-    .replace(/[^a-z0-9一-鿿]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\b(inc|llc|ltd|corp|co)\b/g, "")
     .trim()
     .replace(/\s+/g, " ");

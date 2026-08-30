@@ -103,3 +103,8 @@ CREATE TABLE IF NOT EXISTS profile (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at);
+
+CREATE TRIGGER IF NOT EXISTS trg_applications_updated AFTER UPDATE ON applications
+BEGIN
+  UPDATE applications SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
