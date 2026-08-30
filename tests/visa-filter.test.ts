@@ -52,4 +52,38 @@ describe("visaFlag", () => {
       visaFlag("Applicants must be U.S. citizens. We are unable to sponsor visas for this role.")
     ).toBe("no_sponsor");
   });
+
+  // Round 2 review: NO_SPONSOR was over-broad — bare "no"/"not" within 60 chars of "sponsor*"
+  // across newlines/clauses produced false positives. These must all stay null.
+  it("does not flag no_sponsor from unrelated 'no'/'not' near 'sponsor' across lines or clauses", () => {
+    expect(visaFlag("No prior experience required\n- We happily sponsor H-1B visas")).toBeNull();
+    expect(visaFlag("- No agencies please\n- We provide visa sponsorship")).toBeNull();
+    expect(
+      visaFlag("Benefits include:\n- Unlimited PTO, no questions asked\n- Full visa sponsorship")
+    ).toBeNull();
+    expect(
+      visaFlag("We are not just another startup - we sponsor visas and support green cards.")
+    ).toBeNull();
+    expect(
+      visaFlag("We can sponsor visas for candidates who do not require immediate sponsorship.")
+    ).toBeNull();
+  });
+
+  // Round 2 review: CLEARANCE was too narrow — missed bare "Secret"/"Top Secret" clearance
+  // mentions and TS/SCI-with-polygraph phrasing that has no literal "clearance" word.
+  it("flags clearance for bare Secret/Top Secret/TS-SCI requirement phrasing", () => {
+    expect(visaFlag("Secret clearance required.")).toBe("clearance");
+    expect(visaFlag("Top Secret clearance required.")).toBe("clearance");
+    expect(visaFlag("Active Secret clearance required.")).toBe("clearance");
+    expect(visaFlag("TS/SCI clearance required.")).toBe("clearance");
+    expect(visaFlag("Requires an active TS/SCI with polygraph.")).toBe("clearance");
+    expect(visaFlag("This position requires a current Top Secret clearance.")).toBe("clearance");
+  });
+
+  it("still returns null for clearance mentions that are explicitly not required", () => {
+    expect(visaFlag("No security clearance is required")).toBeNull();
+    expect(visaFlag("clearance not required")).toBeNull();
+    expect(visaFlag("Ability to obtain a security clearance is a plus")).toBeNull();
+    expect(visaFlag("Must have a strong background; clearance not required")).toBeNull();
+  });
 });

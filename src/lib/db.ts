@@ -6,9 +6,18 @@ export type DB = Database.Database;
 
 // Read lazily (inside openDb, not at module import time) so importing this module never
 // touches the filesystem on its own — safe under Next's various build/runtime bundling modes.
+// Resolve module-relative first (works regardless of process.cwd()); fall back to a
+// cwd-relative path for bundling contexts where the module-relative URL doesn't resolve to
+// the actual file on disk.
 function readSchema(): string {
-  return fs.readFileSync(path.join(process.cwd(), "src/lib/schema.sql"), "utf8");
+  try {
+    return fs.readFileSync(new URL("./schema.sql", import.meta.url), "utf8");
+  } catch {
+    return fs.readFileSync(path.join(process.cwd(), "src/lib/schema.sql"), "utf8");
+  }
 }
+
+const SCHEMA_VERSION = 1;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -18,8 +27,16 @@ export function openDb(file?: string): DB {
   const db = new Database(dbFile);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.pragma("user_version = 1"); // migration hook for later plans
+
+  // Migration hook: read the schema version actually on disk before touching it, so future
+  // plans can branch on `found` to run incremental migrations instead of blindly overwriting.
+  const found = db.pragma("user_version", { simple: true }) as number;
   db.exec(readSchema());
+  if (found < SCHEMA_VERSION) {
+    // migrations from `found` will go here in later plans
+  }
+  db.pragma(`user_version = ${SCHEMA_VERSION}`);
+
   return db;
 }
 

@@ -1,4 +1,8 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import Database from "better-sqlite3";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { openDb, getDb, logEvent } from "@/lib/db";
 
 describe("db", () => {
@@ -50,6 +54,36 @@ describe("db", () => {
   it("sets user_version as a migration hook for future plans", () => {
     const db = openDb(":memory:");
     expect(db.pragma("user_version", { simple: true })).toBe(1);
+  });
+
+  it("reads user_version before stamping it (read-then-stamp, not a blind unconditional write)", () => {
+    const spy = vi.spyOn(Database.prototype, "pragma");
+    try {
+      openDb(":memory:");
+      const calls = spy.mock.calls.map((c) => c[0]);
+      const readIdx = calls.indexOf("user_version");
+      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*1$/.test(c));
+      expect(readIdx).toBeGreaterThanOrEqual(0);
+      expect(writeIdx).toBeGreaterThan(readIdx);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("resolves schema.sql relative to the module, not the process cwd", () => {
+    const originalCwd = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobseeker-cwd-"));
+    try {
+      process.chdir(tmpDir);
+      const db = openDb(":memory:");
+      const row = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
+        .get();
+      expect(row).toBeTruthy();
+    } finally {
+      process.chdir(originalCwd);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("keeps applications.updated_at fresh via an AFTER UPDATE trigger", () => {
