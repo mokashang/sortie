@@ -1,0 +1,8 @@
+node_modules/
+.next/
+data/
+profile/
+!profile/profile.example.yaml
+.env
+*.tsbuildinfo
+next-env.d.ts
