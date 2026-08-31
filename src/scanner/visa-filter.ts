@@ -14,7 +14,10 @@ const NO_SPONSOR = [
   // require immediate sponsorship" (negation binds to "require", and the only sponsor-word
   // present is the noun "sponsorship", which this pattern structurally can't reach) null,
   // while "unable to sponsor visas" (verb form present) still flags.
-  /\b(?:do(?:es)? not|will not|cannot|can ?not|won'?t|unable to)\b[^.\n;]{0,20}\bsponsor(?:s|ing|ed)?\b/i,
+  // "not able to" / "not eligible to" require the trailing "to" so they bind to the bare
+  // sponsor VERB ("not able to sponsor") without colliding with "not eligible for ...
+  // sponsorship", which its own companion pattern below handles.
+  /\b(?:do(?:es)? not|will not|cannot|can ?not|won'?t|unable to|not able to|not eligible to)\b[^.\n;]{0,20}\bsponsor(?:s|ing|ed)?\b/i,
   // "sponsorship ... not available/offered/provided/possible/supported"
   /\bsponsorship\b[^.\n;]{0,15}\bnot\s+(?:available|offered|provided|possible|supported)\b/i,
   // bare "no [visa/employment] sponsorship"
@@ -52,6 +55,11 @@ const CITIZEN_ONLY = [
 // lookbehind almost always appears elsewhere in the same sentence anyway, so the
 // trigger-anchored pattern below already catches these cases.
 const CLEARANCE = [
+  // The {0,45} lookbehind window is a deliberate trade-off: a softener word anywhere in the
+  // preceding 45 chars of the same clause suppresses the flag, which can under-flag compound
+  // sentences ("Rust is a plus and an active Secret clearance is required"). That failure
+  // direction is the safe one for a discard-filter — a missed flag costs one wasted
+  // application; a false flag silently hides a job the user could take. Don't tighten it.
   /(?<!\b(?:no|not|n't|without|preference|preferred|ideally|desirable|plus|nice to have|bonus)\b[^.\n;]{0,45})\b(?:ts\/sci|top secret|secret|security)\b[^.\n;]{0,20}\bclearance\b(?![^.\n;]{0,25}\b(?:not required|not necessary|is a plus|preferred)\b)/i,
   // "must have/hold/possess/be able to obtain ... clearance" — same clause only.
   /\bmust (?:have|hold|possess|be able to obtain)\b[^.\n;]{0,40}\bclearance\b/i,

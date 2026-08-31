@@ -28,6 +28,9 @@ const MUST_FLAG: [string, VisaFlag][] = [
   ["We will not be able to sponsor candidates for this role.", "no_sponsor"],
   ["No visa sponsorship.", "no_sponsor"],
   ["Sponsorship unavailable.", "no_sponsor"],
+  ["We are not able to sponsor at this time.", "no_sponsor"],
+  ["We are not able to sponsor candidates.", "no_sponsor"],
+  ["Applicants are not eligible to sponsor.", "no_sponsor"],
 
   // --- citizen_only ---
   ["Applicants must be U.S. citizens", "citizen_only"],
