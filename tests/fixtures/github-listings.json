@@ -28,5 +28,32 @@
     "is_visible": true,
     "sponsorship": "Does Not Offer Sponsorship",
     "date_posted": 1756500000
+  },
+  {
+    "company_name": "Fortknox",
+    "title": "Systems Engineer, New Grad",
+    "locations": ["Washington, DC"],
+    "url": "https://fortknox.example/apply",
+    "active": true,
+    "is_visible": true,
+    "sponsorship": "U.S. Citizenship is Required",
+    "date_posted": 1787961600
+  },
+  {
+    "company_name": "Ghostly",
+    "title": "Rotational Engineering Program",
+    "url": "https://ghostly.example/apply",
+    "active": true,
+    "is_visible": true
+  },
+  {
+    "company_name": "Baddate",
+    "title": "Software Engineer, New Grad",
+    "locations": ["Remote"],
+    "url": "https://baddate.example/apply",
+    "active": true,
+    "is_visible": true,
+    "sponsorship": "Offers Sponsorship",
+    "date_posted": "n/a"
   }
 ]

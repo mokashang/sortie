@@ -14,5 +14,19 @@
     "createdAt": 1756400000000,
     "categories": { "location": "NYC" },
     "descriptionPlain": "10y+."
+  },
+  {
+    "id": "ab3",
+    "text": "Software Engineer - New Grad (Shape Drift)",
+    "hostedUrl": "https://jobs.lever.co/acme/ab3",
+    "createdAt": 1787875200000
+  },
+  {
+    "id": "ab4",
+    "text": "Software Engineer - New Grad (Bad Date)",
+    "hostedUrl": "https://jobs.lever.co/acme/ab4",
+    "createdAt": "n/a",
+    "categories": { "location": "Remote" },
+    "descriptionPlain": "Ship code."
   }
 ]

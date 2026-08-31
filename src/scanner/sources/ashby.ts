@@ -16,7 +16,7 @@ export async function fetchAshby(
   fetcher: Fetcher = fetch
 ): Promise<RawJob[]> {
   const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(boardName)}?includeCompensation=false`;
-  const res = await fetcher(url);
+  const res = await fetcher(url, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`ashby ${boardName}: HTTP ${res.status}`);
   const data = (await res.json()) as { jobs: AshbyJob[] };
   return (data.jobs ?? [])

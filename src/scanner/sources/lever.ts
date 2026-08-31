@@ -1,5 +1,6 @@
 import { RawJob, Fetcher } from "@/scanner/types";
 import { isEntryLevelTitle } from "@/scanner/entry-level";
+import { safeIso } from "@/scanner/dates";
 
 interface LeverPosting {
   text: string;
@@ -15,7 +16,7 @@ export async function fetchLever(
   fetcher: Fetcher = fetch
 ): Promise<RawJob[]> {
   const url = `https://api.lever.co/v0/postings/${encodeURIComponent(site)}?mode=json`;
-  const res = await fetcher(url);
+  const res = await fetcher(url, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`lever ${site}: HTTP ${res.status}`);
   const data = (await res.json()) as LeverPosting[];
   return (data ?? [])
@@ -28,6 +29,6 @@ export async function fetchLever(
       applyUrl: p.hostedUrl,
       source: "lever" as const,
       ats: "lever",
-      postedAt: p.createdAt ? new Date(p.createdAt).toISOString() : null,
+      postedAt: safeIso(p.createdAt),
     }));
 }

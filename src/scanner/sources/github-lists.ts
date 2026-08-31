@@ -1,4 +1,5 @@
 import { RawJob, Fetcher } from "@/scanner/types";
+import { safeIso } from "@/scanner/dates";
 
 interface Listing {
   company_name: string;
@@ -11,12 +12,21 @@ interface Listing {
   date_posted?: number;
 }
 
+// 清单里的 sponsorship 枚举实际有 4 种取值,只有其中两种是我们要在 jdText 里
+// 注入标记文本、让统一的 visaFlag 关键词过滤捕获的("Offers Sponsorship" 和
+// 未知/"Other" 都不需要标记)。
+function sponsorshipMarker(sponsorship: string | undefined): string {
+  if (sponsorship === "Does Not Offer Sponsorship") return "[listing metadata] no visa sponsorship";
+  if (sponsorship === "U.S. Citizenship is Required") return "[listing metadata] u.s. citizenship is required";
+  return "";
+}
+
 export async function fetchGithubList(
   rawUrl: string,
-  _kind: "newgrad" | "intern",
+  kind: "newgrad" | "intern",
   fetcher: Fetcher = fetch
 ): Promise<RawJob[]> {
-  const res = await fetcher(rawUrl);
+  const res = await fetcher(rawUrl, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`github list ${rawUrl}: HTTP ${res.status}`);
   const data = (await res.json()) as Listing[];
   return (data ?? [])
@@ -25,14 +35,14 @@ export async function fetchGithubList(
       company: l.company_name,
       title: l.title,
       location: l.locations?.join("; ") ?? null,
-      jdText:
-        l.sponsorship === "Does Not Offer Sponsorship"
-          ? "[listing metadata] no visa sponsorship"
-          : "",
+      jdText: sponsorshipMarker(l.sponsorship),
       applyUrl: l.url,
       source: "github_list" as const,
       ats: null,
-      postedAt: l.date_posted ? new Date(l.date_posted * 1000).toISOString() : null,
+      postedAt: l.date_posted ? safeIso(l.date_posted * 1000) : null,
+      // 清单本身就分 newgrad/intern 两个 repo,是权威判定,不必等下游从标题猜
+      // (9% 的 intern 岗标题里没有 "intern" 字样,标题猜测会误判成 newgrad)。
+      jobKind: kind,
     }));
 }
 
