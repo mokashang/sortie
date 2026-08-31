@@ -8,6 +8,26 @@ export type Runner = (
   input: string
 ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
+// Minimal shape we read off an execFile callback error — deliberately narrower than
+// Node's ExecFileException so this stays a small, easily-testable pure function.
+export interface RunnerErrorLike {
+  code?: string | number | null;
+  killed?: boolean;
+  signal?: string | null;
+}
+
+// Maps a raw execFile callback error to a clear diagnostic, distinguishing the two
+// silent-failure modes that both otherwise collapse into a blank "exited 1: " message:
+// the CLI missing from PATH (ENOENT) and the process being killed on timeout.
+// Exported as a pure function so it's unit-testable without spawning a real process
+// (triggering a real ENOENT or a real 180s timeout in a fast unit test isn't practical).
+export function describeRunnerError(err: RunnerErrorLike | null): string | undefined {
+  if (!err) return undefined;
+  if (err.code === "ENOENT") return "claude CLI not found on PATH (set CLAUDE_BIN)";
+  if (err.killed || err.signal) return "claude timed out after 180s";
+  return undefined;
+}
+
 const defaultRunner: Runner = (bin, args, input) =>
   new Promise((resolve) => {
     const child = execFile(
@@ -15,9 +35,10 @@ const defaultRunner: Runner = (bin, args, input) =>
       args,
       { maxBuffer: 32 * 1024 * 1024, timeout: 180_000 },
       (err, stdout, stderr) => {
+        const mapped = describeRunnerError(err as RunnerErrorLike | null);
         resolve({
           stdout: stdout ?? "",
-          stderr: stderr ?? "",
+          stderr: mapped ?? stderr ?? "",
           exitCode: err && typeof (err as { code?: number }).code === "number" ? (err as { code: number }).code : err ? 1 : 0,
         });
       }

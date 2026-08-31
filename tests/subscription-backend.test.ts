@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SubscriptionBackend } from "@/llm/backends/subscription";
+import { SubscriptionBackend, describeRunnerError, RunnerErrorLike } from "@/llm/backends/subscription";
 
 // 模拟 `claude -p --output-format json` 的信封:.result 里是模型文本,可能带围栏。
 function fakeRunner(envelope: object, opts: { exitCode?: number; stderr?: string } = {}) {
@@ -51,5 +51,27 @@ describe("SubscriptionBackend", () => {
     expect(args).toContain("claude-sonnet-5");
     expect(args).toContain("--output-format");
     expect(args).toContain("json");
+  });
+});
+
+describe("describeRunnerError", () => {
+  it("reports a clear message when the claude binary is missing (ENOENT)", () => {
+    const err: RunnerErrorLike = { code: "ENOENT" };
+    expect(describeRunnerError(err)).toMatch(/claude cli not found on path/i);
+  });
+  it("reports a clear message when the process was killed by timeout", () => {
+    const err: RunnerErrorLike = { killed: true };
+    expect(describeRunnerError(err)).toMatch(/timed out after 180s/i);
+  });
+  it("reports a clear message when the process exited via signal (timeout kill)", () => {
+    const err: RunnerErrorLike = { signal: "SIGTERM" };
+    expect(describeRunnerError(err)).toMatch(/timed out after 180s/i);
+  });
+  it("returns undefined for no error", () => {
+    expect(describeRunnerError(null)).toBeUndefined();
+  });
+  it("returns undefined for an ordinary non-zero exit (no special mapping)", () => {
+    const err: RunnerErrorLike = { code: 1 };
+    expect(describeRunnerError(err)).toBeUndefined();
   });
 });

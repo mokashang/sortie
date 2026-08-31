@@ -20,4 +20,12 @@ describe("extractJson", () => {
   it("throws a clear error when no JSON present", () => {
     expect(() => extractJson("no json here")).toThrow(/no json/i);
   });
+  it("retries past a stray leading bracket to find the real JSON value", () => {
+    expect(extractJson('Here is the result {see note}: [{"job_id":1}]')).toEqual([{ job_id: 1 }]);
+    expect(extractJson('Options [A/B]: {"pick":"A"}')).toEqual({ pick: "A" });
+  });
+  it("tolerates trailing commas via a lenient fallback parse", () => {
+    expect(extractJson('```json\n{"a":1,}\n```')).toEqual({ a: 1 });
+    expect(extractJson('[1,2,3,]')).toEqual([1, 2, 3]);
+  });
 });
