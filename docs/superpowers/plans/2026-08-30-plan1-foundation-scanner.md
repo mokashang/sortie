@@ -1936,47 +1936,61 @@ git commit -m "feat: dual-channel notifications (macos + ntfy), failure-tolerant
 **Files:**
 - Create: `instrumentation.ts`, `src/app/api/scan/route.ts`, `src/app/api/jobs/route.ts`, `src/app/jobs/page.tsx`
 
-- [ ] **Step 1: 写 instrumentation.ts(Next.js 启动时注册 cron,每天 7:00 / 13:00)**
+- [ ] **Step 1: 写 instrumentation.ts(Next.js 启动时注册调度器,每天 7:00 / 13:00)**
+
+> **实现笔记(执行中修订)**:下面这版 `node-cron` + 动态 import 的写法在 `npm run build` 下没问题(生产压缩器会在 webpack 打包前把 `NEXT_RUNTIME !== "nodejs"` 这条不可达分支连同它引用的 `better-sqlite3` 一起消掉),但在 **`npm run dev` 下会 500** ——dev 的 webpack 不做那层死代码消除,依然会为 edge runtime 静态解析 `register()` 内可达的动态 import 链,一路追进 `better-sqlite3` 原生绑定的 `require('fs')`,报 `Module not found: Can't resolve 'fs'`,并把这个错误污染到当次 dev 会话的所有路由(全部变成 500)。`npm run dev` 是文档化的入口,不能破。
+>
+> 修复方式:让 `instrumentation.ts` 的模块图**零 import**——不引入 `node-cron`,也不直接触碰 `@/lib/db` / `@/scanner/*`。定时器本身只在 `setInterval` 里判断系统时间是否命中 7 点或 13 点整点(用一个 `lastFired` 时间戳字符串去重,同一小时不重复触发),命中时对本机 `/api/scan?trigger=cron` 发一个 `fetch` POST,把真正的扫描 + 通知逻辑放到 route handler 里(那里怎么 import `better-sqlite3` 都没事,因为 route handler 从来不会被打包进 edge 运行时)。相应地,`package.json` 移除了 `node-cron` / `@types/node-cron` 依赖。
 
 ```ts
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  const cron = (await import("node-cron")).default;
-  const { getDb } = await import("@/lib/db");
-  const { runScan } = await import("@/scanner/run");
-  const { syncWatchlist } = await import("@/scanner/watchlist");
-  const { notify } = await import("@/lib/notify");
-  const seed = (await import("../config/watchlist.seed.json")).default;
-
-  cron.schedule("0 7,13 * * *", async () => {
-    try {
-      const db = getDb();
-      syncWatchlist(db, seed as never);
-      const s = await runScan(db);
-      if (s.inserted > 0) {
-        await notify("JobSeeker OS 扫描完成", `新增 ${s.inserted} 个职位(${s.visaSkipped} 个签证不符已标记)`);
-      }
-    } catch (e) {
-      console.error("[cron scan]", e);
+  const g = globalThis as { __jobseekerCron?: boolean };
+  if (g.__jobseekerCron) return; // HMR guard:避免 dev Fast Refresh 重复注册定时器
+  g.__jobseekerCron = true;
+  const port = process.env.PORT || "3000";
+  let lastFired = "";
+  setInterval(() => {
+    const now = new Date();
+    const stamp = `${now.toDateString()}-${now.getHours()}`;
+    if ((now.getHours() === 7 || now.getHours() === 13) && lastFired !== stamp) {
+      lastFired = stamp;
+      fetch(`http://127.0.0.1:${port}/api/scan?trigger=cron`, { method: "POST" }).catch((e) =>
+        console.error("[cron scan]", e)
+      );
     }
-  });
-  console.log("[jobseeker] cron registered: scan at 07:00 & 13:00");
+  }, 30_000);
+  console.log("[jobseeker] cron registered: scan at 07:00 & 13:00 (in-process timer)");
 }
 ```
 
-- [ ] **Step 2: 写 src/app/api/scan/route.ts(UI 手动触发扫描)**
+- [ ] **Step 2: 写 src/app/api/scan/route.ts(UI 手动触发扫描 + cron 定时器触发扫描)**
+
+> 通知逻辑从 instrumentation.ts 挪到这里:route handler 读 `?trigger=cron` 查询参数,只有定时器触发(而不是手动点"立即扫描")且本次扫描确实有新增或升级时才发通知——手动扫描不打扰用户。
 
 ```ts
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { runScan } from "@/scanner/run";
-import { syncWatchlist, SeedCompany } from "@/scanner/watchlist";
+import { syncWatchlist } from "@/scanner/watchlist";
+import { notify } from "@/lib/notify";
 import seed from "../../../../config/watchlist.seed.json";
 
-export async function POST() {
+export async function POST(req: Request) {
+  const url = new URL(req.url);
+  const isCron = url.searchParams.get("trigger") === "cron";
+
   const db = getDb();
-  syncWatchlist(db, seed as SeedCompany[]);
+  syncWatchlist(db, seed);
   const summary = await runScan(db);
+
+  if (isCron && (summary.inserted > 0 || summary.upgraded > 0)) {
+    await notify(
+      "JobSeeker OS 扫描完成",
+      `新增 ${summary.inserted} 个职位,升级 ${summary.upgraded} 个(${summary.visaSkipped} 个签证不符已标记)`
+    );
+  }
+
   return NextResponse.json(summary);
 }
 ```
