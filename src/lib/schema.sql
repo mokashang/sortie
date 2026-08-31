@@ -101,10 +101,28 @@ CREATE TABLE IF NOT EXISTS profile (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS experiences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,              -- education | work | project | skill | award | publication
+  title TEXT NOT NULL,             -- 职位名 / 项目名 / 学位 / 技能组名
+  organization TEXT,               -- 公司 / 学校 / 会议(skill 可空)
+  location TEXT,
+  start_date TEXT,                 -- 自由文本,如 "2025-09" 或 "Sep 2025"
+  end_date TEXT,                   -- 自由文本 或 "Present"
+  bullets TEXT NOT NULL DEFAULT '[]',   -- JSON: [{ text, directions: [slug,...] }]
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at);
+CREATE INDEX IF NOT EXISTS idx_experiences_kind ON experiences(kind, sort_order);
 
 CREATE TRIGGER IF NOT EXISTS trg_applications_updated AFTER UPDATE ON applications
 BEGIN
   UPDATE applications SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
+
+CREATE TRIGGER IF NOT EXISTS trg_experiences_updated AFTER UPDATE ON experiences
+BEGIN UPDATE experiences SET updated_at = datetime('now') WHERE id = NEW.id; END;

@@ -53,7 +53,7 @@ describe("db", () => {
 
   it("sets user_version as a migration hook for future plans", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(1);
+    expect(db.pragma("user_version", { simple: true })).toBe(2);
   });
 
   it("reads user_version before stamping it (read-then-stamp, not a blind unconditional write)", () => {
@@ -62,7 +62,7 @@ describe("db", () => {
       openDb(":memory:");
       const calls = spy.mock.calls.map((c) => c[0]);
       const readIdx = calls.indexOf("user_version");
-      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*1$/.test(c));
+      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*2$/.test(c));
       expect(readIdx).toBeGreaterThanOrEqual(0);
       expect(writeIdx).toBeGreaterThan(readIdx);
     } finally {
