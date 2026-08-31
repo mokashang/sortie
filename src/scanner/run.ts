@@ -76,6 +76,12 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
   // or, depending on insert order, a thin row that inserted first would never get upgraded once
   // the rich ATS row showed up, since the old code treated every conflict as a no-op duplicate.
   // posted_at uses COALESCE so an upgrade never blanks out a posted date the stored row already had.
+  // The trailing `excluded.jd_text<>jobs.jd_text` guards against a false "upgrade": the github_lists
+  // source re-emits the exact same static "[listing metadata] ..." marker string every scan for a job
+  // still awaiting its rich ATS record, so without this clause the WHERE above matched on every single
+  // re-scan (marker jd_text is non-empty and the stored row still looks thin) and every re-scan counted
+  // as an "upgrade" even though nothing changed — which made api/scan/route.ts fire a cron notification
+  // about "new" upgrades every day, forever, for the same unchanged rows.
   const insJob = db.prepare(
     `INSERT INTO jobs (fingerprint, company, title, location, jd_text, apply_url, source, ats, posted_at, job_kind, visa_flag)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)
@@ -86,7 +92,8 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
        source=excluded.source,
        ats=excluded.ats,
        posted_at=COALESCE(excluded.posted_at, jobs.posted_at)
-     WHERE excluded.jd_text<>'' AND (jobs.jd_text='' OR jobs.jd_text LIKE '[listing metadata]%')`
+     WHERE excluded.jd_text<>'' AND (jobs.jd_text='' OR jobs.jd_text LIKE '[listing metadata]%')
+       AND excluded.jd_text<>jobs.jd_text`
   );
   const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
 

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { notify } from "@/lib/notify";
+import { notify, escapeAppleScript, encodeNtfyTitle } from "@/lib/notify";
 
 describe("notify", () => {
   it("posts to ntfy when topic configured and calls macos notifier", async () => {
-    const calls: { url: string; body: string }[] = [];
+    const calls: { url: string; body: string; init?: RequestInit }[] = [];
     const fakeFetch = async (url: string | URL | Request, init?: RequestInit) => {
-      calls.push({ url: String(url), body: String(init?.body) });
+      calls.push({ url: String(url), body: String(init?.body), init });
       return new Response("ok");
     };
     const fakeExec = vi.fn();
@@ -17,11 +17,55 @@ describe("notify", () => {
     expect(calls[0].url).toBe("https://ntfy.sh/test-topic");
     expect(calls[0].body).toBe("正文内容");
     expect(fakeExec).toHaveBeenCalledOnce();
+    // fetch is given an abort signal (timeout guard) rather than hanging forever
+    expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("skips ntfy silently when no topic", async () => {
     const fakeFetch = vi.fn();
     await notify("t", "b", { ntfyTopic: undefined, fetcher: fakeFetch, execMacNotifier: vi.fn() });
     expect(fakeFetch).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when ntfy fetch rejects (failure-tolerant, but warns)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fakeFetch = async () => {
+      throw new Error("network down");
+    };
+    await expect(
+      notify("t", "b", { ntfyTopic: "topic", fetcher: fakeFetch, execMacNotifier: vi.fn() })
+    ).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
+
+describe("escapeAppleScript", () => {
+  // Regression for CRITICAL 1: the previous version only escaped `"`, so a title/body
+  // containing a raw backslash (e.g. right before a quote) could break out of the
+  // AppleScript string literal. Backslashes must be escaped BEFORE quotes.
+  it("escapes a lone double-quote", () => {
+    expect(escapeAppleScript('a"b')).toBe('a\\"b');
+  });
+
+  it("escapes a lone backslash", () => {
+    expect(escapeAppleScript("a\\b")).toBe("a\\\\b");
+  });
+
+  it("escapes a backslash immediately followed by a quote without double-escaping", () => {
+    expect(escapeAppleScript('a\\"b')).toBe('a\\\\\\"b');
+  });
+});
+
+describe("encodeNtfyTitle", () => {
+  it("passes pure-ASCII titles through unchanged", () => {
+    expect(encodeNtfyTitle("JobSeeker OS")).toBe("JobSeeker OS");
+  });
+
+  it("RFC-2047-encodes titles containing non-ASCII characters", () => {
+    const title = "扫描完成";
+    const encoded = encodeNtfyTitle(title);
+    expect(encoded).toBe(`=?UTF-8?B?${Buffer.from(title, "utf8").toString("base64")}?=`);
+    expect(encoded.startsWith("=?UTF-8?B?")).toBe(true);
   });
 });

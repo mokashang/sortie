@@ -9,9 +9,13 @@ export function ScanButton() {
     setMsg("扫描中…");
     try {
       const r = await fetch("/api/scan", { method: "POST" });
+      if (!r.ok) {
+        setMsg(`扫描失败(HTTP ${r.status})`);
+        return;
+      }
       const s = await r.json();
       setMsg(`完成:+${s.inserted} 新职位,${s.upgraded} 升级,${s.duplicates} 重复,${s.sourceErrors.length} 源错误`);
-      setTimeout(() => location.reload(), 800);
+      setTimeout(() => location.reload(), 2500);
     } catch (e) {
       setMsg(`失败:${e}`);
     } finally {

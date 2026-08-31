@@ -13,9 +13,11 @@ export async function POST(req: Request) {
   syncWatchlist(db, seed);
   const summary = await runScan(db);
 
-  // Manual "立即扫描" button clicks never notify — only the in-process cron timer does, and
-  // only when the scan actually found something new or upgraded (see instrumentation.ts).
-  if (isCron && (summary.inserted > 0 || summary.upgraded > 0)) {
+  // Manual "立即扫描" button clicks never notify — only the in-process cron timer does, and only
+  // when the scan actually found brand-new listings. Upgrades are backfills of a JD/visa flag onto
+  // an already-known job (see run.ts), not a new opportunity — notifying on those alone would buzz
+  // the phone daily for nothing actionable, so this deliberately ignores `upgraded`.
+  if (isCron && summary.inserted > 0) {
     await notify(
       "JobSeeker OS 扫描完成",
       `新增 ${summary.inserted} 个职位,升级 ${summary.upgraded} 个(${summary.visaSkipped} 个签证不符已标记)`

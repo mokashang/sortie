@@ -20,7 +20,7 @@
 **Files:**
 - Create: `package.json`, `tsconfig.json`, `next.config.ts`, `vitest.config.ts`, `.gitignore`, `.env.example`, `src/app/layout.tsx`, `src/app/page.tsx`, `src/app/globals.css`
 
-- [ ] **Step 1: 写 package.json**
+- [x] **Step 1: 写 package.json**
 
 ```json
 {
@@ -55,7 +55,7 @@
 }
 ```
 
-- [ ] **Step 2: 写 tsconfig.json**
+- [x] **Step 2: 写 tsconfig.json**
 
 ```json
 {
@@ -81,7 +81,7 @@
 }
 ```
 
-- [ ] **Step 3: 写 next.config.ts、vitest.config.ts、.gitignore、.env.example**
+- [x] **Step 3: 写 next.config.ts、vitest.config.ts、.gitignore、.env.example**
 
 `next.config.ts`:
 ```ts
@@ -125,7 +125,7 @@ NTFY_TOPIC=
 DATA_DIR=
 ```
 
-- [ ] **Step 4: 写最小 App 壳**
+- [x] **Step 4: 写最小 App 壳**
 
 `src/app/layout.tsx`:
 ```tsx
@@ -166,12 +166,12 @@ table { width: 100%; border-collapse: collapse; background: #fff; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e5ef; font-size: 14px; }
 ```
 
-- [ ] **Step 5: 安装并验证构建**
+- [x] **Step 5: 安装并验证构建**
 
 Run: `npm install && npm run build`
 Expected: build 成功,无 type error
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A && git commit -m "chore: scaffold Next.js app with vitest"
@@ -185,7 +185,7 @@ git add -A && git commit -m "chore: scaffold Next.js app with vitest"
 - Create: `src/lib/schema.sql`, `src/lib/db.ts`
 - Test: `tests/db.test.ts`
 
-- [ ] **Step 1: 写 schema.sql(spec §3 全部 9 张表)**
+- [x] **Step 1: 写 schema.sql(spec §3 全部 9 张表)**
 
 ```sql
 CREATE TABLE IF NOT EXISTS jobs (
@@ -295,7 +295,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at);
 ```
 
-- [ ] **Step 2: 写失败测试 tests/db.test.ts**
+- [x] **Step 2: 写失败测试 tests/db.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -328,12 +328,12 @@ describe("db", () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `npx vitest run tests/db.test.ts`
 Expected: FAIL — cannot resolve `@/lib/db`
 
-- [ ] **Step 4: 写 src/lib/db.ts**
+- [x] **Step 4: 写 src/lib/db.ts**
 
 ```ts
 import Database from "better-sqlite3";
@@ -376,12 +376,12 @@ export function logEvent(
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run tests/db.test.ts`
 Expected: 3 passed
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/lib/schema.sql src/lib/db.ts tests/db.test.ts
@@ -396,7 +396,7 @@ git commit -m "feat: sqlite layer with full spec schema and event log"
 - Create: `src/lib/profile.ts`, `profile/profile.example.yaml`, `profile/profile.yaml`(真实数据,gitignored)
 - Test: `tests/profile.test.ts`
 
-- [ ] **Step 1: 写 profile.example.yaml(泛化模板,入库示例)**
+- [x] **Step 1: 写 profile.example.yaml(泛化模板,入库示例)**
 
 ```yaml
 # JobSeeker OS 用户档案 — 复制为 profile.yaml 并填入真实信息
@@ -419,7 +419,7 @@ directions:              # 方向 slug: 梯队
 daily_minutes_budget: 90
 ```
 
-- [ ] **Step 2: 写失败测试 tests/profile.test.ts**
+- [x] **Step 2: 写失败测试 tests/profile.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -460,12 +460,12 @@ describe("profile", () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `npx vitest run tests/profile.test.ts`
 Expected: FAIL — cannot resolve `@/lib/profile`
 
-- [ ] **Step 4: 写 src/lib/profile.ts**
+- [x] **Step 4: 写 src/lib/profile.ts**
 
 ```ts
 import { z } from "zod";
@@ -506,12 +506,12 @@ export function loadProfile(): Profile {
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run tests/profile.test.ts`
 Expected: 2 passed
 
-- [ ] **Step 6: 写 Mengjia 的真实 profile/profile.yaml(gitignored,不入库)**
+- [x] **Step 6: 写 Mengjia 的真实 profile/profile.yaml(gitignored,不入库)**
 
 ```yaml
 name: Mengjia Shang
@@ -544,7 +544,7 @@ directions:
 daily_minutes_budget: 90
 ```
 
-- [ ] **Step 7: 验证真实 profile 可解析并 Commit**
+- [x] **Step 7: 验证真实 profile 可解析并 Commit**
 
 Run: `npx tsx -e "import {loadProfile} from './src/lib/profile'; console.log(loadProfile().name)"`
 Expected: `Mengjia Shang`
@@ -562,7 +562,7 @@ git commit -m "feat: profile layer with zod validation (personal data gitignored
 - Create: `src/scanner/fingerprint.ts`, `src/scanner/visa-filter.ts`
 - Test: `tests/fingerprint.test.ts`, `tests/visa-filter.test.ts`
 
-- [ ] **Step 1: 写失败测试 tests/fingerprint.test.ts**
+- [x] **Step 1: 写失败测试 tests/fingerprint.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -583,7 +583,7 @@ describe("fingerprint", () => {
 });
 ```
 
-- [ ] **Step 2: 写失败测试 tests/visa-filter.test.ts**
+- [x] **Step 2: 写失败测试 tests/visa-filter.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -612,12 +612,12 @@ describe("visaFlag", () => {
 });
 ```
 
-- [ ] **Step 3: 跑两个测试确认失败**
+- [x] **Step 3: 跑两个测试确认失败**
 
 Run: `npx vitest run tests/fingerprint.test.ts tests/visa-filter.test.ts`
 Expected: FAIL — modules not found
 
-- [ ] **Step 4: 写 src/scanner/fingerprint.ts**
+- [x] **Step 4: 写 src/scanner/fingerprint.ts**
 
 ```ts
 import crypto from "crypto";
@@ -636,7 +636,7 @@ export function fingerprint(company: string, title: string, location: string | n
 }
 ```
 
-- [ ] **Step 5: 写 src/scanner/visa-filter.ts**
+- [x] **Step 5: 写 src/scanner/visa-filter.ts**
 
 ```ts
 // 唯一允许关键词规则的环节(spec §4):黑白分明的签证硬过滤。
@@ -669,12 +669,12 @@ export function visaFlag(jdText: string): VisaFlag {
 }
 ```
 
-- [ ] **Step 6: 跑测试确认通过**
+- [x] **Step 6: 跑测试确认通过**
 
 Run: `npx vitest run tests/fingerprint.test.ts tests/visa-filter.test.ts`
 Expected: 7 passed
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/scanner/fingerprint.ts src/scanner/visa-filter.ts tests/fingerprint.test.ts tests/visa-filter.test.ts
@@ -689,7 +689,7 @@ git commit -m "feat: dedupe fingerprint and explicit-only visa filter"
 - Create: `src/scanner/types.ts`, `src/scanner/sources/greenhouse.ts`, `tests/fixtures/greenhouse.json`
 - Test: `tests/greenhouse.test.ts`
 
-- [ ] **Step 1: 写 src/scanner/types.ts(所有源的统一输出契约)**
+- [x] **Step 1: 写 src/scanner/types.ts(所有源的统一输出契约)**
 
 ```ts
 export interface RawJob {
@@ -706,7 +706,7 @@ export interface RawJob {
 export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 ```
 
-- [ ] **Step 2: 写 fixture tests/fixtures/greenhouse.json(Greenhouse boards API 真实结构缩样)**
+- [x] **Step 2: 写 fixture tests/fixtures/greenhouse.json(Greenhouse boards API 真实结构缩样)**
 
 ```json
 {
@@ -739,7 +739,7 @@ export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 }
 ```
 
-- [ ] **Step 3: 写失败测试 tests/greenhouse.test.ts**
+- [x] **Step 3: 写失败测试 tests/greenhouse.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -769,12 +769,12 @@ describe("greenhouse source", () => {
 });
 ```
 
-- [ ] **Step 4: 跑测试确认失败**
+- [x] **Step 4: 跑测试确认失败**
 
 Run: `npx vitest run tests/greenhouse.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 5: 写 src/scanner/sources/greenhouse.ts + 共享的标题过滤/HTML清洗工具**
+- [x] **Step 5: 写 src/scanner/sources/greenhouse.ts + 共享的标题过滤/HTML清洗工具**
 
 先建 `src/scanner/entry-level.ts`(Greenhouse/Lever/Ashby 三源共用):
 
@@ -844,12 +844,12 @@ export async function fetchGreenhouse(
 }
 ```
 
-- [ ] **Step 6: 跑测试确认通过**
+- [x] **Step 6: 跑测试确认通过**
 
 Run: `npx vitest run tests/greenhouse.test.ts`
 Expected: 2 passed
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/scanner/types.ts src/scanner/entry-level.ts src/scanner/html.ts src/scanner/sources/greenhouse.ts tests/fixtures/greenhouse.json tests/greenhouse.test.ts
@@ -864,7 +864,7 @@ git commit -m "feat: greenhouse source with entry-level title prefilter"
 - Create: `src/scanner/sources/lever.ts`, `tests/fixtures/lever.json`
 - Test: `tests/lever.test.ts`
 
-- [ ] **Step 1: 写 fixture tests/fixtures/lever.json**
+- [x] **Step 1: 写 fixture tests/fixtures/lever.json**
 
 ```json
 [
@@ -887,7 +887,7 @@ git commit -m "feat: greenhouse source with entry-level title prefilter"
 ]
 ```
 
-- [ ] **Step 2: 写失败测试 tests/lever.test.ts**
+- [x] **Step 2: 写失败测试 tests/lever.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -909,12 +909,12 @@ describe("lever source", () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `npx vitest run tests/lever.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 4: 写 src/scanner/sources/lever.ts**
+- [x] **Step 4: 写 src/scanner/sources/lever.ts**
 
 ```ts
 import { RawJob, Fetcher } from "@/scanner/types";
@@ -952,12 +952,12 @@ export async function fetchLever(
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run tests/lever.test.ts`
 Expected: 1 passed
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/scanner/sources/lever.ts tests/fixtures/lever.json tests/lever.test.ts
@@ -972,7 +972,7 @@ git commit -m "feat: lever source"
 - Create: `src/scanner/sources/ashby.ts`, `tests/fixtures/ashby.json`
 - Test: `tests/ashby.test.ts`
 
-- [ ] **Step 1: 写 fixture tests/fixtures/ashby.json**
+- [x] **Step 1: 写 fixture tests/fixtures/ashby.json**
 
 ```json
 {
@@ -997,7 +997,7 @@ git commit -m "feat: lever source"
 }
 ```
 
-- [ ] **Step 2: 写失败测试 tests/ashby.test.ts**
+- [x] **Step 2: 写失败测试 tests/ashby.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -1017,12 +1017,12 @@ describe("ashby source", () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `npx vitest run tests/ashby.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 4: 写 src/scanner/sources/ashby.ts**
+- [x] **Step 4: 写 src/scanner/sources/ashby.ts**
 
 ```ts
 import { RawJob, Fetcher } from "@/scanner/types";
@@ -1061,12 +1061,12 @@ export async function fetchAshby(
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run tests/ashby.test.ts`
 Expected: 1 passed
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/scanner/sources/ashby.ts tests/fixtures/ashby.json tests/ashby.test.ts
@@ -1081,7 +1081,7 @@ git commit -m "feat: ashby source"
 - Create: `src/scanner/sources/github-lists.ts`, `tests/fixtures/github-listings.json`
 - Test: `tests/github-lists.test.ts`
 
-- [ ] **Step 1: 写 fixture tests/fixtures/github-listings.json(SimplifyJobs listings.json 真实结构缩样)**
+- [x] **Step 1: 写 fixture tests/fixtures/github-listings.json(SimplifyJobs listings.json 真实结构缩样)**
 
 ```json
 [
@@ -1118,7 +1118,7 @@ git commit -m "feat: ashby source"
 ]
 ```
 
-- [ ] **Step 2: 写失败测试 tests/github-lists.test.ts**
+- [x] **Step 2: 写失败测试 tests/github-lists.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -1142,12 +1142,12 @@ describe("github list source", () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `npx vitest run tests/github-lists.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 4: 写 src/scanner/sources/github-lists.ts**
+- [x] **Step 4: 写 src/scanner/sources/github-lists.ts**
 
 ```ts
 import { RawJob, Fetcher } from "@/scanner/types";
@@ -1201,17 +1201,17 @@ export const DEFAULT_LISTS: { url: string; kind: "newgrad" | "intern" }[] = [
 ];
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run tests/github-lists.test.ts`
 Expected: 1 passed
 
-- [ ] **Step 6: 联网冒烟验证清单 URL 真实可用(允许失败,失败则修 URL)**
+- [x] **Step 6: 联网冒烟验证清单 URL 真实可用(允许失败,失败则修 URL)**
 
 Run: `npx tsx -e "import {fetchGithubList,DEFAULT_LISTS} from './src/scanner/sources/github-lists'; fetchGithubList(DEFAULT_LISTS[0].url,'newgrad').then(j=>console.log('newgrad listings:',j.length))"`
 Expected: 打印数百条。若 404:去 github.com/SimplifyJobs/New-Grad-Positions 找 listings.json 实际路径(可能在默认分支根目录或 .github/scripts/ 下),更新 DEFAULT_LISTS 后重跑直到成功。Summer2027 清单同理(若该 repo 尚未建立,注释掉该条目并在 events 里记 warning,别让它阻塞)。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/scanner/sources/github-lists.ts tests/fixtures/github-listings.json tests/github-lists.test.ts
@@ -1226,7 +1226,7 @@ git commit -m "feat: github simplify-lists source with sponsorship metadata mapp
 - Create: `config/watchlist.seed.json`, `src/scanner/watchlist.ts`
 - Test: `tests/watchlist.test.ts`
 
-- [ ] **Step 1: 写 config/watchlist.seed.json(初始种子;board_token 未验证,由 Task 10 的扫描 probe 标记真伪;Plan 2 前用户在 UI 增删)**
+- [x] **Step 1: 写 config/watchlist.seed.json(初始种子;board_token 未验证,由 Task 10 的扫描 probe 标记真伪;Plan 2 前用户在 UI 增删)**
 
 ```json
 [
@@ -1275,7 +1275,7 @@ git commit -m "feat: github simplify-lists source with sponsorship metadata mapp
 > Perplexity's ashby board name is `perplexity`, not `perplexity-ai` (confirmed 200 + 97 live
 > jobs). The seed above already reflects the corrected values.
 
-- [ ] **Step 2: 写失败测试 tests/watchlist.test.ts**
+- [x] **Step 2: 写失败测试 tests/watchlist.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -1332,12 +1332,12 @@ describe("watchlist", () => {
 });
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `npx vitest run tests/watchlist.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 4: 写 src/scanner/watchlist.ts**
+- [x] **Step 4: 写 src/scanner/watchlist.ts**
 
 ```ts
 import { DB } from "@/lib/db";
@@ -1399,12 +1399,12 @@ export function setProbeStatus(db: DB, companyId: number, status: "ok" | "failed
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run tests/watchlist.test.ts`
 Expected: 3 passed
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add config/watchlist.seed.json src/scanner/watchlist.ts tests/watchlist.test.ts
@@ -1419,7 +1419,7 @@ git commit -m "feat: company watchlist seed and loader with probe status"
 - Create: `src/scanner/run.ts`, `scripts/scan.ts`
 - Test: `tests/scan-run.test.ts`
 
-- [ ] **Step 1: 写失败测试 tests/scan-run.test.ts**
+- [x] **Step 1: 写失败测试 tests/scan-run.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
@@ -1614,12 +1614,12 @@ describe("runScan", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `npx vitest run tests/scan-run.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: 写 src/scanner/run.ts**
+- [x] **Step 3: 写 src/scanner/run.ts**
 
 ```ts
 import { DB, logEvent } from "@/lib/db";
@@ -1759,12 +1759,12 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run tests/scan-run.test.ts`
 Expected: 4 passed
 
-- [ ] **Step 5: 写 scripts/scan.ts(CLI 入口,cron 与手动共用)**
+- [x] **Step 5: 写 scripts/scan.ts(CLI 入口,cron 与手动共用)**
 
 ```ts
 import { getDb } from "../src/lib/db";
@@ -1792,19 +1792,19 @@ main().catch((e) => {
 > added a `.catch` on `main()` so an unhandled rejection (e.g. every source failing) exits
 > non-zero instead of silently swallowing the error.
 
-- [ ] **Step 6: 联网真实跑一次全量扫描(同时充当 watchlist probe 验证)**
+- [x] **Step 6: 联网真实跑一次全量扫描(同时充当 watchlist probe 验证)**
 
 Run: `npm run scan`
 Expected: 打印 `scan done: +N new ...`,N 为数百量级。source errors 里出现的 `greenhouse:xxx` 等即 board_token 猜错的公司——正常现象,probe_status 已标 failed,后续在 UI 修正;此处只需确认:(a) 命令不崩溃 (b) 至少 GitHub 清单和大部分 greenhouse token 成功。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/scanner/run.ts scripts/scan.ts tests/scan-run.test.ts
 git commit -m "feat: scan orchestrator with dedupe, visa flagging, source isolation"
 ```
 
-- [ ] **Step 8 (post-implementation, quality review): rich-record upsert + reseed fix**
+- [x] **Step 8 (post-implementation, quality review): rich-record upsert + reseed fix**
 
 The first real scan (Step 6) surfaced a critical defect: 63% of stored rows ended up with no
 JD text because a thin `github_list` row could win the `UNIQUE(fingerprint)` race against the
@@ -1833,7 +1833,7 @@ git commit -m "fix: rich-record upsert, typed constraint handling, watchlist res
 - Create: `src/lib/notify.ts`
 - Test: `tests/notify.test.ts`
 
-- [ ] **Step 1: 写失败测试 tests/notify.test.ts**
+- [x] **Step 1: 写失败测试 tests/notify.test.ts**
 
 ```ts
 import { describe, it, expect, vi } from "vitest";
@@ -1865,12 +1865,12 @@ describe("notify", () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `npx vitest run tests/notify.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: 写 src/lib/notify.ts**
+- [x] **Step 3: 写 src/lib/notify.ts**
 
 ```ts
 import { execFile } from "child_process";
@@ -1912,17 +1912,17 @@ export async function notify(
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run tests/notify.test.ts`
 Expected: 2 passed
 
-- [ ] **Step 5: 真实冒烟(本机弹一条通知)**
+- [x] **Step 5: 真实冒烟(本机弹一条通知)**
 
 Run: `npx tsx -e "import {notify} from './src/lib/notify'; notify('JobSeeker OS','通知链路已打通')"`
 Expected: Mac 右上角弹出通知(ntfy 部分静默跳过,因为 NTFY_TOPIC 未配;用户之后在 .env 配置并手机订阅)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/lib/notify.ts tests/notify.test.ts
@@ -1936,7 +1936,7 @@ git commit -m "feat: dual-channel notifications (macos + ntfy), failure-tolerant
 **Files:**
 - Create: `instrumentation.ts`, `src/app/api/scan/route.ts`, `src/app/api/jobs/route.ts`, `src/app/jobs/page.tsx`
 
-- [ ] **Step 1: 写 instrumentation.ts(Next.js 启动时注册调度器,每天 7:00 / 13:00)**
+- [x] **Step 1: 写 instrumentation.ts(Next.js 启动时注册调度器,每天 7:00 / 13:00)**
 
 > **实现笔记(执行中修订)**:下面这版 `node-cron` + 动态 import 的写法在 `npm run build` 下没问题(生产压缩器会在 webpack 打包前把 `NEXT_RUNTIME !== "nodejs"` 这条不可达分支连同它引用的 `better-sqlite3` 一起消掉),但在 **`npm run dev` 下会 500** ——dev 的 webpack 不做那层死代码消除,依然会为 edge runtime 静态解析 `register()` 内可达的动态 import 链,一路追进 `better-sqlite3` 原生绑定的 `require('fs')`,报 `Module not found: Can't resolve 'fs'`,并把这个错误污染到当次 dev 会话的所有路由(全部变成 500)。`npm run dev` 是文档化的入口,不能破。
 >
@@ -1964,7 +1964,7 @@ export async function register() {
 }
 ```
 
-- [ ] **Step 2: 写 src/app/api/scan/route.ts(UI 手动触发扫描 + cron 定时器触发扫描)**
+- [x] **Step 2: 写 src/app/api/scan/route.ts(UI 手动触发扫描 + cron 定时器触发扫描)**
 
 > 通知逻辑从 instrumentation.ts 挪到这里:route handler 读 `?trigger=cron` 查询参数,只有定时器触发(而不是手动点"立即扫描")且本次扫描确实有新增或升级时才发通知——手动扫描不打扰用户。
 
@@ -1995,7 +1995,7 @@ export async function POST(req: Request) {
 }
 ```
 
-- [ ] **Step 3: 写 src/app/api/jobs/route.ts**
+- [x] **Step 3: 写 src/app/api/jobs/route.ts**
 
 ```ts
 import { NextResponse } from "next/server";
@@ -2016,7 +2016,7 @@ export async function GET(req: Request) {
 }
 ```
 
-- [ ] **Step 4: 写 src/app/jobs/page.tsx(服务端渲染职位表 + 手动扫描按钮)**
+- [x] **Step 4: 写 src/app/jobs/page.tsx(服务端渲染职位表 + 手动扫描按钮)**
 
 ```tsx
 import { getDb } from "@/lib/db";
@@ -2097,17 +2097,17 @@ export function ScanButton() {
 }
 ```
 
-- [ ] **Step 5: 全量测试 + 构建验证**
+- [x] **Step 5: 全量测试 + 构建验证**
 
 Run: `npm test && npm run build`
 Expected: 所有测试通过,build 成功
 
-- [ ] **Step 6: 启动 dev server 手动验收**
+- [x] **Step 6: 启动 dev server 手动验收**
 
 Run: `npm run dev`(后台)
 验收:浏览器打开 `http://127.0.0.1:3000/jobs` → 能看到 Task 10 真实扫描入库的职位表;点"立即扫描"→ 显示汇总数字。终端日志出现 `cron registered`。
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add instrumentation.ts src/app scripts
@@ -2121,7 +2121,7 @@ git commit -m "feat: cron scheduler, scan/jobs API, jobs browse page"
 **Files:**
 - Create: `README.md`
 
-- [ ] **Step 1: 写 README.md**
+- [x] **Step 1: 写 README.md**
 
 ```markdown
 # JobSeeker OS
@@ -2147,12 +2147,12 @@ dev/start 进程内置 cron:每天 07:00 与 13:00 扫描 GitHub 清单 + watchl
 `npm test`
 ```
 
-- [ ] **Step 2: 全量回归**
+- [x] **Step 2: 全量回归**
 
 Run: `npm test && npm run build`
 Expected: 全部通过
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md

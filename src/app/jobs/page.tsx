@@ -14,14 +14,24 @@ export default function JobsPage() {
   const jobs = db
     .prepare(
       `SELECT id, company, title, location, source, job_kind, visa_flag, apply_url, created_at
-       FROM jobs WHERE visa_flag IS NULL ORDER BY created_at DESC LIMIT 200`
+       FROM jobs WHERE visa_flag IS NULL ORDER BY created_at DESC LIMIT 1000`
     )
     .all() as JobRow[];
-  const total = (db.prepare("SELECT COUNT(*) n FROM jobs").get() as { n: number }).n;
+  // "总计" must count the same population the table draws from (visa_flag IS NULL) — counting
+  // ALL jobs (including visa-flagged ones the table never shows) made the displayed/total ratio
+  // meaningless. totalAll is still needed to report how many were hidden for visa reasons.
+  const totalVisible = (db.prepare("SELECT COUNT(*) n FROM jobs WHERE visa_flag IS NULL").get() as { n: number }).n;
+  const totalAll = (db.prepare("SELECT COUNT(*) n FROM jobs").get() as { n: number }).n;
+  const hidden = totalAll - totalVisible;
 
   return (
     <div>
-      <h1>职位 <small>({jobs.length} 显示 / {total} 总计)</small></h1>
+      <h1>
+        职位{" "}
+        <small>
+          (显示 {jobs.length} / 共 {totalVisible},已隐藏 {hidden} 个签证不符)
+        </small>
+      </h1>
       <ScanButton />
       <table>
         <thead>

@@ -9,7 +9,7 @@ export async function GET(req: Request) {
     .prepare(
       `SELECT id, company, title, location, source, job_kind, visa_flag, apply_url, posted_at, created_at
        FROM jobs ${includeVisaFlagged ? "" : "WHERE visa_flag IS NULL"}
-       ORDER BY created_at DESC LIMIT 500`
+       ORDER BY created_at DESC LIMIT 1000`
     )
     .all();
   return NextResponse.json({ jobs });

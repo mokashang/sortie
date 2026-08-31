@@ -163,6 +163,44 @@ describe("runScan", () => {
     expect(apps.n).toBe(1);
   });
 
+  it("does not count a re-scan of the same unchanged listing-metadata marker row as an upgrade (CRITICAL: cron false-positive regression)", async () => {
+    const db = openDb(":memory:");
+    syncWatchlist(db, []);
+    // github_lists emits this exact static marker string every scan for a job still awaiting
+    // its rich ATS record — it never changes between scans until a real ATS source picks it up.
+    const marker = job({
+      company: "ListCo4",
+      title: "SWE Marker Test",
+      location: "Remote",
+      jdText: "[listing metadata] no visa sponsorship",
+      applyUrl: "https://marker.example",
+      source: "github_list",
+      ats: null,
+    });
+
+    const s1 = await runScan(db, {
+      greenhouse: async () => [],
+      lever: async () => [],
+      ashby: async () => [],
+      githubLists: async () => [marker],
+    });
+    expect(s1.inserted).toBe(1);
+    expect(s1.upgraded).toBe(0);
+
+    // Same identical marker row scanned again (e.g. next day's cron run, ATS still hasn't
+    // published the rich record) must be a plain duplicate, not an "upgrade" — otherwise
+    // the cron notification fires every day forever about nothing new.
+    const s2 = await runScan(db, {
+      greenhouse: async () => [],
+      lever: async () => [],
+      ashby: async () => [],
+      githubLists: async () => [marker],
+    });
+    expect(s2.inserted).toBe(0);
+    expect(s2.upgraded).toBe(0);
+    expect(s2.duplicates).toBe(1);
+  });
+
   it("routes a non-unique-constraint insert failure (e.g. NOT NULL violation) to sourceErrors, not duplicates", async () => {
     const db = openDb(":memory:");
     syncWatchlist(db, []);
