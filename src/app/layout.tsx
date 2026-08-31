@@ -8,6 +8,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <nav className="topnav">
           <a href="/">JobSeeker OS</a>
+          <a href="/dashboard">Dashboard</a>
           <a href="/jobs">职位</a>
           <a href="/queue">队列</a>
           <a href="/apply">投递</a>
