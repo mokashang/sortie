@@ -18,9 +18,11 @@ export interface ScanSources {
 
 export interface ScanSummary {
   inserted: number;
+  upgraded: number;
   duplicates: number;
   visaSkipped: number;
   sourceErrors: { source: string; error: string }[];
+  durationMs: number;
 }
 
 const LIVE_SOURCES: ScanSources = {
@@ -35,7 +37,15 @@ const LIVE_SOURCES: ScanSources = {
 };
 
 export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Promise<ScanSummary> {
-  const summary: ScanSummary = { inserted: 0, duplicates: 0, visaSkipped: 0, sourceErrors: [] };
+  const startedAt = Date.now();
+  const summary: ScanSummary = {
+    inserted: 0,
+    upgraded: 0,
+    duplicates: 0,
+    visaSkipped: 0,
+    sourceErrors: [],
+    durationMs: 0,
+  };
   const batches: RawJob[] = [];
 
   try {
@@ -57,9 +67,26 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
     }
   }
 
+  const findByFp = db.prepare("SELECT id FROM jobs WHERE fingerprint = ?");
+  // Upsert on fingerprint conflict, but only "win" the conflict (overwrite jd_text/visa_flag/
+  // apply_url/source/ats) when the incoming row is richer than what's stored: the stored row
+  // is still empty/listing-metadata-only AND the incoming row has real JD text. This fixes a
+  // critical bug where a thin github_list row (jdText '' or just a sponsorship marker) landing
+  // after a richer ATS row for the same job would silently discard the real JD and visa_flag —
+  // or, depending on insert order, a thin row that inserted first would never get upgraded once
+  // the rich ATS row showed up, since the old code treated every conflict as a no-op duplicate.
+  // posted_at uses COALESCE so an upgrade never blanks out a posted date the stored row already had.
   const insJob = db.prepare(
     `INSERT INTO jobs (fingerprint, company, title, location, jd_text, apply_url, source, ats, posted_at, job_kind, visa_flag)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(fingerprint) DO UPDATE SET
+       jd_text=excluded.jd_text,
+       visa_flag=excluded.visa_flag,
+       apply_url=excluded.apply_url,
+       source=excluded.source,
+       ats=excluded.ats,
+       posted_at=COALESCE(excluded.posted_at, jobs.posted_at)
+     WHERE excluded.jd_text<>'' AND (jobs.jd_text='' OR jobs.jd_text LIKE '[listing metadata]%')`
   );
   const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
 
@@ -67,21 +94,42 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
     for (const r of rows) {
       const fp = fingerprint(r.company, r.title, r.location);
       const flag = visaFlag(r.jdText);
+      // Pre-check whether this fingerprint already exists: with ON CONFLICT DO UPDATE, .run()
+      // no longer throws on conflict (nor does .changes alone distinguish a fresh INSERT from
+      // an UPDATE — both report changes=1), so this SELECT is the cleanest way to classify the
+      // outcome as insert vs. upgrade vs. untouched-duplicate.
+      const existing = findByFp.get(fp) as { id: number } | undefined;
       try {
         const info = insJob.run(
           fp, r.company, r.title, r.location, r.jdText, r.applyUrl,
           r.source, r.ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag
         );
-        insApp.run(info.lastInsertRowid);
-        summary.inserted++;
-        if (flag) summary.visaSkipped++;
-      } catch {
-        summary.duplicates++; // UNIQUE(fingerprint) 冲突 = 已见过
+        if (!existing) {
+          // Brand-new job: create its application row. Never done for upgrades — the job id
+          // (and its application) must stay stable across re-scans of the same fingerprint.
+          insApp.run(info.lastInsertRowid);
+          summary.inserted++;
+          if (flag) summary.visaSkipped++;
+        } else if (info.changes > 0) {
+          summary.upgraded++;
+        } else {
+          summary.duplicates++; // conflict existed but WHERE didn't match = already-seen, no richer data
+        }
+      } catch (e) {
+        const code = (e as { code?: string }).code;
+        if (code === "SQLITE_CONSTRAINT_UNIQUE") {
+          summary.duplicates++;
+        } else {
+          // Don't abort the whole batch (and don't rethrow) over one bad row — e.g. a NOT NULL
+          // violation from a malformed source record. Isolate it and keep processing the rest.
+          summary.sourceErrors.push({ source: "insert", error: String(e) });
+        }
       }
     }
   });
   tx(batches);
 
+  summary.durationMs = Date.now() - startedAt;
   logEvent(db, "scan_done", { entity: "scanner", payload: summary });
   return summary;
 }

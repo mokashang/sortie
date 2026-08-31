@@ -1246,10 +1246,10 @@ git commit -m "feat: github simplify-lists source with sponsorship metadata mapp
   { "name": "Brex",        "tier": 2, "ats": "greenhouse", "board_token": "brex",        "directions": ["swe_backend"] },
   { "name": "Gusto",       "tier": 3, "ats": "greenhouse", "board_token": "gusto",       "directions": ["swe_general"] },
   { "name": "Scale AI",    "tier": 1, "ats": "greenhouse", "board_token": "scaleai",     "directions": ["ai_infra", "mle"] },
-  { "name": "Citadel",     "tier": 1, "ats": "greenhouse", "board_token": "citadel",     "directions": ["quant", "swe_backend"] },
+  { "name": "Citadel",     "tier": 1, "ats": "other",      "board_token": null,          "careers_url": "https://www.citadel.com/careers", "directions": ["quant", "swe_backend"] },
   { "name": "Hudson River Trading", "tier": 1, "ats": "greenhouse", "board_token": "wehrtyou", "directions": ["quant", "systems_perf"] },
   { "name": "Jump Trading", "tier": 1, "ats": "greenhouse", "board_token": "jumptrading", "directions": ["quant", "systems_perf"] },
-  { "name": "Two Sigma",   "tier": 1, "ats": "greenhouse", "board_token": "twosigma",    "directions": ["quant", "mle"] },
+  { "name": "Two Sigma",   "tier": 1, "ats": "other",      "board_token": null,          "careers_url": "https://careers.twosigma.com", "directions": ["quant", "mle"] },
   { "name": "DRW",         "tier": 1, "ats": "greenhouse", "board_token": "drweng",      "directions": ["quant"] },
   { "name": "IMC Trading", "tier": 1, "ats": "greenhouse", "board_token": "imc",         "directions": ["quant"] },
   { "name": "Palantir",    "tier": 1, "ats": "lever",      "board_token": "palantir",    "directions": ["swe_general", "swe_backend"] },
@@ -1259,7 +1259,7 @@ git commit -m "feat: github simplify-lists source with sponsorship metadata mapp
   { "name": "Linear",      "tier": 2, "ats": "ashby",      "board_token": "linear",      "directions": ["swe_general"] },
   { "name": "Notion",      "tier": 1, "ats": "ashby",      "board_token": "notion",      "directions": ["swe_general"] },
   { "name": "Anysphere (Cursor)", "tier": 1, "ats": "ashby", "board_token": "cursor",    "directions": ["swe_general", "ai_infra"] },
-  { "name": "Perplexity",  "tier": 1, "ats": "ashby",      "board_token": "perplexity-ai", "directions": ["ai_infra", "mle"] },
+  { "name": "Perplexity",  "tier": 1, "ats": "ashby",      "board_token": "perplexity", "directions": ["ai_infra", "mle"] },
   { "name": "NVIDIA",      "tier": 1, "ats": "workday",    "board_token": null,          "careers_url": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite", "directions": ["gpu_cuda", "ai_infra", "systems_perf"] },
   { "name": "Apple",       "tier": 1, "ats": "other",      "board_token": null,          "careers_url": "https://jobs.apple.com", "directions": ["embedded", "swe_general", "systems_perf"] },
   { "name": "Tesla",       "tier": 2, "ats": "other",      "board_token": null,          "careers_url": "https://www.tesla.com/careers", "directions": ["embedded", "robotics"] },
@@ -1268,12 +1268,19 @@ git commit -m "feat: github simplify-lists source with sponsorship metadata mapp
 ]
 ```
 
+> **Post-implementation correction (quality review, 2026-08-30):** the initial real scan (Task
+> 10 Step 6) probed all board_token guesses live and found 3 wrong. Citadel and Two Sigma have
+> no working greenhouse/lever token under any guessed variant — reclassified `ats: "other"` with
+> a `careers_url`, dropping them out of the pollable set until Plan 2's UI lets a user fix them.
+> Perplexity's ashby board name is `perplexity`, not `perplexity-ai` (confirmed 200 + 97 live
+> jobs). The seed above already reflects the corrected values.
+
 - [ ] **Step 2: 写失败测试 tests/watchlist.test.ts**
 
 ```ts
 import { describe, it, expect } from "vitest";
 import { openDb } from "@/lib/db";
-import { syncWatchlist, getEnabledCompanies } from "@/scanner/watchlist";
+import { syncWatchlist, getEnabledCompanies, setProbeStatus } from "@/scanner/watchlist";
 
 const seed = [
   { name: "Acme", tier: 1, ats: "greenhouse", board_token: "acme", directions: ["swe_general"] },
@@ -1295,6 +1302,32 @@ describe("watchlist", () => {
     const pollable = getEnabledCompanies(db, { pollableOnly: true });
     expect(pollable).toHaveLength(1);
     expect(pollable[0].name).toBe("Acme");
+  });
+
+  // Added post-implementation (quality review): DO NOTHING made reseeds a no-op, so a
+  // corrected board_token in the seed file would never reach the DB on a re-run. DO UPDATE
+  // fixes that, but must not clobber runtime state (enabled/probe_status) the seed doesn't own.
+  it("reseeding updates mutable fields (e.g. board_token) but preserves enabled/probe_status", () => {
+    const db = openDb(":memory:");
+    syncWatchlist(db, seed);
+    // simulate user/scan mutations that must survive a reseed
+    const row = db.prepare("SELECT id FROM companies WHERE name='Acme'").get() as { id: number };
+    setProbeStatus(db, row.id, "ok");
+    db.prepare("UPDATE companies SET enabled=0 WHERE id=?").run(row.id);
+
+    const updatedSeed = [
+      { name: "Acme", tier: 1, ats: "greenhouse", board_token: "acme2", directions: ["swe_general", "mle"] },
+      { name: "NoApi", tier: 2, ats: "other", board_token: null, careers_url: "https://x.example", directions: ["quant"] },
+    ];
+    syncWatchlist(db, updatedSeed);
+
+    const after = db
+      .prepare("SELECT board_token, directions, enabled, probe_status FROM companies WHERE name='Acme'")
+      .get() as { board_token: string; directions: string; enabled: number; probe_status: string };
+    expect(after.board_token).toBe("acme2");
+    expect(JSON.parse(after.directions)).toEqual(["swe_general", "mle"]);
+    expect(after.enabled).toBe(0);
+    expect(after.probe_status).toBe("ok");
   });
 });
 ```
@@ -1327,15 +1360,25 @@ export interface CompanyRow {
   careers_url: string | null;
   enabled: number;
   probe_status: string | null;
+  directions: string;
 }
 
 const POLLABLE = new Set(["greenhouse", "lever", "ashby"]);
 
+// Reseeding updates the fields the seed file actually owns (tier/ats/board_token/careers_url/
+// directions) so corrections to e.g. a wrong board_token take effect on the next sync — but
+// deliberately leaves `enabled` and `probe_status` out of the SET clause, since those are
+// runtime state owned by the user (enabled) and the scanner (probe_status), not the seed.
 export function syncWatchlist(db: DB, seed: SeedCompany[]): void {
   const ins = db.prepare(
     `INSERT INTO companies (name, tier, ats, board_token, careers_url, probe_status, directions)
      VALUES (?,?,?,?,?, 'untested', ?)
-     ON CONFLICT(name) DO NOTHING`
+     ON CONFLICT(name) DO UPDATE SET
+       tier=excluded.tier,
+       ats=excluded.ats,
+       board_token=excluded.board_token,
+       careers_url=excluded.careers_url,
+       directions=excluded.directions`
   );
   const tx = db.transaction((rows: SeedCompany[]) => {
     for (const c of rows)
@@ -1359,7 +1402,7 @@ export function setProbeStatus(db: DB, companyId: number, status: "ok" | "failed
 - [ ] **Step 5: 跑测试确认通过**
 
 Run: `npx vitest run tests/watchlist.test.ts`
-Expected: 2 passed
+Expected: 3 passed
 
 - [ ] **Step 6: Commit**
 
@@ -1419,8 +1462,11 @@ describe("runScan", () => {
     };
     const summary = await runScan(db, sources);
     expect(summary.inserted).toBe(3);
+    expect(summary.upgraded).toBe(0);
     expect(summary.duplicates).toBe(1);
     expect(summary.sourceErrors).toHaveLength(1);
+    expect(typeof summary.durationMs).toBe("number");
+    expect(summary.durationMs).toBeGreaterThanOrEqual(0);
     const flagged = db.prepare("SELECT visa_flag FROM jobs WHERE title='SWE II'").get() as { visa_flag: string };
     expect(flagged.visa_flag).toBe("no_sponsor");
     // 失败的公司 probe_status 标记为 failed
@@ -1432,6 +1478,138 @@ describe("runScan", () => {
     // summary 事件写入 events
     const ev = db.prepare("SELECT COUNT(*) n FROM events WHERE kind='scan_done'").get() as { n: number };
     expect(ev.n).toBe(1);
+  });
+
+  // Added post-implementation (quality review — CRITICAL): the first real scan found that a
+  // thin github_list row (jdText '' or just a sponsorship marker) landing after a richer ATS
+  // row for the same job silently discarded the real JD and visa_flag — or, in the reverse
+  // insert order, a thin row that landed first never got upgraded once the rich row showed up.
+  // 63% of stored rows ended up with no JD text, hiding no_sponsor jobs. These two tests pin
+  // both insert orders.
+  it("upgrades a thin (empty/listing-metadata-only) record with a richer record's JD and visa flag when the rich one arrives later, without creating a second application", async () => {
+    const db = openDb(":memory:");
+    syncWatchlist(db, [{ name: "Acme", tier: 1, ats: "greenhouse", board_token: "acme", directions: [] }]);
+    const thin = job({
+      company: "ListCo2",
+      title: "SWE Upgrade Test",
+      location: "Remote",
+      jdText: "",
+      applyUrl: "https://thin.example",
+      source: "github_list",
+      ats: null,
+    });
+    const rich = job({
+      company: "ListCo2",
+      title: "SWE Upgrade Test",
+      location: "Remote",
+      jdText: "unable to sponsor visas",
+      applyUrl: "https://rich.example",
+      source: "greenhouse",
+      ats: "greenhouse",
+    });
+
+    const s1 = await runScan(db, {
+      greenhouse: async () => [],
+      lever: async () => [],
+      ashby: async () => [],
+      githubLists: async () => [thin],
+    });
+    expect(s1.inserted).toBe(1);
+    expect(s1.upgraded).toBe(0);
+
+    const s2 = await runScan(db, {
+      greenhouse: async (token: string) => (token === "acme" ? [rich] : []),
+      lever: async () => [],
+      ashby: async () => [],
+      githubLists: async () => [],
+    });
+    expect(s2.inserted).toBe(0);
+    expect(s2.upgraded).toBe(1);
+    expect(s2.duplicates).toBe(0);
+
+    const row = db
+      .prepare("SELECT jd_text, visa_flag, apply_url FROM jobs WHERE company='ListCo2'")
+      .get() as { jd_text: string; visa_flag: string; apply_url: string };
+    expect(row.jd_text).toBe("unable to sponsor visas");
+    expect(row.visa_flag).toBe("no_sponsor");
+    expect(row.apply_url).toBe("https://rich.example");
+
+    const apps = db
+      .prepare("SELECT COUNT(*) n FROM applications WHERE job_id = (SELECT id FROM jobs WHERE company='ListCo2')")
+      .get() as { n: number };
+    expect(apps.n).toBe(1);
+  });
+
+  it("does not let a later thin record downgrade an already-rich stored record (reverse insert order)", async () => {
+    const db = openDb(":memory:");
+    syncWatchlist(db, [{ name: "Acme", tier: 1, ats: "greenhouse", board_token: "acme", directions: [] }]);
+    const thin = job({
+      company: "ListCo3",
+      title: "SWE Downgrade Test",
+      location: "Remote",
+      jdText: "",
+      applyUrl: "https://thin.example",
+      source: "github_list",
+      ats: null,
+    });
+    const rich = job({
+      company: "ListCo3",
+      title: "SWE Downgrade Test",
+      location: "Remote",
+      jdText: "unable to sponsor visas",
+      applyUrl: "https://rich.example",
+      source: "greenhouse",
+      ats: "greenhouse",
+    });
+
+    const s1 = await runScan(db, {
+      greenhouse: async (token: string) => (token === "acme" ? [rich] : []),
+      lever: async () => [],
+      ashby: async () => [],
+      githubLists: async () => [],
+    });
+    expect(s1.inserted).toBe(1);
+
+    const s2 = await runScan(db, {
+      greenhouse: async () => [],
+      lever: async () => [],
+      ashby: async () => [],
+      githubLists: async () => [thin],
+    });
+    expect(s2.inserted).toBe(0);
+    expect(s2.upgraded).toBe(0);
+    expect(s2.duplicates).toBe(1);
+
+    const row = db
+      .prepare("SELECT jd_text, visa_flag, apply_url FROM jobs WHERE company='ListCo3'")
+      .get() as { jd_text: string; visa_flag: string; apply_url: string };
+    expect(row.jd_text).toBe("unable to sponsor visas");
+    expect(row.visa_flag).toBe("no_sponsor");
+    expect(row.apply_url).toBe("https://rich.example");
+
+    const apps = db
+      .prepare("SELECT COUNT(*) n FROM applications WHERE job_id = (SELECT id FROM jobs WHERE company='ListCo3')")
+      .get() as { n: number };
+    expect(apps.n).toBe(1);
+  });
+
+  // Added post-implementation (quality review — IMPORTANT): the old bare `catch` treated every
+  // insJob failure as a duplicate, masking real errors (e.g. a malformed source record that
+  // violates NOT NULL). Only a genuine UNIQUE-constraint conflict should count as a duplicate.
+  it("routes a non-unique-constraint insert failure (e.g. NOT NULL violation) to sourceErrors, not duplicates", async () => {
+    const db = openDb(":memory:");
+    syncWatchlist(db, []);
+    const bad = { ...job({}), title: null } as unknown as RawJob;
+    const s = await runScan(db, {
+      greenhouse: async () => [],
+      lever: async () => [],
+      ashby: async () => [],
+      githubLists: async () => [bad],
+    });
+    expect(s.inserted).toBe(0);
+    expect(s.upgraded).toBe(0);
+    expect(s.duplicates).toBe(0);
+    expect(s.sourceErrors.some((e) => e.source === "insert")).toBe(true);
   });
 });
 ```
@@ -1464,9 +1642,11 @@ export interface ScanSources {
 
 export interface ScanSummary {
   inserted: number;
+  upgraded: number;
   duplicates: number;
   visaSkipped: number;
   sourceErrors: { source: string; error: string }[];
+  durationMs: number;
 }
 
 const LIVE_SOURCES: ScanSources = {
@@ -1481,7 +1661,15 @@ const LIVE_SOURCES: ScanSources = {
 };
 
 export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Promise<ScanSummary> {
-  const summary: ScanSummary = { inserted: 0, duplicates: 0, visaSkipped: 0, sourceErrors: [] };
+  const startedAt = Date.now();
+  const summary: ScanSummary = {
+    inserted: 0,
+    upgraded: 0,
+    duplicates: 0,
+    visaSkipped: 0,
+    sourceErrors: [],
+    durationMs: 0,
+  };
   const batches: RawJob[] = [];
 
   try {
@@ -1503,9 +1691,26 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
     }
   }
 
+  const findByFp = db.prepare("SELECT id FROM jobs WHERE fingerprint = ?");
+  // Upsert on fingerprint conflict, but only "win" the conflict (overwrite jd_text/visa_flag/
+  // apply_url/source/ats) when the incoming row is richer than what's stored: the stored row
+  // is still empty/listing-metadata-only AND the incoming row has real JD text. This fixes a
+  // critical bug where a thin github_list row (jdText '' or just a sponsorship marker) landing
+  // after a richer ATS row for the same job would silently discard the real JD and visa_flag —
+  // or, depending on insert order, a thin row that inserted first would never get upgraded once
+  // the rich ATS row showed up, since the old code treated every conflict as a no-op duplicate.
+  // posted_at uses COALESCE so an upgrade never blanks out a posted date the stored row already had.
   const insJob = db.prepare(
     `INSERT INTO jobs (fingerprint, company, title, location, jd_text, apply_url, source, ats, posted_at, job_kind, visa_flag)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(fingerprint) DO UPDATE SET
+       jd_text=excluded.jd_text,
+       visa_flag=excluded.visa_flag,
+       apply_url=excluded.apply_url,
+       source=excluded.source,
+       ats=excluded.ats,
+       posted_at=COALESCE(excluded.posted_at, jobs.posted_at)
+     WHERE excluded.jd_text<>'' AND (jobs.jd_text='' OR jobs.jd_text LIKE '[listing metadata]%')`
   );
   const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
 
@@ -1513,21 +1718,42 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
     for (const r of rows) {
       const fp = fingerprint(r.company, r.title, r.location);
       const flag = visaFlag(r.jdText);
+      // Pre-check whether this fingerprint already exists: with ON CONFLICT DO UPDATE, .run()
+      // no longer throws on conflict (nor does .changes alone distinguish a fresh INSERT from
+      // an UPDATE — both report changes=1), so this SELECT is the cleanest way to classify the
+      // outcome as insert vs. upgrade vs. untouched-duplicate.
+      const existing = findByFp.get(fp) as { id: number } | undefined;
       try {
         const info = insJob.run(
           fp, r.company, r.title, r.location, r.jdText, r.applyUrl,
           r.source, r.ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag
         );
-        insApp.run(info.lastInsertRowid);
-        summary.inserted++;
-        if (flag) summary.visaSkipped++;
-      } catch {
-        summary.duplicates++; // UNIQUE(fingerprint) 冲突 = 已见过
+        if (!existing) {
+          // Brand-new job: create its application row. Never done for upgrades — the job id
+          // (and its application) must stay stable across re-scans of the same fingerprint.
+          insApp.run(info.lastInsertRowid);
+          summary.inserted++;
+          if (flag) summary.visaSkipped++;
+        } else if (info.changes > 0) {
+          summary.upgraded++;
+        } else {
+          summary.duplicates++; // conflict existed but WHERE didn't match = already-seen, no richer data
+        }
+      } catch (e) {
+        const code = (e as { code?: string }).code;
+        if (code === "SQLITE_CONSTRAINT_UNIQUE") {
+          summary.duplicates++;
+        } else {
+          // Don't abort the whole batch (and don't rethrow) over one bad row — e.g. a NOT NULL
+          // violation from a malformed source record. Isolate it and keep processing the rest.
+          summary.sourceErrors.push({ source: "insert", error: String(e) });
+        }
       }
     }
   });
   tx(batches);
 
+  summary.durationMs = Date.now() - startedAt;
   logEvent(db, "scan_done", { entity: "scanner", payload: summary });
   return summary;
 }
@@ -1536,27 +1762,35 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run tests/scan-run.test.ts`
-Expected: 1 passed
+Expected: 4 passed
 
 - [ ] **Step 5: 写 scripts/scan.ts(CLI 入口,cron 与手动共用)**
 
 ```ts
 import { getDb } from "../src/lib/db";
-import { syncWatchlist, SeedCompany } from "../src/scanner/watchlist";
+import { syncWatchlist } from "../src/scanner/watchlist";
 import { runScan } from "../src/scanner/run";
 import seed from "../config/watchlist.seed.json";
 
 async function main() {
   const db = getDb();
-  syncWatchlist(db, seed as SeedCompany[]);
+  syncWatchlist(db, seed);
   const s = await runScan(db);
   console.log(
-    `scan done: +${s.inserted} new, ${s.duplicates} dup, ${s.visaSkipped} visa-flagged, ${s.sourceErrors.length} source errors`
+    `scan done: +${s.inserted} new, ${s.upgraded} upgraded, ${s.duplicates} dup, ${s.visaSkipped} visa-flagged, ${s.sourceErrors.length} source errors (${s.durationMs}ms)`
   );
   for (const e of s.sourceErrors) console.error(`  [${e.source}] ${e.error}`);
 }
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
 ```
+
+> **Post-implementation correction (quality review):** dropped the `as SeedCompany[]` cast — the
+> JSON import already satisfies `SeedCompany[]` structurally with `resolveJsonModule` on — and
+> added a `.catch` on `main()` so an unhandled rejection (e.g. every source failing) exits
+> non-zero instead of silently swallowing the error.
 
 - [ ] **Step 6: 联网真实跑一次全量扫描(同时充当 watchlist probe 验证)**
 
@@ -1568,6 +1802,27 @@ Expected: 打印 `scan done: +N new ...`,N 为数百量级。source errors 里�
 ```bash
 git add src/scanner/run.ts scripts/scan.ts tests/scan-run.test.ts
 git commit -m "feat: scan orchestrator with dedupe, visa flagging, source isolation"
+```
+
+- [ ] **Step 8 (post-implementation, quality review): rich-record upsert + reseed fix**
+
+The first real scan (Step 6) surfaced a critical defect: 63% of stored rows ended up with no
+JD text because a thin `github_list` row could win the `UNIQUE(fingerprint)` race against the
+richer ATS row for the same job, silently discarding the real JD and `visa_flag` — hiding
+`no_sponsor` jobs from the filter they exist to power. Fixed with the rich-record upgrade
+upsert documented in Steps 1/3 above (`ON CONFLICT(fingerprint) DO UPDATE ... WHERE`), plus:
+typed constraint handling in the same `catch` (only `SQLITE_CONSTRAINT_UNIQUE` counts as a
+duplicate; anything else is isolated into `sourceErrors` rather than mis-counted or rethrown),
+`syncWatchlist`'s `ON CONFLICT DO NOTHING` → `DO UPDATE` (Task 9) so a corrected `board_token`
+in the seed file actually takes effect on reseed, and `scripts/scan.ts` cleanup. Also corrected
+the 3 board_token guesses that failed probe in the first real scan (see the note under Task 9
+Step 1) and re-ran `npm run scan` for real to confirm the upgrade path backfills JD text into
+the previously-thin rows.
+
+```bash
+git add config/watchlist.seed.json scripts/scan.ts src/scanner/run.ts src/scanner/watchlist.ts \
+  tests/scan-run.test.ts tests/watchlist.test.ts docs/superpowers/plans/2026-08-30-plan1-foundation-scanner.md
+git commit -m "fix: rich-record upsert, typed constraint handling, watchlist reseed semantics"
 ```
 
 ---

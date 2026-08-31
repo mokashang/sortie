@@ -18,15 +18,25 @@ export interface CompanyRow {
   careers_url: string | null;
   enabled: number;
   probe_status: string | null;
+  directions: string;
 }
 
 const POLLABLE = new Set(["greenhouse", "lever", "ashby"]);
 
+// Reseeding updates the fields the seed file actually owns (tier/ats/board_token/careers_url/
+// directions) so corrections to e.g. a wrong board_token take effect on the next sync — but
+// deliberately leaves `enabled` and `probe_status` out of the SET clause, since those are
+// runtime state owned by the user (enabled) and the scanner (probe_status), not the seed.
 export function syncWatchlist(db: DB, seed: SeedCompany[]): void {
   const ins = db.prepare(
     `INSERT INTO companies (name, tier, ats, board_token, careers_url, probe_status, directions)
      VALUES (?,?,?,?,?, 'untested', ?)
-     ON CONFLICT(name) DO NOTHING`
+     ON CONFLICT(name) DO UPDATE SET
+       tier=excluded.tier,
+       ats=excluded.ats,
+       board_token=excluded.board_token,
+       careers_url=excluded.careers_url,
+       directions=excluded.directions`
   );
   const tx = db.transaction((rows: SeedCompany[]) => {
     for (const c of rows)
