@@ -1,0 +1,32 @@
+[
+  {
+    "company_name": "Nimbus",
+    "title": "Software Engineer I",
+    "locations": ["Seattle, WA"],
+    "url": "https://nimbus.example/apply",
+    "active": true,
+    "is_visible": true,
+    "sponsorship": "Offers Sponsorship",
+    "date_posted": 1787961600
+  },
+  {
+    "company_name": "OldCo",
+    "title": "SWE New Grad",
+    "locations": ["Austin, TX"],
+    "url": "https://oldco.example/apply",
+    "active": false,
+    "is_visible": true,
+    "sponsorship": "Other",
+    "date_posted": 1740000000
+  },
+  {
+    "company_name": "Fortress",
+    "title": "Junior Developer",
+    "locations": ["DC"],
+    "url": "https://fortress.example/apply",
+    "active": true,
+    "is_visible": true,
+    "sponsorship": "Does Not Offer Sponsorship",
+    "date_posted": 1756500000
+  }
+]
