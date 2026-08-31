@@ -25,6 +25,17 @@ const ProfileSchema = z
       .record(z.string(), z.number().int().min(1).max(3))
       .refine((d) => Object.keys(d).length > 0, { message: "directions must not be empty" }),
     daily_minutes_budget: z.number().default(90),
+    // Apply-executor answer pack fields (optional/backward-compatible — existing profile.yaml
+    // files without these keys still parse, picking up the defaults below).
+    eeo: z
+      .object({
+        gender: z.string().default("Decline to self-identify"),
+        race: z.string().default("Decline to self-identify"),
+        veteran: z.string().default("I am not a protected veteran"),
+        disability: z.string().default("I do not want to answer"),
+      })
+      .default({}),
+    standard_answers: z.record(z.string(), z.string()).default({}), // e.g. {"How did you hear": "Company website"}
   })
   .strict();
 
