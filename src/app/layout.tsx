@@ -11,6 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/jobs">职位</a>
           <a href="/queue">队列</a>
           <a href="/apply">投递</a>
+          <a href="/network">人脉</a>
           <a href="/profile">Profile</a>
           <a href="/studio">Studio</a>
         </nav>
