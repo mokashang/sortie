@@ -88,4 +88,135 @@ describe("runMatching", () => {
     expect(summary.scored).toBe(0);
     expect(summary.errors.length).toBeGreaterThan(0);
   });
+
+  it("first-occurrence wins when a batch response contains a duplicate job_id (a stray duplicate can't clobber a good score)", async () => {
+    const db = openDb(":memory:");
+    const ins = db.prepare(
+      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+    );
+    const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+    const info = ins.run("dup1", "Acme", "Backend Engineer New Grad", "SF", "Do the thing.", "greenhouse", null);
+    const jobId = Number(info.lastInsertRowid);
+    insApp.run(jobId);
+
+    const dupBackend: LlmBackend = {
+      name: "dup",
+      complete: async () => ({
+        text: JSON.stringify([
+          { job_id: jobId, direction: "swe_backend", score: 84, skip: false, reason: "good" },
+          { job_id: jobId, direction: "swe_backend", score: 12, skip: false, reason: "stray duplicate" },
+        ]),
+        backend: "dup",
+      }),
+    };
+
+    await runMatching(db, {
+      backend: dupBackend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 10,
+      threshold: 40,
+    });
+
+    const m = db.prepare("SELECT score FROM matches WHERE job_id=?").get(jobId) as any;
+    expect(m.score).toBe(84);
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as any;
+    expect(app.status).toBe("matched");
+  });
+
+  it("rescoreArchived:true re-scores archived jobs and can rescue an under-scored one", async () => {
+    const db = openDb(":memory:");
+    const ins = db.prepare(
+      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+    );
+    const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+    const info = ins.run("resc1", "Acme", "Backend Engineer New Grad", "SF", "Do the thing.", "greenhouse", null);
+    const jobId = Number(info.lastInsertRowid);
+    insApp.run(jobId);
+    db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(jobId);
+    db.prepare(
+      "INSERT INTO matches (job_id, direction, score, tier, reason, skip_reason) VALUES (?,?,?,?,?,?)"
+    ).run(jobId, "swe_backend", 20, 1, "old reason", "low score (20)");
+
+    const rescueBackend: LlmBackend = {
+      name: "rescue",
+      complete: async () => ({
+        text: JSON.stringify([{ job_id: jobId, direction: "swe_backend", score: 80, skip: false, reason: "better calibration" }]),
+        backend: "rescue",
+      }),
+    };
+    const opts = {
+      backend: rescueBackend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 10,
+      threshold: 40,
+    };
+
+    // Default (rescoreArchived unset/false): the archived job already has a match row, so it's
+    // never revisited by the resumable gate.
+    const untouched = await runMatching(db, opts);
+    expect(untouched.scored).toBe(0);
+    const stillOld = db.prepare("SELECT score FROM matches WHERE job_id=?").get(jobId) as any;
+    expect(stillOld.score).toBe(20);
+
+    // rescoreArchived:true rescues it.
+    const summary = await runMatching(db, { ...opts, rescoreArchived: true });
+    expect(summary.scored).toBe(1);
+    const m = db.prepare("SELECT score, direction FROM matches WHERE job_id=?").get(jobId) as any;
+    expect(m.score).toBe(80);
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as any;
+    expect(app.status).toBe("matched");
+  });
+
+  it("sets skip_reason to a low-score message when archived purely by threshold (skip=false)", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    const backend = scriptedBackend({
+      "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false },
+      Paralegal: { direction: "swe_backend", score: 20, skip: false }, // below threshold, model didn't set skip
+    });
+
+    await runMatching(db, {
+      backend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 10,
+      threshold: 40,
+    });
+
+    const m = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(ids.paralegal) as any;
+    expect(m.skip_reason).toBe("low score (20)");
+  });
+
+  it("only counts matched/archived when the application status actually changed", async () => {
+    const db = openDb(":memory:");
+    const ins = db.prepare(
+      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+    );
+    const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+    const info = ins.run("sub1", "Acme", "Backend Engineer New Grad", "SF", "Do the thing.", "greenhouse", null);
+    const jobId = Number(info.lastInsertRowid);
+    insApp.run(jobId);
+    db.prepare("UPDATE applications SET status='submitted' WHERE job_id=?").run(jobId);
+
+    const backend: LlmBackend = {
+      name: "sub",
+      complete: async () => ({
+        text: JSON.stringify([{ job_id: jobId, direction: "swe_backend", score: 80, skip: false, reason: "x" }]),
+        backend: "sub",
+      }),
+    };
+
+    const summary = await runMatching(db, {
+      backend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 10,
+      threshold: 40,
+    });
+
+    expect(summary.scored).toBe(1);
+    expect(summary.matched).toBe(0);
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as any;
+    expect(app.status).toBe("submitted");
+    const m = db.prepare("SELECT score FROM matches WHERE job_id=?").get(jobId) as any;
+    expect(m.score).toBe(80);
+  });
 });

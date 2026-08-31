@@ -40,7 +40,7 @@ export function buildMatchPrompt(profile: MatchProfile, jobs: MatchJobInput[]): 
   const jobBlocks = jobs
     .map(
       (j) =>
-        `<job id="${j.id}">\ncompany: ${j.company}\ntitle: ${j.title}\nlocation: ${j.location ?? "n/a"}\ndescription: ${truncate(j.jdText, 1500)}\n</job>`
+        `<job id="${j.id}">\ncompany: ${j.company}\ntitle: ${j.title}\nlocation: ${j.location ?? "n/a"}\ndescription: ${escapeAngles(truncate(j.jdText, 1500))}\n</job>`
     )
     .join("\n\n");
 
@@ -61,16 +61,30 @@ export function buildMatchPrompt(profile: MatchProfile, jobs: MatchJobInput[]): 
 export function parseMatchResults(text: string): MatchResult[] {
   const raw = extractJson<unknown[]>(text);
   if (!Array.isArray(raw)) throw new Error("parseMatchResults: expected a JSON array");
-  return raw.map((item) => {
-    const r = MatchResultSchema.parse(item);
+  const out: MatchResult[] = [];
+  for (const item of raw) {
+    // Per-item tolerance: one malformed item (bad score, wrong types, overlong reason, ...) must
+    // not sink the whole batch — drop it and keep whatever validated, so the batch's other jobs
+    // still get scored instead of retrying identically forever.
+    const parsed = MatchResultSchema.safeParse(item);
+    if (!parsed.success) continue;
+    const r = parsed.data;
     // Unknown direction slug from the model → null it and force skip (nothing to apply toward).
     if (r.direction !== null && !isKnownDirection(r.direction)) {
-      return { ...r, direction: null, skip: true };
+      out.push({ ...r, direction: null, skip: true });
+    } else {
+      out.push(r);
     }
-    return r;
-  });
+  }
+  return out;
 }
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + "…";
+}
+
+// The JD text is untrusted scraped data embedded inside a <job>...</job> fence. Escape angle
+// brackets so a stray "</job><job id=...>" in the JD can't forge a fake fence boundary.
+function escapeAngles(s: string): string {
+  return s.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
