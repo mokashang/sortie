@@ -54,7 +54,8 @@
 ```
 
 - **判断引擎**:App 通过 Claude Agent SDK 无头调用 Claude;扫描完成后自动执行,不需用户在场
-- **执行引擎**:需要用户 Chrome 的登录态(LinkedIn/Workday 等),在用户于 UI 点"开始处理"后由 Claude 经 claude-in-chrome 驱动真实浏览器执行
+- **执行引擎**:需要用户 Chrome 的登录态(LinkedIn/Workday 等)。**用户在 UI 点按钮(如"开始投递前 N 个")→ App 后台 spawn 无头 claude 会话(executor_runs 表跟踪 PID/日志,UI 有运行状态、日志尾部、停止按钮)→ 无头会话经 hanzi-browse MCP 驱动用户真实 Chrome → 用户只在 App 内确认**。用户明确要求(2026-08-31):一切从 App 内触发,永不手动开 Claude 会话——这也是 Phase B 的产品形态
+- **UI 设计语言**(用户 2026-08-31 从四方案中选定):**制版间 / Editorial Paper**——纸感底色、Newsreader 衬线标题与数字、IBM Plex Sans 正文、JetBrains Mono 表格数字、印刷红点缀、直角、细线分隔、面板用顶部墨线而非卡片框;密度稍紧凑;跟随系统深浅切换(深色为同世界观的"墨纸":暖黑底/米白字/砖红)
 - **启动**:launchd 保证 App 开机常驻;调度器在进程内触发定时任务
 
 ## 3. 数据模型(SQLite)
