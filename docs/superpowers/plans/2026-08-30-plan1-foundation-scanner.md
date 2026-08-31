@@ -1516,7 +1516,7 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
       try {
         const info = insJob.run(
           fp, r.company, r.title, r.location, r.jdText, r.applyUrl,
-          r.source, r.ats, r.postedAt, jobKindFromTitle(r.title), flag
+          r.source, r.ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag
         );
         insApp.run(info.lastInsertRowid);
         summary.inserted++;
