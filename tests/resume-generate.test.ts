@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { openDb } from "@/lib/db";
 import { createExperience } from "@/resume/experiences";
-import { generateResume } from "@/resume/generate";
+import { generateResume, isSafeVersionName } from "@/resume/generate";
 import { LlmBackend } from "@/llm/types";
 
 function seed(db: ReturnType<typeof openDb>) {
@@ -56,5 +56,53 @@ describe("generateResume", () => {
     await expect(
       generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: async (_t, o) => o, outDir: "/tmp/x" })
     ).rejects.toThrow(/unknown experience id|9999/i);
+  });
+
+  it("resolves resumeId by version_name on regenerate, not by stale last_insert_rowid", async () => {
+    // SQLite's last_insert_rowid() is not reset by ON CONFLICT DO UPDATE — it keeps the last
+    // real INSERT's rowid on the connection. Regenerating an existing version_name must still
+    // return the id of the ORIGINAL row (updated in place), not whatever id was last inserted.
+    const db = openDb(":memory:");
+    seed(db);
+    const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
+    const selection = { sections: [{ heading: "Education", entry_ids: [exps[0].id] }] };
+    const fakeCompile = async (_t: string, o: string) => o;
+
+    const first = await generateResume(db, {
+      backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "dup_v1",
+      compile: fakeCompile, outDir: "/tmp/resumes-test",
+    });
+
+    // Advance last_insert_rowid on this connection past dup_v1's row by generating an unrelated
+    // second version.
+    await generateResume(db, {
+      backend: fakeBackend(selection), contact, direction: "mle", versionName: "other_v2",
+      compile: fakeCompile, outDir: "/tmp/resumes-test",
+    });
+
+    // Regenerate dup_v1 with a different direction — this hits the ON CONFLICT DO UPDATE path.
+    const regenerated = await generateResume(db, {
+      backend: fakeBackend(selection), contact, direction: "swe_backend", versionName: "dup_v1",
+      compile: fakeCompile, outDir: "/tmp/resumes-test",
+    });
+
+    const row = db.prepare("SELECT id FROM resumes WHERE version_name=?").get("dup_v1") as { id: number };
+    expect(regenerated.resumeId).toBe(first.resumeId);
+    expect(regenerated.resumeId).toBe(row.id);
+
+    const dupCount = (db.prepare("SELECT COUNT(*) n FROM resumes WHERE version_name=?").get("dup_v1") as { n: number }).n;
+    expect(dupCount).toBe(1);
+  });
+});
+
+describe("isSafeVersionName", () => {
+  it("rejects names that could escape the output directory", () => {
+    expect(isSafeVersionName("../x")).toBe(false);
+    expect(isSafeVersionName("a/b")).toBe(false);
+    expect(isSafeVersionName("a\\b")).toBe(false);
+  });
+  it("accepts plain version names", () => {
+    expect(isSafeVersionName("ai_infra_v1")).toBe(true);
+    expect(isSafeVersionName("swe_backend_2027")).toBe(true);
   });
 });

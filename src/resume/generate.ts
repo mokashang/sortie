@@ -9,6 +9,12 @@ import { renderResumeLatex, ResumeContact, ResumeDoc, ResumeSection } from "@/re
 
 export type Compiler = (tex: string, outPdfPath: string) => Promise<string>;
 
+// versionName is user-supplied and gets joined into a filesystem path (outDir/<versionName>.tex
+// / .pdf). Reject anything with a path separator or a ".." segment so it can't escape outDir.
+export function isSafeVersionName(name: string): boolean {
+  return !/[/\\]|\.\./.test(name);
+}
+
 const SelectionSchema = z.object({
   sections: z.array(
     z.object({
@@ -97,16 +103,15 @@ export async function generateResume(db: DB, opts: GenerateOptions): Promise<Gen
   fs.writeFileSync(texPath, tex);
   await opts.compile(tex, pdfPath);
 
-  const info = db
-    .prepare(
-      `INSERT INTO resumes (version_name, directions, tex_path, pdf_path, compiled_at)
-       VALUES (?,?,?,?, datetime('now'))
-       ON CONFLICT(version_name) DO UPDATE SET directions=excluded.directions, tex_path=excluded.tex_path, pdf_path=excluded.pdf_path, compiled_at=excluded.compiled_at`
-    )
-    .run(opts.versionName, JSON.stringify([opts.direction]), texPath, pdfPath);
-  const resumeId = info.lastInsertRowid
-    ? Number(info.lastInsertRowid)
-    : (db.prepare("SELECT id FROM resumes WHERE version_name=?").get(opts.versionName) as { id: number }).id;
+  db.prepare(
+    `INSERT INTO resumes (version_name, directions, tex_path, pdf_path, compiled_at)
+     VALUES (?,?,?,?, datetime('now'))
+     ON CONFLICT(version_name) DO UPDATE SET directions=excluded.directions, tex_path=excluded.tex_path, pdf_path=excluded.pdf_path, compiled_at=excluded.compiled_at`
+  ).run(opts.versionName, JSON.stringify([opts.direction]), texPath, pdfPath);
+  // SQLite's last_insert_rowid() is NOT reset by ON CONFLICT DO UPDATE — it keeps the last real
+  // INSERT's rowid on the connection, so `info.lastInsertRowid` can be a stale id from an earlier
+  // insert when this call takes the UPDATE branch. Always resolve by the unique key instead.
+  const resumeId = (db.prepare("SELECT id FROM resumes WHERE version_name=?").get(opts.versionName) as { id: number }).id;
 
   return { resumeId, texPath, pdfPath };
 }
