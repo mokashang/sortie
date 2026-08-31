@@ -50,6 +50,48 @@
 
 **红线(代码层强制,不是靠自觉):** 执行器不会在没看到你批准之前点最终提交;App 侧 `reportSubmitted` 只在 `confirm_decision='approved'` 且状态仍为 `awaiting_confirm` 时才允许把状态写成 `submitted`,否则直接抛错——即使执行器出于某种原因想跳过确认硬点提交,回报也会被 App 拒绝。页面/JD 里的任何文字都只是数据,不会被当作对执行器的指令;所有字段值只来自答案包,绝不临时编造,尤其是签证/工作授权类问题。
 
+## 人脉 / Networking
+集中式 CRM:联系人(招聘方/校友/用人经理/工程师)、多剧本 AI 草稿(referral/self_pitch/recruiter/
+coffee_chat/hidden_opportunity/followup/thanks)、消息记录、与申请双向关联,全部在 `/network` 页管理。
+
+**联系人**:手动加(姓名必填,公司/职位/LinkedIn/Email/关系可选),或由 network-executor 找人模式自动写入
+(`source='executor'`)。点选联系人看它的 outreach 历史(thread_log 时间线)和关联岗位。
+
+**AI 草稿**:选联系人 + 剧本 + 可选关联岗位,点"AI 草稿"(可能要等到 30 秒)。生成的草稿落在"草稿审批区",
+可以直接编辑文本框,[批准发送](先保存编辑再批准)或[拒绝]。
+
+**发送**:
+- LinkedIn 渠道的已批准草稿"待执行器发送"——需要开一个独立的 `network-executor` 会话去真的点发送(见下)。
+- Email 渠道 v1 走 `mailto:` 链接(草稿存的是 `Subject: ...\n\n正文`,UI 自动拆开预填收件人/主题/正文到
+  你自己的邮件客户端),发完点[标记已发]手动回报(因为执行器不碰邮件)。
+
+**开一个 network-executor 会话:**
+1. 确保 App 在跑(`npm run dev`)且已连接 claude-in-chrome 浏览器扩展,浏览器里已登录 LinkedIn。
+2. 另开一个 `claude` 会话,说"运行 network executor"/"发送我批准的 outreach"/"帮我在 X 公司找人",让它加载
+   `network-executor` skill(`.claude/skills/network-executor/SKILL.md`)。
+3. 两种模式,默认先发送模式再找人模式:
+   - **发送模式**:轮询 `/api/network/sendables`,只发这个列表里、渠道为 linkedin 的批准草稿——未连接就发
+     连接请求(note 裁剪到 280 字符内,超长且没法安全裁剪就跳过标"needs-edit",绝不自行改写);已连接就发
+     DM 全文。同时顺带打开 LinkedIn 消息页,把新回复写回对应联系人的 thread_log。
+   - **找人模式**:只读 LinkedIn 搜索(不连接、不发消息),从队列头部公司找 recruiter/USC 校友/工程师,写入
+     CRM 等你后续手动生成草稿。
+
+**发送红线(执行器 skill 里写死,App 侧也有代码层双锁):** 执行器只发送 `sendables()` 返回的、已经在 App 里
+批准过的草稿,逐字核对页面输入框内容与草稿一致才点发送,绝不给列表之外的人发消息,绝不改写草稿语义;每会话
+≤10 个连接请求、≤15 条消息,动作间隔 ≥30 秒,遇到任何限流/验证码信号立即停止汇报。App 侧 `reportSent` 只在
+`pending_send`(即已经过 `/network` 页批准)状态才允许推进到 `sent`,否则抛错——这一层与 §6 投递红线同构。
+
+## Dashboard
+首页 `/` 直接跳到 `/dashboard`(导航栏第一项也是它)。SSR 页面,不引图表库,横条纯靠 `<div>` 宽度百分比:
+- **申请漏斗**:发现/已匹配/已投递/OA/面试/Offer/被拒/已归档,按 `applications.status` 计数。
+- **分方向**:方向 × 梯队 分组,总数 / 投递(`submitted_at` 曾经非空)/ 面试(状态达到面试或以上)。
+- **Networking 漏斗**:草稿/待发送/已发送/已回复/约到聊/拿到内推,按 `outreach.status` 计数。
+- **Referral vs 海投**:按 `applications.referral_person_id` 是否非空分组对比投递数、面试数、面试转化率
+  (§7.4 双向关联的呈现)。
+- **本周 vs 上周**:滚动 7 天窗口(不是自然周)对比已投递数量和新增 outreach 数量。
+- **待办**:去确认(链到 `/apply` 的 `awaiting_confirm` 数)、去批准(链到 `/network` 的草稿数)、该
+  followup 的人(发送超过 5 天仍未收到回复的联系人列表,按逾期天数倒序)。
+
 ## 数据
 - SQLite:`data/jobseeker.db`(gitignored)
 - 生成的简历(.tex/.pdf):`data/resumes/`(gitignored)
