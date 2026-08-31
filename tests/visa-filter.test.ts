@@ -1,89 +1,79 @@
 import { describe, it, expect } from "vitest";
-import { visaFlag } from "@/scanner/visa-filter";
+import { visaFlag, type VisaFlag } from "@/scanner/visa-filter";
+
+// Exhaustive fixtures accumulated across three rounds of review. Every JD-text probe the
+// scanner's visa filter has ever needed to get right lives here, iterated with it.each so a
+// future regression shows up as a single named failing case instead of a silent assertion
+// buried inside a bigger it().
+const MUST_FLAG: [string, VisaFlag][] = [
+  // --- no_sponsor ---
+  ["We are unable to sponsor visas for this role", "no_sponsor"],
+  ["Will not sponsor employment visa now or in the future", "no_sponsor"],
+  ["This position is not eligible for visa sponsorship", "no_sponsor"],
+  ["We are not able to provide visa sponsorship", "no_sponsor"],
+  ["We do not provide sponsorship for employment visas", "no_sponsor"],
+  ["We do not offer visa sponsorship at this time", "no_sponsor"],
+  ["This role is not eligible for employment visa sponsorship", "no_sponsor"],
+  ["We are unable to provide sponsorship now or in the future", "no_sponsor"],
+  ["Must be authorized to work in the U.S. without sponsorship", "no_sponsor"],
+  [
+    "Applicants must be U.S. citizens. We are unable to sponsor visas for this role.",
+    "no_sponsor",
+  ], // priority: no_sponsor beats citizen_only when both apply
+  ["We do not currently sponsor employment visas.", "no_sponsor"],
+  ["We are not sponsoring visas at this time.", "no_sponsor"],
+  ["Sponsorship is not available for this position.", "no_sponsor"],
+  ["Visa sponsorship is not offered for this role.", "no_sponsor"],
+  ["Sponsorship is not provided.", "no_sponsor"],
+  ["We will not be able to sponsor candidates for this role.", "no_sponsor"],
+  ["No visa sponsorship.", "no_sponsor"],
+  ["Sponsorship unavailable.", "no_sponsor"],
+
+  // --- citizen_only ---
+  ["Applicants must be U.S. citizens", "citizen_only"],
+  ["US Citizenship or Green Card required", "citizen_only"],
+
+  // --- clearance ---
+  ["Active TS/SCI security clearance required", "clearance"],
+  ["Must be able to obtain a security clearance", "clearance"],
+  ["Secret clearance required.", "clearance"],
+  ["Top Secret clearance required.", "clearance"],
+  ["Active Secret clearance required.", "clearance"],
+  ["TS/SCI clearance required.", "clearance"],
+  ["Requires an active TS/SCI with polygraph.", "clearance"],
+  ["This position requires a current Top Secret clearance.", "clearance"],
+];
+
+const MUST_STAY_NULL: (string | null | undefined)[] = [
+  "We welcome candidates of all backgrounds",
+  "",
+  "Visa sponsorship available",
+  "Must be authorized to work in the US", // 模糊表述不误杀(用户策略:只跳过明确拒绝)
+  null,
+  undefined,
+  "No security clearance is required",
+  "This role does not require a security clearance",
+  "Ability to obtain a security clearance is a plus",
+  // Restored to include "security" — with bare "an active clearance" this passed for the
+  // wrong reason (no clearance-type trigger word at all, so CLEARANCE never fired regardless
+  // of the preference guard). With "security" present, only the preference-word lookbehind
+  // keeps this null.
+  "Preference given to candidates with an active security clearance.",
+  "No prior experience required\n- We happily sponsor H-1B visas",
+  "- No agencies please\n- We provide visa sponsorship",
+  "Benefits include:\n- Unlimited PTO, no questions asked\n- Full visa sponsorship",
+  "We are not just another startup - we sponsor visas and support green cards.",
+  "We can sponsor visas for candidates who do not require immediate sponsorship.",
+  "clearance not required",
+  "Must have a strong background; clearance not required",
+];
 
 describe("visaFlag", () => {
-  it("flags explicit no-sponsorship", () => {
-    expect(visaFlag("We are unable to sponsor visas for this role")).toBe("no_sponsor");
-    expect(visaFlag("Will not sponsor employment visa now or in the future")).toBe("no_sponsor");
-    expect(visaFlag("This position is not eligible for visa sponsorship")).toBe("no_sponsor");
-  });
-  it("flags citizen/green-card-only", () => {
-    expect(visaFlag("Applicants must be U.S. citizens")).toBe("citizen_only");
-    expect(visaFlag("US Citizenship or Green Card required")).toBe("citizen_only");
-  });
-  it("flags clearance requirements", () => {
-    expect(visaFlag("Active TS/SCI security clearance required")).toBe("clearance");
-  });
-  it("returns null for silent or friendly JDs", () => {
-    expect(visaFlag("We welcome candidates of all backgrounds")).toBeNull();
-    expect(visaFlag("")).toBeNull();
-    expect(visaFlag("Visa sponsorship available")).toBeNull();
-    // 模糊表述不误杀(用户策略:只跳过明确拒绝)
-    expect(visaFlag("Must be authorized to work in the US")).toBeNull();
+  it.each(MUST_FLAG)("flags %#: %j as %s", (input, expected) => {
+    expect(visaFlag(input)).toBe(expected);
   });
 
-  it("accepts nullable/undefined input and returns null", () => {
-    expect(visaFlag(null)).toBeNull();
-    expect(visaFlag(undefined)).toBeNull();
-  });
-
-  it("flags additional common no-sponsorship phrasings", () => {
-    expect(visaFlag("We are not able to provide visa sponsorship")).toBe("no_sponsor");
-    expect(visaFlag("We do not provide sponsorship for employment visas")).toBe("no_sponsor");
-    expect(visaFlag("We do not offer visa sponsorship at this time")).toBe("no_sponsor");
-    expect(visaFlag("This role is not eligible for employment visa sponsorship")).toBe("no_sponsor");
-    expect(visaFlag("We are unable to provide sponsorship now or in the future")).toBe("no_sponsor");
-    expect(visaFlag("Must be authorized to work in the U.S. without sponsorship")).toBe("no_sponsor");
-  });
-
-  it("does not flag clearance for JDs that explicitly do NOT require clearance", () => {
-    expect(visaFlag("No security clearance is required")).toBeNull();
-    expect(visaFlag("This role does not require a security clearance")).toBeNull();
-    expect(visaFlag("Ability to obtain a security clearance is a plus")).toBeNull();
-    expect(visaFlag("Preference given to candidates with an active clearance")).toBeNull();
-  });
-
-  it("flags clearance for JDs that require the ability to obtain one", () => {
-    expect(visaFlag("Must be able to obtain a security clearance")).toBe("clearance");
-  });
-
-  it("prioritizes no_sponsor over citizen_only and clearance when multiple apply", () => {
-    expect(
-      visaFlag("Applicants must be U.S. citizens. We are unable to sponsor visas for this role.")
-    ).toBe("no_sponsor");
-  });
-
-  // Round 2 review: NO_SPONSOR was over-broad — bare "no"/"not" within 60 chars of "sponsor*"
-  // across newlines/clauses produced false positives. These must all stay null.
-  it("does not flag no_sponsor from unrelated 'no'/'not' near 'sponsor' across lines or clauses", () => {
-    expect(visaFlag("No prior experience required\n- We happily sponsor H-1B visas")).toBeNull();
-    expect(visaFlag("- No agencies please\n- We provide visa sponsorship")).toBeNull();
-    expect(
-      visaFlag("Benefits include:\n- Unlimited PTO, no questions asked\n- Full visa sponsorship")
-    ).toBeNull();
-    expect(
-      visaFlag("We are not just another startup - we sponsor visas and support green cards.")
-    ).toBeNull();
-    expect(
-      visaFlag("We can sponsor visas for candidates who do not require immediate sponsorship.")
-    ).toBeNull();
-  });
-
-  // Round 2 review: CLEARANCE was too narrow — missed bare "Secret"/"Top Secret" clearance
-  // mentions and TS/SCI-with-polygraph phrasing that has no literal "clearance" word.
-  it("flags clearance for bare Secret/Top Secret/TS-SCI requirement phrasing", () => {
-    expect(visaFlag("Secret clearance required.")).toBe("clearance");
-    expect(visaFlag("Top Secret clearance required.")).toBe("clearance");
-    expect(visaFlag("Active Secret clearance required.")).toBe("clearance");
-    expect(visaFlag("TS/SCI clearance required.")).toBe("clearance");
-    expect(visaFlag("Requires an active TS/SCI with polygraph.")).toBe("clearance");
-    expect(visaFlag("This position requires a current Top Secret clearance.")).toBe("clearance");
-  });
-
-  it("still returns null for clearance mentions that are explicitly not required", () => {
-    expect(visaFlag("No security clearance is required")).toBeNull();
-    expect(visaFlag("clearance not required")).toBeNull();
-    expect(visaFlag("Ability to obtain a security clearance is a plus")).toBeNull();
-    expect(visaFlag("Must have a strong background; clearance not required")).toBeNull();
+  it.each(MUST_STAY_NULL)("returns null for %#: %j", (input) => {
+    expect(visaFlag(input)).toBeNull();
   });
 });
