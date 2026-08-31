@@ -79,27 +79,27 @@ export function ConfirmPanel() {
   }
 
   if (rows.length === 0) {
-    return <p style={{ color: "#666" }}>暂无待确认的申请。执行器会话完成填表后会出现在这里。</p>;
+    return <p className="text-sub">暂无待确认的申请。执行器会话完成填表后会出现在这里。</p>;
   }
 
   return (
     <div>
-      {error && <p style={{ color: "#b00" }}>{error}</p>}
+      {error && <p className="text-accent">{error}</p>}
       {rows.map((r) => (
-        <div key={r.jobId} style={{ background: "#fff", borderRadius: 8, padding: 16, margin: "12px 0" }}>
+        <div key={r.jobId} className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <div>
-              <strong>{r.company}</strong> · {r.title}
-              <span style={{ color: "#666", marginLeft: 8 }}>
-                {r.direction ?? "—"} · 分 {r.score ?? "—"}
+              <strong className="company-name">{r.company}</strong> · {r.title}
+              <span className="text-sub" style={{ marginLeft: 8 }}>
+                {r.direction ?? "—"} · 分 <span className="mono">{r.score ?? "—"}</span>
               </span>
               {r.referralPersonName && (
-                <span style={{ color: "#2a7a2a", fontWeight: 600, marginLeft: 8 }}>
+                <span className="text-good" style={{ fontWeight: 600, marginLeft: 8 }}>
                   带内推 · {r.referralPersonName}
                 </span>
               )}
             </div>
-            <div style={{ color: "#666", fontSize: 13 }}>简历版本:{r.resumeVersion ?? "—"}</div>
+            <div className="text-sub" style={{ fontSize: 13 }}>简历版本:{r.resumeVersion ?? "—"}</div>
           </div>
 
           <table style={{ marginTop: 10 }}>
@@ -112,14 +112,14 @@ export function ConfirmPanel() {
             <tbody>
               {Object.entries(r.filledFields).length === 0 ? (
                 <tr>
-                  <td colSpan={2} style={{ color: "#999" }}>
+                  <td colSpan={2} className="text-sub">
                     (执行器未回报任何字段)
                   </td>
                 </tr>
               ) : (
                 Object.entries(r.filledFields).map(([field, value]) => (
                   <tr key={field}>
-                    <td style={{ width: 220, color: "#555" }}>{field}</td>
+                    <td className="text-sub" style={{ width: 220 }}>{field}</td>
                     <td>{renderValue(value)}</td>
                   </tr>
                 ))
@@ -128,7 +128,7 @@ export function ConfirmPanel() {
           </table>
 
           {r.decision === "approved" ? (
-            <p style={{ marginTop: 12, color: "#2a7a2a", fontWeight: 600 }}>
+            <p className="text-good" style={{ marginTop: 12, fontWeight: 600 }}>
               已批准,等待执行器提交。如需撤回,请直接告诉执行器会话。
             </p>
           ) : (
@@ -136,7 +136,7 @@ export function ConfirmPanel() {
               <button onClick={() => decide(r.jobId, "approve")} disabled={busyId === r.jobId}>
                 确认提交
               </button>
-              <button onClick={() => decide(r.jobId, "reject")} disabled={busyId === r.jobId}>
+              <button className="btn-ghost" onClick={() => decide(r.jobId, "reject")} disabled={busyId === r.jobId}>
                 拒绝
               </button>
             </div>

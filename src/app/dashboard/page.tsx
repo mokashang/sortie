@@ -3,23 +3,18 @@ import { funnel, byDirection, networkingFunnel, crossStats, weekly, todo } from 
 
 export const dynamic = "force-dynamic";
 
-const BAR_TRACK: React.CSSProperties = {
-  background: "#e5e5ef",
-  borderRadius: 4,
-  height: 16,
-  flex: 1,
-  overflow: "hidden",
-};
+type BarColor = "default" | "good" | "warn" | "muted";
 
-function Bar({ label, value, max, color = "#3d5afe" }: { label: string; value: number; max: number; color?: string }) {
+function Bar({ label, value, max, color = "default" }: { label: string; value: number; max: number; color?: BarColor }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+  const fillClass = color === "default" ? "bar-fill" : `bar-fill ${color}`;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "6px 0" }}>
-      <span style={{ width: 90, fontSize: 13, color: "#555" }}>{label}</span>
-      <div style={BAR_TRACK}>
-        <div style={{ width: `${pct}%`, background: color, height: "100%" }} />
+    <div className="bar-row">
+      <span className="bar-label">{label}</span>
+      <div className="bar-track">
+        <div className={fillClass} style={{ width: `${pct}%` }} />
       </div>
-      <span style={{ width: 32, textAlign: "right", fontSize: 13, fontWeight: 600 }}>{value}</span>
+      <span className="bar-value">{value}</span>
     </div>
   );
 }
@@ -41,31 +36,31 @@ export default function DashboardPage() {
     <div>
       <h1>Dashboard</h1>
 
-      <section style={{ background: "#fff", borderRadius: 8, padding: 16, marginBottom: 20 }}>
-        <h3>申请漏斗</h3>
+      <section className="panel">
+        <div className="panel-title">申请漏斗</div>
         <Bar label="发现" value={f.discovered} max={funnelMax} />
         <Bar label="已匹配" value={f.matched} max={funnelMax} />
-        <Bar label="已投递" value={f.submitted} max={funnelMax} color="#2a7a2a" />
-        <Bar label="OA" value={f.oa} max={funnelMax} color="#2a7a2a" />
-        <Bar label="面试" value={f.interview} max={funnelMax} color="#2a7a2a" />
-        <Bar label="Offer" value={f.offer} max={funnelMax} color="#c9a227" />
-        <Bar label="被拒" value={f.rejected} max={funnelMax} color="#b00" />
-        <Bar label="已归档" value={f.archived} max={funnelMax} color="#999" />
+        <Bar label="已投递" value={f.submitted} max={funnelMax} color="good" />
+        <Bar label="OA" value={f.oa} max={funnelMax} color="good" />
+        <Bar label="面试" value={f.interview} max={funnelMax} color="good" />
+        <Bar label="Offer" value={f.offer} max={funnelMax} color="warn" />
+        <Bar label="被拒" value={f.rejected} max={funnelMax} />
+        <Bar label="已归档" value={f.archived} max={funnelMax} color="muted" />
       </section>
 
-      <section style={{ background: "#fff", borderRadius: 8, padding: 16, marginBottom: 20 }}>
-        <h3>分方向</h3>
+      <section className="panel">
+        <div className="panel-title">分方向</div>
         {byDir.length === 0 ? (
-          <p style={{ color: "#666" }}>暂无数据。</p>
+          <p className="text-sub">暂无数据。</p>
         ) : (
           <table>
             <thead>
               <tr>
                 <th>方向</th>
                 <th>梯队</th>
-                <th>总数</th>
-                <th>投递</th>
-                <th>面试</th>
+                <th className="num">总数</th>
+                <th className="num">投递</th>
+                <th className="num">面试</th>
               </tr>
             </thead>
             <tbody>
@@ -73,9 +68,9 @@ export default function DashboardPage() {
                 <tr key={i}>
                   <td>{r.direction ?? "—"}</td>
                   <td>{r.tier ?? "—"}</td>
-                  <td>{r.total}</td>
-                  <td>{r.submitted}</td>
-                  <td>{r.interviews}</td>
+                  <td className="num">{r.total}</td>
+                  <td className="num">{r.submitted}</td>
+                  <td className="num">{r.interviews}</td>
                 </tr>
               ))}
             </tbody>
@@ -83,33 +78,33 @@ export default function DashboardPage() {
         )}
       </section>
 
-      <section style={{ background: "#fff", borderRadius: 8, padding: 16, marginBottom: 20 }}>
-        <h3>Networking 漏斗</h3>
+      <section className="panel">
+        <div className="panel-title">Networking 漏斗</div>
         <Bar label="草稿" value={nf.drafts} max={nfMax} />
         <Bar label="待发送" value={nf.pending} max={nfMax} />
-        <Bar label="已发送" value={nf.sent} max={nfMax} color="#2a7a2a" />
-        <Bar label="已回复" value={nf.replied} max={nfMax} color="#2a7a2a" />
-        <Bar label="约到聊" value={nf.meetings} max={nfMax} color="#c9a227" />
-        <Bar label="拿到内推" value={nf.referrals} max={nfMax} color="#c9a227" />
+        <Bar label="已发送" value={nf.sent} max={nfMax} color="good" />
+        <Bar label="已回复" value={nf.replied} max={nfMax} color="good" />
+        <Bar label="约到聊" value={nf.meetings} max={nfMax} color="warn" />
+        <Bar label="拿到内推" value={nf.referrals} max={nfMax} color="warn" />
       </section>
 
-      <section style={{ background: "#fff", borderRadius: 8, padding: 16, marginBottom: 20 }}>
-        <h3>Referral vs 海投</h3>
+      <section className="panel">
+        <div className="panel-title">Referral vs 海投</div>
         <table>
           <thead>
             <tr>
               <th></th>
-              <th>投递数</th>
-              <th>面试数</th>
-              <th>面试转化率</th>
+              <th className="num">投递数</th>
+              <th className="num">面试数</th>
+              <th className="num">面试转化率</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>有内推</td>
-              <td>{cross.withReferral.submitted}</td>
-              <td>{cross.withReferral.interviews}</td>
-              <td>
+              <td className="num">{cross.withReferral.submitted}</td>
+              <td className="num">{cross.withReferral.interviews}</td>
+              <td className="num">
                 {cross.withReferral.submitted > 0
                   ? `${Math.round((cross.withReferral.interviews / cross.withReferral.submitted) * 100)}%`
                   : "—"}
@@ -117,9 +112,9 @@ export default function DashboardPage() {
             </tr>
             <tr>
               <td>海投</td>
-              <td>{cross.without.submitted}</td>
-              <td>{cross.without.interviews}</td>
-              <td>
+              <td className="num">{cross.without.submitted}</td>
+              <td className="num">{cross.without.interviews}</td>
+              <td className="num">
                 {cross.without.submitted > 0
                   ? `${Math.round((cross.without.interviews / cross.without.submitted) * 100)}%`
                   : "—"}
@@ -129,33 +124,33 @@ export default function DashboardPage() {
         </table>
       </section>
 
-      <section style={{ background: "#fff", borderRadius: 8, padding: 16, marginBottom: 20 }}>
-        <h3>本周 vs 上周</h3>
+      <section className="panel">
+        <div className="panel-title">本周 vs 上周</div>
         <table>
           <thead>
             <tr>
               <th></th>
-              <th>已投递</th>
-              <th>新增 Outreach</th>
+              <th className="num">已投递</th>
+              <th className="num">新增 Outreach</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>本周</td>
-              <td>{wk.thisWeek.submittedApplications}</td>
-              <td>{wk.thisWeek.newOutreach}</td>
+              <td className="num">{wk.thisWeek.submittedApplications}</td>
+              <td className="num">{wk.thisWeek.newOutreach}</td>
             </tr>
             <tr>
               <td>上周</td>
-              <td>{wk.lastWeek.submittedApplications}</td>
-              <td>{wk.lastWeek.newOutreach}</td>
+              <td className="num">{wk.lastWeek.submittedApplications}</td>
+              <td className="num">{wk.lastWeek.newOutreach}</td>
             </tr>
           </tbody>
         </table>
       </section>
 
-      <section style={{ background: "#fff", borderRadius: 8, padding: 16 }}>
-        <h3>待办</h3>
+      <section className="panel">
+        <div className="panel-title">待办</div>
         <p>
           去确认(<a href="/apply">投递</a>):<strong>{td.pendingConfirms}</strong>
         </p>
@@ -165,7 +160,7 @@ export default function DashboardPage() {
         <div>
           该 followup 的人(发送后超过 5 天无回复):
           {td.staleFollowups.length === 0 ? (
-            <span style={{ color: "#666" }}> 无。</span>
+            <span className="text-sub"> 无。</span>
           ) : (
             <ul style={{ listStyle: "none", marginTop: 8 }}>
               {td.staleFollowups.map((s) => (

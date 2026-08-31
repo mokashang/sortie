@@ -28,7 +28,7 @@ export function UnparkButton({ jobId }: { jobId: number }) {
   }
 
   return (
-    <button onClick={retry} disabled={busy} style={{ fontSize: 12 }}>
+    <button className="btn-ghost" onClick={retry} disabled={busy} style={{ fontSize: 12, padding: "4px 10px" }}>
       重试
     </button>
   );

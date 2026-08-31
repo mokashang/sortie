@@ -37,8 +37,8 @@ export function ExperienceEditor({ initial }: { initial: Exp[] }) {
 
   return (
     <div>
-      <div style={{ background: "#fff", padding: 16, borderRadius: 8, marginBottom: 20 }}>
-        <h3>添加一条经历</h3>
+      <div className="panel">
+        <div className="panel-title">添加一条经历</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }}>
           <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
             {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
@@ -53,20 +53,20 @@ export function ExperienceEditor({ initial }: { initial: Exp[] }) {
           {draft.bullets.map((b, i) => (
             <input key={i} style={{ width: "100%", margin: "3px 0" }} placeholder={`bullet ${i + 1}`} value={b.text} onChange={(e) => setDraftBullet(i, e.target.value)} />
           ))}
-          <button onClick={() => setDraft({ ...draft, bullets: [...draft.bullets, { text: "", directions: [] }] })}>+ bullet</button>
+          <button className="btn-ghost" onClick={() => setDraft({ ...draft, bullets: [...draft.bullets, { text: "", directions: [] }] })}>+ bullet</button>
         </div>
         <div style={{ marginTop: 8 }}>
-          <button onClick={() => save(draft)} disabled={!draft.title}>保存经历</button> <span style={{ color: "#666" }}>{msg}</span>
+          <button onClick={() => save(draft)} disabled={!draft.title}>保存经历</button> <span className="text-sub">{msg}</span>
         </div>
       </div>
 
       {KINDS.filter((k) => items.some((i) => i.kind === k)).map((k) => (
-        <div key={k}>
-          <h3 style={{ marginTop: 16, textTransform: "capitalize" }}>{k}</h3>
+        <div key={k} className="panel">
+          <div className="panel-title" style={{ textTransform: "capitalize" }}>{k}</div>
           {items.filter((i) => i.kind === k).map((e) => (
-            <div key={e.id} style={{ background: "#fff", padding: 12, borderRadius: 6, marginBottom: 8 }}>
-              <b>{e.title}</b> {e.organization && `· ${e.organization}`} {e.start_date && <span style={{ color: "#888" }}>({e.start_date}{e.end_date ? `–${e.end_date}` : ""})</span>}
-              <button style={{ float: "right" }} onClick={() => remove(e.id!)}>删除</button>
+            <div key={e.id} className="card">
+              <b className="company-name">{e.title}</b> {e.organization && `· ${e.organization}`} {e.start_date && <span className="text-sub mono">({e.start_date}{e.end_date ? `–${e.end_date}` : ""})</span>}
+              <button className="btn-ghost" style={{ float: "right" }} onClick={() => remove(e.id!)}>删除</button>
               <ul style={{ margin: "6px 0 0 18px", fontSize: 13 }}>
                 {e.bullets.map((b, i) => <li key={i}>{b.text}</li>)}
               </ul>

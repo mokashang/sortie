@@ -301,12 +301,12 @@ export function NetworkClient() {
 
   return (
     <div>
-      {error && <p style={{ color: "#b00" }}>{error}</p>}
+      {error && <p className="text-accent">{error}</p>}
 
       {/* ---- AI 草稿生成入口 ---- */}
-      <section style={{ background: "#fff", borderRadius: 8, padding: 16, marginBottom: 20 }}>
-        <h3>AI 草稿</h3>
-        <form onSubmit={submitGenerate} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 8 }}>
+      <section className="panel">
+        <div className="panel-title">AI 草稿</div>
+        <form onSubmit={submitGenerate} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           <select
             value={genForm.personId}
             onChange={(e) => setGenForm({ ...genForm, personId: e.target.value })}
@@ -349,16 +349,16 @@ export function NetworkClient() {
       </section>
 
       {/* ---- 草稿审批区 ---- */}
-      <section style={{ marginBottom: 20 }}>
-        <h3>草稿审批 ({draftRows.length})</h3>
+      <section className="panel">
+        <div className="panel-title">草稿审批 ({draftRows.length})</div>
         {draftRows.length === 0 ? (
-          <p style={{ color: "#666" }}>暂无待审批草稿。</p>
+          <p className="text-sub">暂无待审批草稿。</p>
         ) : (
           draftRows.map((row) => (
-            <div key={row.id} style={{ background: "#fff", borderRadius: 8, padding: 16, margin: "10px 0" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#666" }}>
+            <div key={row.id} className="card">
+              <div className="text-sub" style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
                 <span>
-                  收件人:<strong>{row.personName}</strong>
+                  收件人:<strong className="company-name">{row.personName}</strong>
                   {row.personCompany ? ` · ${row.personCompany}` : ""} · {PLAYBOOK_LABELS[row.playbook] ?? row.playbook} ·{" "}
                   {row.channel}
                 </span>
@@ -376,7 +376,7 @@ export function NetworkClient() {
                 <button onClick={() => approve(row)} disabled={actionBusyId === row.id}>
                   批准发送
                 </button>
-                <button onClick={() => reject(row)} disabled={actionBusyId === row.id}>
+                <button className="btn-ghost" onClick={() => reject(row)} disabled={actionBusyId === row.id}>
                   拒绝
                 </button>
               </div>
@@ -386,10 +386,10 @@ export function NetworkClient() {
       </section>
 
       {/* ---- 待发送 / 已批准 ---- */}
-      <section style={{ marginBottom: 20 }}>
-        <h3>已批准 ({pendingRows.length})</h3>
+      <section className="panel">
+        <div className="panel-title">已批准 ({pendingRows.length})</div>
         {pendingRows.length === 0 ? (
-          <p style={{ color: "#666" }}>暂无。</p>
+          <p className="text-sub">暂无。</p>
         ) : (
           pendingRows.map((row) => {
             const parsed = row.channel === "email" && row.draft ? parseEmailDraft(row.draft) : null;
@@ -400,25 +400,25 @@ export function NetworkClient() {
                   )}&body=${encodeURIComponent(parsed?.body ?? row.draft ?? "")}`
                 : null;
             return (
-              <div key={row.id} style={{ background: "#fff", borderRadius: 8, padding: 16, margin: "10px 0" }}>
-                <div style={{ fontSize: 13, color: "#666" }}>
-                  收件人:<strong>{row.personName}</strong> · {PLAYBOOK_LABELS[row.playbook] ?? row.playbook} · {row.channel}
+              <div key={row.id} className="card">
+                <div className="text-sub" style={{ fontSize: 13 }}>
+                  收件人:<strong className="company-name">{row.personName}</strong> · {PLAYBOOK_LABELS[row.playbook] ?? row.playbook} · {row.channel}
                 </div>
                 <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 14, margin: "8px 0" }}>
                   {row.draft}
                 </pre>
                 {row.channel === "linkedin" ? (
-                  <p style={{ color: "#a66", fontWeight: 600 }}>待执行器发送</p>
+                  <p className="text-warn" style={{ fontWeight: 600 }}>待执行器发送</p>
                 ) : (
-                  <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     {mailtoHref ? (
                       <a href={mailtoHref}>
                         <button type="button">打开邮件</button>
                       </a>
                     ) : (
-                      <span style={{ color: "#999" }}>(联系人无邮箱)</span>
+                      <span className="text-sub">(联系人无邮箱)</span>
                     )}
-                    <button onClick={() => markSent(row.id)} disabled={actionBusyId === row.id}>
+                    <button className="btn-ghost" onClick={() => markSent(row.id)} disabled={actionBusyId === row.id}>
                       标记已发
                     </button>
                   </div>
@@ -431,8 +431,8 @@ export function NetworkClient() {
 
       {/* ---- 联系人区 ---- */}
       <section style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-        <div style={{ flex: "1 1 360px", minWidth: 320 }}>
-          <h3>联系人 ({people.length})</h3>
+        <div style={{ flex: "1 1 360px", minWidth: 320 }} className="panel">
+          <div className="panel-title">联系人 ({people.length})</div>
           <table>
             <thead>
               <tr>
@@ -446,7 +446,7 @@ export function NetworkClient() {
               {people.map((p) => (
                 <tr
                   key={p.id}
-                  style={{ cursor: "pointer", background: p.id === selectedPersonId ? "#eef" : undefined }}
+                  style={{ cursor: "pointer", background: p.id === selectedPersonId ? "var(--chip-bg)" : undefined }}
                   onClick={() => setSelectedPersonId(p.id)}
                 >
                   <td>{p.name}</td>
@@ -467,7 +467,7 @@ export function NetworkClient() {
           </table>
 
           <details style={{ marginTop: 16 }}>
-            <summary style={{ cursor: "pointer", fontWeight: 600 }}>手动添加联系人</summary>
+            <summary>手动添加联系人</summary>
             <form onSubmit={submitAdd} style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8, maxWidth: 360 }}>
               <input
                 placeholder="姓名 *"
@@ -510,18 +510,18 @@ export function NetworkClient() {
           </details>
         </div>
 
-        <div style={{ flex: "2 1 480px", minWidth: 320 }}>
-          <h3>联系人详情</h3>
+        <div style={{ flex: "2 1 480px", minWidth: 320 }} className="panel">
+          <div className="panel-title">联系人详情</div>
           {!selectedPerson ? (
-            <p style={{ color: "#666" }}>点选左侧联系人查看历史。</p>
+            <p className="text-sub">点选左侧联系人查看历史。</p>
           ) : (
-            <div style={{ background: "#fff", borderRadius: 8, padding: 16 }}>
+            <div>
               <div style={{ marginBottom: 8 }}>
-                <strong>{selectedPerson.name}</strong>
+                <strong className="company-name">{selectedPerson.name}</strong>
                 {selectedPerson.company ? ` · ${selectedPerson.company}` : ""}
                 {selectedPerson.role_title ? ` · ${selectedPerson.role_title}` : ""}
               </div>
-              <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
+              <div className="text-sub" style={{ fontSize: 13, marginBottom: 12 }}>
                 关联岗位:
                 {linkedJobIds.length === 0
                   ? " —"
@@ -530,24 +530,24 @@ export function NetworkClient() {
 
               <h4>Outreach 历史</h4>
               {selectedOutreach.length === 0 ? (
-                <p style={{ color: "#666" }}>暂无记录。</p>
+                <p className="text-sub">暂无记录。</p>
               ) : (
                 selectedOutreach.map((row) => (
-                  <div key={row.id} style={{ borderTop: "1px solid #e5e5ef", padding: "10px 0" }}>
-                    <div style={{ fontSize: 13, color: "#666" }}>
+                  <div key={row.id} style={{ borderTop: "1px solid var(--line)", padding: "10px 0" }}>
+                    <div className="text-sub" style={{ fontSize: 13 }}>
                       {PLAYBOOK_LABELS[row.playbook] ?? row.playbook} · {row.channel} · 状态:{row.status}
-                      {row.outcome ? ` (${row.outcome})` : ""} · {row.createdAt.slice(0, 16)}
+                      {row.outcome ? ` (${row.outcome})` : ""} · <span className="mono">{row.createdAt.slice(0, 16)}</span>
                     </div>
                     {row.threadLog.length === 0 ? (
-                      <p style={{ color: "#999", fontSize: 13 }}>(尚无消息记录)</p>
+                      <p className="text-sub" style={{ fontSize: 13 }}>(尚无消息记录)</p>
                     ) : (
                       <ul style={{ listStyle: "none", marginTop: 6 }}>
                         {row.threadLog.map((t, i) => (
                           <li key={i} style={{ fontSize: 13, margin: "4px 0" }}>
-                            <span style={{ color: t.dir === "sent" ? "#2a5" : "#25a", fontWeight: 600 }}>
+                            <span className={t.dir === "sent" ? "text-good" : "text-accent"} style={{ fontWeight: 600 }}>
                               {t.dir === "sent" ? "→ 发送" : "← 收到"}
                             </span>{" "}
-                            <span style={{ color: "#999" }}>{t.at.slice(0, 16)}</span>
+                            <span className="text-sub mono">{t.at.slice(0, 16)}</span>
                             <div style={{ whiteSpace: "pre-wrap" }}>{t.text}</div>
                           </li>
                         ))}
@@ -555,13 +555,13 @@ export function NetworkClient() {
                     )}
                     {(row.status === "sent" || row.status === "replied") && (
                       <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                        <button onClick={() => recordOutcome(row.id, "meeting")} disabled={actionBusyId === row.id}>
+                        <button className="btn-ghost" onClick={() => recordOutcome(row.id, "meeting")} disabled={actionBusyId === row.id}>
                           约到了
                         </button>
-                        <button onClick={() => recordOutcome(row.id, "referral_won")} disabled={actionBusyId === row.id}>
+                        <button className="btn-ghost" onClick={() => recordOutcome(row.id, "referral_won")} disabled={actionBusyId === row.id}>
                           拿到内推
                         </button>
-                        <button onClick={() => recordOutcome(row.id, "no_response")} disabled={actionBusyId === row.id}>
+                        <button className="btn-ghost" onClick={() => recordOutcome(row.id, "no_response")} disabled={actionBusyId === row.id}>
                           无回应
                         </button>
                       </div>

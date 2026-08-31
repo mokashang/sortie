@@ -40,12 +40,12 @@ export default function JobsPage() {
         <tbody>
           {jobs.map((j) => (
             <tr key={j.id}>
-              <td>{j.company}</td>
+              <td className="company">{j.company}</td>
               <td>{j.title}</td>
               <td>{j.location ?? "—"}</td>
               <td>{j.job_kind}</td>
               <td>{j.source}</td>
-              <td>{j.created_at.slice(0, 16)}</td>
+              <td className="mono">{j.created_at.slice(0, 16)}</td>
               <td><a href={j.apply_url} target="_blank" rel="noreferrer">原帖</a></td>
             </tr>
           ))}

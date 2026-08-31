@@ -113,8 +113,8 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
   }
 
   return (
-    <div style={{ background: "#fff", borderRadius: 8, padding: 16, margin: "12px 0" }}>
-      {error && <p style={{ color: "#b00" }}>{error}</p>}
+    <div className="panel">
+      {error && <p className="text-accent">{error}</p>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
         {kinds.map(({ kind, label, withLimit }) => {
           const run = latestByKind[kind];
@@ -124,7 +124,7 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {withLimit && (
                   <>
-                    <span style={{ fontSize: 13, color: "#666" }}>前</span>
+                    <span className="text-sub" style={{ fontSize: 13 }}>前</span>
                     <input
                       type="number"
                       min={1}
@@ -134,35 +134,34 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                       disabled={isRunning}
                       style={{ width: 56 }}
                     />
-                    <span style={{ fontSize: 13, color: "#666" }}>个</span>
+                    <span className="text-sub" style={{ fontSize: 13 }}>个</span>
                   </>
                 )}
                 <button onClick={() => start(kind, withLimit)} disabled={isRunning || busyKind === kind}>
                   {label}
                 </button>
                 {isRunning && (
-                  <button onClick={() => stop(run!.id)} disabled={busyKind === `stop-${run!.id}`}>
+                  <button className="btn-ghost" onClick={() => stop(run!.id)} disabled={busyKind === `stop-${run!.id}`}>
                     停止
                   </button>
                 )}
               </div>
 
               {run && (
-                <div style={{ marginTop: 8, fontSize: 13, color: "#666" }}>
+                <div className="text-sub" style={{ marginTop: 8, fontSize: 13 }}>
                   <span>
                     #{run.id} · {STATUS_LABELS[run.status] ?? run.status}
                     {run.pid != null ? ` · pid ${run.pid}` : ""}
                   </span>
-                  {run.summary && <p style={{ margin: "4px 0", color: "#444" }}>{run.summary}</p>}
+                  {run.summary && <p style={{ margin: "4px 0", color: "var(--ink)" }}>{run.summary}</p>}
                   {isRunning && (
                     <pre
                       style={{
                         marginTop: 6,
                         maxHeight: 180,
                         overflowY: "auto",
-                        background: "#f7f7fb",
+                        background: "var(--chip-bg)",
                         padding: 8,
-                        fontSize: 11,
                         lineHeight: 1.4,
                         whiteSpace: "pre-wrap",
                       }}

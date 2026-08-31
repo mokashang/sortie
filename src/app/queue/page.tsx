@@ -28,23 +28,23 @@ export default function QueuePage() {
   return (
     <div>
       <h1>申请队列 <small>(已匹配 {matchedTotal} / 已打分 {scoredTotal})</small></h1>
-      <p style={{ color: "#666", fontSize: 13, margin: "8px 0 16px" }}>
+      <p className="panel-sub">
         按 梯队 × 匹配分 × 新鲜度 排序。分数 ≥ 阈值且未归档的职位在此,最值钱的排最前。
       </p>
       <table>
         <thead>
-          <tr><th>分</th><th>梯队</th><th>方向</th><th>公司</th><th>标题</th><th>地点</th><th>理由</th><th></th></tr>
+          <tr><th className="num">分</th><th>梯队</th><th>方向</th><th>公司</th><th>标题</th><th>地点</th><th>理由</th><th></th></tr>
         </thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.id}>
-              <td style={{ fontWeight: 700 }}>{r.score}</td>
+              <td className="num" style={{ fontWeight: 700 }}>{r.score}</td>
               <td>{r.tier ?? "—"}</td>
               <td>{r.direction ?? "—"}</td>
-              <td>{r.company}</td>
+              <td className="company">{r.company}</td>
               <td>{r.title}</td>
               <td>{r.location ?? "—"}</td>
-              <td style={{ fontSize: 12, color: "#555", maxWidth: 280 }}>{r.reason ?? ""}</td>
+              <td className="text-sub" style={{ fontSize: 12, maxWidth: 280 }}>{r.reason ?? ""}</td>
               <td><a href={r.apply_url} target="_blank" rel="noreferrer">申请</a></td>
             </tr>
           ))}

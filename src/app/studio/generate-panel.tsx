@@ -19,13 +19,13 @@ export function GeneratePanel() {
     } catch (e) { setMsg("失败:" + e); } finally { setBusy(false); }
   }
   return (
-    <div style={{ background: "#fff", padding: 16, borderRadius: 8, margin: "12px 0" }}>
-      <h3>生成一版简历</h3>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+    <div className="panel">
+      <div className="panel-title">生成一版简历</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <select value={dir} onChange={(e) => setDir(e.target.value)}>{DIRECTIONS.map((d) => <option key={d} value={d}>{d}</option>)}</select>
         <input placeholder="版本名(可选)" value={name} onChange={(e) => setName(e.target.value)} />
         <button onClick={gen} disabled={busy}>生成</button>
-        <span style={{ color: "#666" }}>{msg}</span>
+        <span className="text-sub">{msg}</span>
       </div>
     </div>
   );

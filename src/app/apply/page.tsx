@@ -51,7 +51,7 @@ export default function ApplyPage() {
   return (
     <div>
       <h1>投递</h1>
-      <p style={{ color: "#666", fontSize: 13, margin: "8px 0 16px" }}>
+      <p className="panel-sub">
         点下面的按钮直接从 App 里启动投递执行器(headless claude 会话,驱动你已登录的 Chrome)——不用再手动开
         claude 会话。执行器会话填完表后,申请会出现在下面等你确认。点[确认提交]后执行器才会真正点提交;拒绝会把
         申请退回队列。
@@ -59,19 +59,21 @@ export default function ApplyPage() {
 
       <ExecutorPanel kinds={[{ kind: "apply", label: "开始投递", withLimit: true }]} />
 
-      <div style={{ display: "flex", gap: 24, margin: "8px 0 20px", fontSize: 14 }}>
-        <span>今日已提交 <strong>{submittedRows.length}</strong></span>
-        <span>待确认 <strong>{pendingCount}</strong></span>
-        <span>需人工 <strong>{manualRows.length}</strong></span>
+      <div style={{ display: "flex", gap: 24, margin: "16px 0 20px", fontSize: 14 }}>
+        <span>今日已提交 <strong className="mono">{submittedRows.length}</strong></span>
+        <span>待确认 <strong className="mono">{pendingCount}</strong></span>
+        <span>需人工 <strong className="mono">{manualRows.length}</strong></span>
       </div>
 
-      <h3>待确认</h3>
-      <ConfirmPanel />
+      <section className="panel">
+        <div className="panel-title">待确认</div>
+        <ConfirmPanel />
+      </section>
 
       <details style={{ marginTop: 24 }}>
-        <summary style={{ cursor: "pointer", fontWeight: 600 }}>需人工清单 ({manualRows.length})</summary>
+        <summary>需人工清单 ({manualRows.length})</summary>
         {manualRows.length === 0 ? (
-          <p style={{ color: "#666", marginTop: 8 }}>无。</p>
+          <p className="text-sub" style={{ marginTop: 8 }}>无。</p>
         ) : (
           <table style={{ marginTop: 8 }}>
             <thead>
@@ -86,9 +88,9 @@ export default function ApplyPage() {
             <tbody>
               {manualRows.map((r) => (
                 <tr key={r.job_id}>
-                  <td>{r.company}</td>
+                  <td className="company">{r.company}</td>
                   <td>{r.title}</td>
-                  <td style={{ fontSize: 12, color: "#555", maxWidth: 320 }}>{r.needs_manual_reason}</td>
+                  <td className="text-sub" style={{ fontSize: 12, maxWidth: 320 }}>{r.needs_manual_reason}</td>
                   <td>
                     {r.apply_url ? (
                       <a href={r.apply_url} target="_blank" rel="noreferrer">
@@ -109,9 +111,9 @@ export default function ApplyPage() {
       </details>
 
       <details style={{ marginTop: 16 }}>
-        <summary style={{ cursor: "pointer", fontWeight: 600 }}>今日已提交 ({submittedRows.length})</summary>
+        <summary>今日已提交 ({submittedRows.length})</summary>
         {submittedRows.length === 0 ? (
-          <p style={{ color: "#666", marginTop: 8 }}>无。</p>
+          <p className="text-sub" style={{ marginTop: 8 }}>无。</p>
         ) : (
           <table style={{ marginTop: 8 }}>
             <thead>
@@ -124,9 +126,9 @@ export default function ApplyPage() {
             <tbody>
               {submittedRows.map((r) => (
                 <tr key={r.job_id}>
-                  <td>{r.company}</td>
+                  <td className="company">{r.company}</td>
                   <td>{r.title}</td>
-                  <td>{r.submitted_at}</td>
+                  <td className="mono">{r.submitted_at}</td>
                 </tr>
               ))}
             </tbody>

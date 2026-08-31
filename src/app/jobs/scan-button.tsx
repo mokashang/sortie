@@ -24,7 +24,7 @@ export function ScanButton() {
   }
   return (
     <p style={{ margin: "12px 0" }}>
-      <button onClick={scan} disabled={busy}>立即扫描</button> <span>{msg}</span>
+      <button onClick={scan} disabled={busy}>立即扫描</button> <span className="text-sub">{msg}</span>
     </p>
   );
 }
