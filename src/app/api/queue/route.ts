@@ -5,7 +5,8 @@ import { getDb } from "@/lib/db";
 // 排序键:tier 越小越优先(tier 1 = 最想去);同 tier 内 score 高者先;再按入库时间新者先。
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const minScore = Number(url.searchParams.get("min") ?? "0");
+  let minScore = Number(url.searchParams.get("min") ?? "0");
+  if (Number.isNaN(minScore)) minScore = 0;
   const db = getDb();
   const rows = db
     .prepare(

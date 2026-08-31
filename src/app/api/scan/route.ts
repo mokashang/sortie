@@ -5,6 +5,13 @@ import { syncWatchlist } from "@/scanner/watchlist";
 import { notify } from "@/lib/notify";
 import seed from "../../../../config/watchlist.seed.json";
 
+// Module-level guard so an overlapping scan trigger (cron fires while a manual "立即扫描" click's
+// matching is still in flight, or vice versa) doesn't kick off a second concurrent matching pass
+// over the same unscored jobs — wasteful duplicate LLM calls even though DB writes stay safe via
+// ON CONFLICT DO UPDATE. Not persisted; resets to false on process restart, which is fine since
+// nothing is "in flight" across restarts.
+let matchingInFlight = false;
+
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const isCron = url.searchParams.get("trigger") === "cron";
@@ -24,13 +31,18 @@ export async function POST(req: Request) {
     );
   }
 
-  // Fire-and-forget incremental matching for newly-inserted jobs. Deliberately NOT awaited: each
-  // LLM batch takes ~35s and a full incremental pass (limit 200) could take minutes — awaiting it
-  // here would hang the HTTP response well past any reasonable client/cron timeout. `db` is the
-  // process-wide getDb() singleton, so it's safe to keep using after the response is sent (the
-  // Next.js process stays alive). The .catch guards against an unhandled rejection crashing the
-  // server if matching fails after the response has already gone out.
-  if (summary.inserted > 0) {
+  // Fire-and-forget incremental matching: after a scan that found new jobs, this incrementally
+  // scores up to 200 currently-unscored jobs (any job with no `matches` row yet — resumable across
+  // scans, not just the ones this particular scan inserted). Deliberately NOT awaited: each LLM
+  // batch takes ~35s and a full pass (limit 200) could take minutes — awaiting it here would hang
+  // the HTTP response well past any reasonable client/cron timeout. `db` is the process-wide
+  // getDb() singleton, so it's safe to keep using after the response is sent (the Next.js process
+  // stays alive). The .catch guards against an unhandled rejection crashing the server if matching
+  // fails after the response has already gone out. `matchingInFlight` prevents an overlapping
+  // trigger (cron and manual can race) from starting a second concurrent pass over the same
+  // unscored jobs while one is already running.
+  if (summary.inserted > 0 && !matchingInFlight) {
+    matchingInFlight = true;
     void (async () => {
       try {
         const { loadProfile } = await import("@/lib/profile");
@@ -47,6 +59,8 @@ export async function POST(req: Request) {
         });
       } catch (e) {
         console.error("[scan→match]", e);
+      } finally {
+        matchingInFlight = false;
       }
     })().catch((e) => {
       console.error("[scan→match] unhandled", e);
