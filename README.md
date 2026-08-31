@@ -15,6 +15,15 @@
 这个定时器不依赖任何第三方 cron 库,也不在自身模块图里引入 `better-sqlite3` ——这样 `npm run dev` 的 webpack 才不会因为要为 edge runtime 静态打包原生模块而报 `Can't resolve 'fs'`。
 手动:UI"立即扫描"按钮(不带 `trigger` 参数,不触发通知)或 `npm run scan`。
 
+## 匹配打分
+每个职位由 Claude(经你的订阅,无 API 费)按 profile 的 12 方向打分(0-100),写入 `matches` 表并推进申请状态(`matched` / `archived`)。
+
+扫描插入新职位后(`summary.inserted > 0`),`/api/scan` 会**异步**触发一次增量匹配(上限 200 个)——不等待匹配完成就直接返回扫描结果,避免每批 LLM 调用约 35 秒的耗时把 HTTP 响应卡住数分钟;匹配在响应返回后于后台继续跑完,失败只打日志、不影响扫描接口本身。
+
+手动:`npm run match`(全量,resumable)或 `npm run match -- 100`(限量)。CLI 默认并发 6(多个批次同时调用 LLM,写库仍串行,互不覆盖)。接入方式在设置里可选(当前:订阅);见 spec §8.1。
+
+队列页 `/queue` 按 梯队 × 分数 × 新鲜度 展示已匹配职位。
+
 ## 数据
 - SQLite:`data/jobseeker.db`(gitignored)
 - 个人档案:`profile/profile.yaml`(gitignored)
