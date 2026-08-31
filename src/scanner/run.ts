@@ -112,6 +112,9 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
           if (flag) summary.visaSkipped++;
         } else if (info.changes > 0) {
           summary.upgraded++;
+          // An upgrade that carries a visa flag is exactly the case the rich-record upsert
+          // exists to catch — count it, or the metric never reflects the fix working.
+          if (flag) summary.visaSkipped++;
         } else {
           summary.duplicates++; // conflict existed but WHERE didn't match = already-seen, no richer data
         }
