@@ -1,0 +1,18 @@
+[
+  {
+    "id": "ab1",
+    "text": "Software Engineer - New Grad (2027)",
+    "hostedUrl": "https://jobs.lever.co/acme/ab1",
+    "createdAt": 1787875200000,
+    "categories": { "location": "Palo Alto, CA", "team": "Engineering" },
+    "descriptionPlain": "Ship code. Visa sponsorship available."
+  },
+  {
+    "id": "ab2",
+    "text": "Staff Software Engineer",
+    "hostedUrl": "https://jobs.lever.co/acme/ab2",
+    "createdAt": 1756400000000,
+    "categories": { "location": "NYC" },
+    "descriptionPlain": "10y+."
+  }
+]
