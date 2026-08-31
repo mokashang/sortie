@@ -1,0 +1,20 @@
+{
+  "jobs": [
+    {
+      "title": "Software Engineer, New Grad",
+      "location": "San Francisco",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/xyz",
+      "publishedAt": "2026-08-29T00:00:00Z",
+      "descriptionPlain": "Build the future.",
+      "isListed": true
+    },
+    {
+      "title": "Engineering Manager",
+      "location": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/acme/mgr",
+      "publishedAt": "2026-08-01T00:00:00Z",
+      "descriptionPlain": "Manage.",
+      "isListed": true
+    }
+  ]
+}
