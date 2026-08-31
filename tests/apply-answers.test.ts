@@ -60,6 +60,19 @@ describe("buildAnswerPack", () => {
     expect(pack.contact.github_url).toBe("http://github.com/mokashang");
   });
 
+  it("leaves an empty linkedin/github value empty instead of turning it into 'https://'", () => {
+    const profile = parseProfile(baseYaml.replace("linkedin: linkedin.com/in/mengjia-shang", 'linkedin: ""'));
+    const pack = buildAnswerPack(profile, job, resume);
+    expect(pack.contact.linkedin_url).toBe("");
+  });
+
+  it("normalizes internal whitespace in the name before splitting first/last", () => {
+    const profile = parseProfile(baseYaml.replace("name: Mengjia Shang", 'name: "  Mengjia   Shang  "'));
+    const pack = buildAnswerPack(profile, job, resume);
+    expect(pack.contact.first_name).toBe("Mengjia");
+    expect(pack.contact.last_name).toBe("Shang");
+  });
+
   it("maps work authorization truthfully for an F-1 candidate who needs sponsorship", () => {
     const profile = parseProfile(baseYaml);
     const pack = buildAnswerPack(profile, job, resume);

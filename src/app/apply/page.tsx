@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { ConfirmPanel } from "./confirm-panel";
+import { UnparkButton } from "./unpark-button";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,8 @@ export default function ApplyPage() {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        WHERE a.status = 'matched' AND a.needs_manual_reason IS NOT NULL
-       ORDER BY a.job_id DESC`
+       ORDER BY a.job_id DESC
+       LIMIT 100`
     )
     .all() as ManualRow[];
 
@@ -73,6 +75,7 @@ export default function ApplyPage() {
                 <th>标题</th>
                 <th>原因</th>
                 <th></th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -89,6 +92,9 @@ export default function ApplyPage() {
                     ) : (
                       "—"
                     )}
+                  </td>
+                  <td>
+                    <UnparkButton jobId={r.job_id} />
                   </td>
                 </tr>
               ))}

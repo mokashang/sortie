@@ -9,6 +9,21 @@ interface PendingRow {
   score: number | null;
   filledFields: Record<string, string>;
   resumeVersion: string | null;
+  decision: string | null;
+}
+
+// filledFields is meant to be Record<string, string>, but it round-trips through unvalidated
+// JSON from the executor's HTTP report — src/apply/queue.ts's reportFill coerces non-string
+// values before persisting, but this is a second, independent guard on the render side: React
+// throws if asked to render a raw object/array as a child, which would take down the entire
+// approval UI (every other card too) for one bad value. String() never throws.
+function renderValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return String(value);
+  } catch {
+    return "";
+  }
 }
 
 // Confirmation queue: polls /api/apply/pending every 3s so a card disappears on its own once
@@ -99,21 +114,27 @@ export function ConfirmPanel() {
                 Object.entries(r.filledFields).map(([field, value]) => (
                   <tr key={field}>
                     <td style={{ width: 220, color: "#555" }}>{field}</td>
-                    <td>{value}</td>
+                    <td>{renderValue(value)}</td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
 
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-            <button onClick={() => decide(r.jobId, "approve")} disabled={busyId === r.jobId}>
-              确认提交
-            </button>
-            <button onClick={() => decide(r.jobId, "reject")} disabled={busyId === r.jobId}>
-              拒绝
-            </button>
-          </div>
+          {r.decision === "approved" ? (
+            <p style={{ marginTop: 12, color: "#2a7a2a", fontWeight: 600 }}>
+              已批准,等待执行器提交。如需撤回,请直接告诉执行器会话。
+            </p>
+          ) : (
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <button onClick={() => decide(r.jobId, "approve")} disabled={busyId === r.jobId}>
+                确认提交
+              </button>
+              <button onClick={() => decide(r.jobId, "reject")} disabled={busyId === r.jobId}>
+                拒绝
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </div>

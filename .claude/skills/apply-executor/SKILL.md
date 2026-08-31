@@ -28,9 +28,23 @@ concrete selectors for Greenhouse/Lever/Ashby (Tier A) referenced in step 3 belo
 
 Before touching the browser, verify both halves of the system are actually reachable:
 
-1. **App is running.** `GET http://127.0.0.1:3000/api/apply/pending` — expect a 200 with a JSON
-   body shaped `{ pending: [...] }`. If it fails to connect, tell the user the App isn't running
-   (`npm run dev` in the project dir) and stop. Do not proceed on guesses about its state.
+1. **App is running.** Use the **Bash tool** to call the App's API with `curl` — this is how you
+   talk to `http://127.0.0.1:3000` for the *entire* skill, not just this check:
+   ```
+   curl -s -X GET http://127.0.0.1:3000/api/apply/pending
+   ```
+   Expect a 200 with a JSON body shaped `{ "pending": [...] }`. If the connection fails, tell the
+   user the App isn't running (`npm run dev` in the project dir) and stop. Do not proceed on
+   guesses about its state.
+
+   **Every App API call in this skill (`/api/apply/next`, `/api/apply/report`,
+   `/api/apply/pending`) goes through Bash + `curl`, never through `javascript_tool`.**
+   `javascript_tool` executes inside whatever page is currently open in the browser tab — once
+   that's an ATS page (greenhouse.io, lever.co, workday, ...), a `fetch()` to
+   `http://127.0.0.1:3000` from that page's JS context is a cross-origin request and will be
+   blocked by the browser's CORS policy. `curl` from Bash has no such restriction because it isn't
+   running inside any page's origin.
+
 2. **Chrome is connected.** Call `list_connected_browsers`. If none are connected, tell the user
    to connect Chrome via the claude-in-chrome extension and stop. If one or more are connected,
    `select_browser` the one the user indicates (or the only one, if there's just one), then
@@ -46,7 +60,9 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
 §7 fires:
 
 1. **Take the next task.**
-   `POST http://127.0.0.1:3000/api/apply/next` with an empty JSON body `{}`.
+   ```
+   curl -s -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{}'
+   ```
    - Response `{ done: true }` → no more matched jobs with a ready resume. Stop the loop, report
      a summary to the user (how many submitted this session, how many parked as needs_manual).
    - Otherwise the response is an `ApplyTask`:
@@ -81,21 +97,27 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    *actual* values sitting in the form fields — don't just echo what you intended to type, since a
    dropdown or autocomplete may have changed the effective value. Use `read_page` and/or
    `javascript_tool` to pull real `.value`/selected-option text.
-   - Success: `POST /api/apply/report` with
+   - Success (all via `curl -s -X POST http://127.0.0.1:3000/api/apply/report -H 'content-type: application/json' -d '<json>'`):
      `{ "jobId": task.jobId, "status": "awaiting_confirm", "filledFields": { "First name": "...", "Email": "...", ... } }`.
      Keys should be human-readable labels (what the user will see in the /apply review table),
      values the actual filled text. Include an `unanswered` note as one of the entries (e.g.
      `"Unanswered questions": "Why do you want to work here? (essay, not in answer pack)"`) if
      anything was left blank on purpose.
-   - Cannot proceed: `POST /api/apply/report` with
-     `{ "jobId": task.jobId, "status": "needs_manual", "reason": "..." }` (see §5 triggers), close
-     the tab, and continue the loop with the next task.
-   - Something broke unexpectedly (page crashed, tool errored repeatedly): report
-     `{ "jobId": task.jobId, "status": "error", "reason": "..." }` instead, close the tab, and
-     count it toward the error circuit breaker in §7.
+   - Cannot proceed: same endpoint with
+     `{ "jobId": task.jobId, "status": "needs_manual", "reason": "..." }` (see §5 triggers — this
+     includes "already applied" pages and dead/expired apply links, see §5), close the tab, and
+     continue the loop with the next task.
+   - Something broke unexpectedly (page crashed, a tool errored repeatedly, the App itself returned
+     an unexpected error): report `{ "jobId": task.jobId, "status": "error", "reason": "..." }`
+     instead, close the tab, and count it toward the error circuit breaker in §7. Don't use
+     `error` for things that are really just "this application needs a human" (see §5) — that
+     miscounts against the wrong breaker and stops the session early for no good reason.
 
 5. **Poll for the human's decision.** Every 5 seconds, up to 30 minutes total:
-   `GET /api/apply/pending?jobId=<task.jobId>` → `{ "decision": null | "approved" | "rejected", "status": "..." }`.
+   ```
+   curl -s "http://127.0.0.1:3000/api/apply/pending?jobId=<task.jobId>"
+   ```
+   → `{ "decision": null | "approved" | "rejected", "status": "..." }`.
    - `decision === "approved"`: proceed to submit — see §4.
    - `decision === "rejected"`: the user rejected this fill in the App. Close the tab (do not
      submit) and continue the loop with the next task.
@@ -125,6 +147,14 @@ These three have known, mostly-stable DOM shapes. Use the concrete selectors and
 - If a mapped selector isn't found (the company customized their ATS instance, or the form
   version has drifted from the map), don't guess wildly — fall back to the Tier B/C generic
   strategy for that field only; keep using the map for fields that did match.
+- **Greenhouse is often multi-page**, especially on `job-boards.greenhouse.io` — contact info on
+  page 1, then an "Advance to next step"/"Continue" click, then education, then the EEO section
+  frequently on its own later page or right before the very end. Advance through each page using
+  the same Tier A field-map rules (`read_page` the new page, map fields, fill, advance again) —
+  don't assume the whole form is on one screen just because it's Greenhouse. The gate in §4
+  applies only to the *final* Submit button at the end of the whole flow; intermediate
+  "Continue"/"Next" clicks between pages of the same application are not final submits and don't
+  need approval to click.
 
 ### Tier B/C — Workday and everything else
 
@@ -155,15 +185,28 @@ unless `confirm_decision === 'approved'` and status is still `awaiting_confirm`;
 never even attempt it before polling confirms approval. Concretely:
 
 1. Only after §2 step 5 returned `decision === "approved"`, switch back to the application's tab.
-2. Click the actual final Submit/Apply button on the page.
-3. Take a screenshot (or `get_page_text`) of the resulting confirmation page/state to sanity-check
+2. **Re-verify before touching Submit.** The approval poll can take anywhere up to 30 minutes —
+   long enough for the tab to have reloaded, the session to have expired, or a dynamic form to
+   have reset some fields. `read_page` the form again and compare what's actually sitting in each
+   field right now against the `filledFields` you reported in §2 step 4.
+   - **Values still match** → proceed to step 3.
+   - **Anything has drifted** (a field is now empty, reverted to a placeholder/default, or holds
+     different text than what was approved) → do **not** submit. Re-fill the form from
+     `answerPack` as needed, then re-report via `POST /api/apply/report`
+     `{ "jobId": task.jobId, "status": "awaiting_confirm", "filledFields": {...} }`. This
+     automatically resets `confirm_decision` back to NULL on the App side — the old approval no
+     longer authorizes anything — so go back to §2 step 5 and poll for a fresh approval on the
+     re-filled data before trying to submit again. Never submit on an approval that was granted
+     for values the form no longer holds.
+3. Click the actual final Submit/Apply button on the page.
+4. Take a screenshot (or `get_page_text`) of the resulting confirmation page/state to sanity-check
    it actually went through (a "Thank you for applying" message, a confirmation number, a URL
    change to a success page, etc.).
-4. `POST /api/apply/report` with `{ "jobId": task.jobId, "status": "submitted" }`.
+5. `POST /api/apply/report` with `{ "jobId": task.jobId, "status": "submitted" }`.
    - If this call errors (e.g. the App's red-line check rejects it because the decision changed
      out from under you), stop, do not retry blindly, and surface the error to the user — do not
      re-click Submit.
-5. Close the tab and continue the loop.
+6. Close the tab and continue the loop.
 
 ---
 
@@ -180,6 +223,15 @@ Report `needs_manual` (never try to power through these) whenever you hit:
   (visa specifics beyond `work_auth`, salary expectations, start date logistics, essay questions,
   etc.).
 - A cover letter requirement — this version of the skill does not generate cover letters.
+- **"You've already applied" / "You have already submitted an application for this job" pages** —
+  report `needs_manual` with reason `"already applied"`. This is not a failure of the fill
+  attempt, so it must not be reported as `status: "error"` — it doesn't belong in the error
+  circuit breaker in §7, and mislabeling it there can trip that breaker and stop the session for
+  a completely benign reason.
+- **A dead or expired apply link** — the URL 404s, redirects to a generic "this posting is no
+  longer available" page, or otherwise never renders an application form. Report `needs_manual`
+  with reason `"dead link"`. Same rule: this is a data problem with the job listing, not an
+  executor error — use `needs_manual`, not `error`.
 - Anything else where filling it out would require guessing rather than reading from the answer
   pack.
 

@@ -38,6 +38,15 @@ interface CandidateRow {
 // (needs_manual_reason set, status left at 'matched') and the loop moves on to the next
 // candidate — they never get returned to the caller as a task.
 export function takeNextApplication(db: DB, profile: Profile): ApplyTask | { done: true } {
+  // Reclaim jobs stranded at 'prepared' by an executor that died mid-fill (crashed session,
+  // killed process, network partition — anything that took a task and never reported back).
+  // Without this they're invisible forever: 'prepared' fails the picker's 'matched' filter below,
+  // and nothing else ever moves them. 30 minutes is generously past any real fill+report round
+  // trip, so a still-fresh 'prepared' row (a live executor genuinely mid-fill) is left alone.
+  db.prepare(
+    "UPDATE applications SET status = 'matched' WHERE status = 'prepared' AND updated_at < datetime('now', '-30 minutes')"
+  ).run();
+
   for (;;) {
     const row = db
       .prepare(
@@ -52,6 +61,11 @@ export function takeNextApplication(db: DB, profile: Profile): ApplyTask | { don
       .get() as CandidateRow | undefined;
 
     if (!row) return { done: true };
+
+    if (!row.apply_url) {
+      db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ?").run("no apply url", row.job_id);
+      continue; // parked row now fails the needs_manual_reason IS NULL filter — try the next one.
+    }
 
     const selection = selectResumeForJob(db, row.job_id);
     if ("error" in selection) {
@@ -69,13 +83,18 @@ export function takeNextApplication(db: DB, profile: Profile): ApplyTask | { don
       { version_name: selection.versionName, pdf_path: selection.pdfPath }
     );
 
-    const tx = db.transaction(() => {
-      db.prepare("UPDATE applications SET status = 'prepared', answer_pack = ? WHERE job_id = ? AND status = 'matched'").run(
-        JSON.stringify(answerPack),
-        row.job_id
-      );
-    });
-    tx();
+    // confirm_decision reset to NULL defensively: a previous cycle through this same job_id could
+    // in principle have left a stale 'rejected'/'approved' behind it; a freshly prepared task must
+    // never inherit an old decision. .changes === 0 means another caller already moved this row
+    // out of 'matched' between the SELECT above and this UPDATE (e.g. a concurrent executor
+    // request) — treat that as a lost race and just try the next candidate rather than returning
+    // a task nobody actually locked.
+    const claim = db
+      .prepare(
+        "UPDATE applications SET status = 'prepared', answer_pack = ?, confirm_decision = NULL WHERE job_id = ? AND status = 'matched'"
+      )
+      .run(JSON.stringify(answerPack), row.job_id);
+    if (claim.changes === 0) continue;
 
     return {
       jobId: row.job_id,
@@ -91,8 +110,24 @@ export function takeNextApplication(db: DB, profile: Profile): ApplyTask | { don
 export interface ReportFillInput {
   jobId: number;
   status: "awaiting_confirm" | "needs_manual" | "error";
+  // Typed as Record<string, string> for the happy path, but this arrives over HTTP as
+  // unvalidated JSON — see coerceFieldValue below for why the runtime doesn't trust the type.
   filledFields?: Record<string, string>;
   reason?: string;
+}
+
+// The confirm queue UI renders filledFields values directly as React children. An executor
+// report is unvalidated JSON off the wire — a read-back that happens to be an array/number/object
+// (e.g. a multi-select control read back as a list) would otherwise crash the whole approval UI
+// the moment that row renders. Coerce anything non-string to its JSON representation so persisted
+// filled_fields is always safe to render as plain text.
+function coerceFieldValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 // Executor -> App status report. Only 'prepared' may transition; 'awaiting_confirm' is also
@@ -107,9 +142,17 @@ export function reportFill(db: DB, input: ReportFillInput): void {
   }
 
   if (input.status === "awaiting_confirm") {
+    const coerced: Record<string, string> = {};
+    for (const [field, value] of Object.entries(input.filledFields ?? {})) {
+      coerced[field] = coerceFieldValue(value);
+    }
+    // RED LINE: this also resets confirm_decision to NULL even when re-reporting from an already
+    // approved awaiting_confirm row — a re-fill (e.g. the executor found the tab had reloaded and
+    // re-typed everything, see the skill's pre-submit re-verify step) must void any prior
+    // approval rather than let a stale 'approved' silently authorize a submit of different data.
     db.prepare(
       "UPDATE applications SET filled_fields = ?, status = 'awaiting_confirm', confirm_decision = NULL WHERE job_id = ?"
-    ).run(JSON.stringify(input.filledFields ?? {}), input.jobId);
+    ).run(JSON.stringify(coerced), input.jobId);
     return;
   }
 
@@ -140,9 +183,17 @@ export function decide(db: DB, jobId: number, decision: "approve" | "reject", re
     return;
   }
 
-  db.prepare(
-    "UPDATE applications SET status = 'matched', confirm_decision = 'rejected', needs_manual_reason = ? WHERE job_id = ?"
-  ).run(reason ?? "user rejected fill", jobId);
+  if (decision === "reject") {
+    // Parks the application in the same needs_manual_reason mechanism as an executor's own
+    // needs_manual report — the rejected job lands in /apply's 需人工清单 (needs-manual list),
+    // it is NOT silently re-offered to the executor on the next takeNextApplication call.
+    db.prepare(
+      "UPDATE applications SET status = 'matched', confirm_decision = 'rejected', needs_manual_reason = ? WHERE job_id = ?"
+    ).run(reason ?? "user rejected fill", jobId);
+    return;
+  }
+
+  throw new Error(`decide: invalid decision '${decision}' (must be 'approve' or 'reject')`);
 }
 
 // RED LINE: the only path to status='submitted'. Throws unless the application is sitting at
@@ -170,6 +221,9 @@ export interface PendingRow {
   score: number | null;
   filledFields: Record<string, string>;
   resumeVersion: string | null;
+  // NULL until the user acts; 'approved' means "the executor is waiting to submit this" — the UI
+  // must not offer the same card for approve/reject a second time once this is 'approved'.
+  decision: string | null;
 }
 
 interface PendingRawRow {
@@ -180,6 +234,7 @@ interface PendingRawRow {
   score: number | null;
   filled_fields: string | null;
   answer_pack: string | null;
+  confirm_decision: string | null;
 }
 
 // The in-app confirmation queue's data source, and what the executor polls for job-by-job
@@ -188,7 +243,7 @@ interface PendingRawRow {
 export function pendingConfirmations(db: DB): PendingRow[] {
   const rows = db
     .prepare(
-      `SELECT j.id as job_id, j.company, j.title, m.direction, m.score, a.filled_fields, a.answer_pack
+      `SELECT j.id as job_id, j.company, j.title, m.direction, m.score, a.filled_fields, a.answer_pack, a.confirm_decision
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
@@ -218,6 +273,7 @@ export function pendingConfirmations(db: DB): PendingRow[] {
       score: r.score,
       filledFields,
       resumeVersion,
+      decision: r.confirm_decision,
     };
   });
 }
@@ -228,4 +284,19 @@ export function confirmStatus(db: DB, jobId: number): { decision: string | null;
     | undefined;
   if (!row) throw new Error(`confirmStatus: no application for job ${jobId}`);
   return { decision: row.confirm_decision, status: row.status };
+}
+
+// Clears a parked application's needs_manual_reason so it re-enters takeNextApplication's pool —
+// e.g. the job was parked for "no resume generated for direction 'quant'" and the user has since
+// gone to Studio and generated one. Only valid from status='matched'; anything else (submitted,
+// still awaiting_confirm, etc.) has nothing meaningful to "retry".
+export function unpark(db: DB, jobId: number): void {
+  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as
+    | { status: string }
+    | undefined;
+  if (!row) throw new Error(`unpark: no application for job ${jobId}`);
+  if (row.status !== "matched") {
+    throw new Error(`unpark: cannot unpark from status '${row.status}' (must be 'matched')`);
+  }
+  db.prepare("UPDATE applications SET needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
 }

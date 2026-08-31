@@ -8,6 +8,7 @@ import {
   reportSubmitted,
   pendingConfirmations,
   confirmStatus,
+  unpark,
   ApplyTask,
 } from "@/apply/queue";
 
@@ -49,6 +50,7 @@ function seedJob(
     direction?: string | null;
     status?: string;
     createdAt?: string;
+    updatedAt?: string;
   } = {}
 ): number {
   const jobId = db
@@ -72,7 +74,18 @@ function seedJob(
     opts.tier === undefined ? 1 : opts.tier
   );
 
-  db.prepare("INSERT INTO applications (job_id, status) VALUES (?,?)").run(jobId, opts.status ?? "matched");
+  // updated_at is set via an explicit INSERT column (not a follow-up UPDATE) specifically so
+  // tests can backdate it — trg_applications_updated resets updated_at to now() on any UPDATE,
+  // which would fight a post-hoc backdating attempt.
+  if (opts.updatedAt) {
+    db.prepare("INSERT INTO applications (job_id, status, updated_at) VALUES (?,?,?)").run(
+      jobId,
+      opts.status ?? "matched",
+      opts.updatedAt
+    );
+  } else {
+    db.prepare("INSERT INTO applications (job_id, status) VALUES (?,?)").run(jobId, opts.status ?? "matched");
+  }
 
   return jobId;
 }
@@ -210,6 +223,47 @@ describe("takeNextApplication", () => {
 
     expect(result).toEqual({ done: true });
   });
+
+  it("parks a job with no apply_url as needs_manual and moves on", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const noUrl = seedJob(db, { company: "NoUrlCo", applyUrl: "" });
+    const hasUrl = seedJob(db, { company: "HasUrlCo" });
+
+    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+
+    expect(result.jobId).toBe(hasUrl);
+    const parked = getApplication(db, noUrl);
+    expect(parked.status).toBe("matched");
+    expect(parked.needs_manual_reason).toBe("no apply url");
+  });
+
+  it("reclaims a job stranded at 'prepared' for over 30 minutes (executor died mid-fill) and re-offers it", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const stranded = seedJob(db, {
+      company: "StrandedCo",
+      status: "prepared",
+      updatedAt: "2020-01-01 00:00:00",
+    });
+
+    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+
+    expect(result.jobId).toBe(stranded);
+  });
+
+  it("does NOT reclaim a fresh 'prepared' job (still within the 30-minute window)", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const fresh = seedJob(db, { company: "FreshCo", status: "prepared" });
+    void fresh;
+
+    const result = takeNextApplication(db, testProfile());
+
+    // Nothing else in the matched queue, and the fresh 'prepared' row must not be touched.
+    expect(result).toEqual({ done: true });
+    expect(getApplication(db, fresh).status).toBe("prepared");
+  });
 });
 
 describe("reportFill", () => {
@@ -270,6 +324,40 @@ describe("reportFill", () => {
 
     expect(() => reportFill(db, { jobId, status: "needs_manual", reason: "x" })).toThrow();
   });
+
+  it("coerces non-string filledFields values (array/number/object) to strings so the confirm UI never crashes on them", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "prepared", direction: "ai_infra", score: 1 });
+
+    reportFill(db, {
+      jobId,
+      status: "awaiting_confirm",
+      // Deliberately not Record<string,string> at the type level — this is exactly what an
+      // executor's JSON report over HTTP can smuggle in, since the API route doesn't validate it.
+      filledFields: { a: [1, 2], b: 5, c: { x: 1 } } as unknown as Record<string, string>,
+    });
+
+    const rows = pendingConfirmations(db);
+    expect(rows).toHaveLength(1);
+    for (const value of Object.values(rows[0].filledFields)) {
+      expect(typeof value).toBe("string");
+    }
+    expect(rows[0].filledFields.a).toBe("[1,2]");
+    expect(rows[0].filledFields.b).toBe("5");
+    expect(rows[0].filledFields.c).toBe('{"x":1}');
+  });
+
+  it("RED LINE regression: re-reporting awaiting_confirm after approval resets confirm_decision to NULL (voids the approval)", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "awaiting_confirm" });
+    decide(db, jobId, "approve");
+    expect(getApplication(db, jobId).confirm_decision).toBe("approved");
+
+    reportFill(db, { jobId, status: "awaiting_confirm", filledFields: { email: "new@value.com" } });
+
+    expect(getApplication(db, jobId).confirm_decision).toBeNull();
+    expect(() => reportSubmitted(db, jobId)).toThrow();
+  });
 });
 
 describe("decide", () => {
@@ -303,6 +391,17 @@ describe("decide", () => {
     decide(db, jobId, "reject");
 
     expect(getApplication(db, jobId).needs_manual_reason).toBe("user rejected fill");
+  });
+
+  it("rejects an unknown decision value instead of silently treating it as reject", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "awaiting_confirm" });
+
+    expect(() => decide(db, jobId, "maybe" as unknown as "approve")).toThrow();
+    // Must not have mutated the row at all.
+    const row = getApplication(db, jobId);
+    expect(row.status).toBe("awaiting_confirm");
+    expect(row.confirm_decision).toBeNull();
   });
 });
 
@@ -371,7 +470,19 @@ describe("pendingConfirmations", () => {
       score: 88,
       filledFields: { email: "a@b.c" },
       resumeVersion: "ai_infra-v1",
+      decision: null,
     });
+  });
+
+  it("carries confirm_decision so the UI can tell an approved card apart from an unreviewed one", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "awaiting_confirm" });
+
+    decide(db, jobId, "approve");
+
+    const rows = pendingConfirmations(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].decision).toBe("approved");
   });
 
   it("excludes jobs that are not awaiting_confirm", () => {
@@ -398,5 +509,47 @@ describe("confirmStatus", () => {
     const jobId = seedJob(db, { status: "prepared" });
 
     expect(confirmStatus(db, jobId)).toEqual({ decision: null, status: "prepared" });
+  });
+});
+
+describe("unpark", () => {
+  it("clears needs_manual_reason on a parked (matched) application so it re-enters the pool", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "matched" });
+    db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ?").run(
+      "no resume generated for direction 'quant'",
+      jobId
+    );
+
+    unpark(db, jobId);
+
+    expect(getApplication(db, jobId).needs_manual_reason).toBeNull();
+  });
+
+  it("lets a freshly generated resume make an unparked job pickable again", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { company: "QuantCo", direction: "quant" });
+    // takeNextApplication parks it (no resume for 'quant' yet).
+    expect(takeNextApplication(db, testProfile())).toEqual({ done: true });
+    expect(getApplication(db, jobId).needs_manual_reason).toBeTruthy();
+
+    // User generates the missing-direction resume in Studio, then unparks.
+    seedResume(db, "quant-v1", ["quant"]);
+    unpark(db, jobId);
+
+    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    expect(result.jobId).toBe(jobId);
+  });
+
+  it("throws when the application is not in a parkable status (e.g. submitted)", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "submitted" });
+
+    expect(() => unpark(db, jobId)).toThrow();
+  });
+
+  it("throws for an unknown jobId", () => {
+    const db = openDb(":memory:");
+    expect(() => unpark(db, 999)).toThrow();
   });
 });

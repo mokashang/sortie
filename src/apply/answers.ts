@@ -44,18 +44,24 @@ function formatGradMonthYear(gradDate: string): string {
 }
 
 // Splits on the LAST space so multi-word first names ("Mary Jane Watson") keep "Mary Jane"
-// together as the first name and only the trailing token becomes the last name.
+// together as the first name and only the trailing token becomes the last name. Collapses
+// runs of internal whitespace first so a stray double space (copy-paste artifact in profile.yaml)
+// doesn't produce an empty middle token or throw off which space is "last".
 function splitName(fullName: string): { first: string; last: string } {
-  const trimmed = fullName.trim();
+  const trimmed = fullName.trim().replace(/\s+/g, " ");
   const idx = trimmed.lastIndexOf(" ");
   if (idx === -1) return { first: trimmed, last: "" };
   return { first: trimmed.slice(0, idx), last: trimmed.slice(idx + 1) };
 }
 
 // Bare handles like "linkedin.com/in/x" get an https:// prefix; anything already carrying a
-// scheme (http:// or https://) is left exactly as the user wrote it.
+// scheme (http:// or https://) is left exactly as the user wrote it. An empty/unset value stays
+// empty — profile.yaml allows linkedin/github to be blank, and turning "" into "https://" would
+// hand the executor a fake, non-functional URL to type into a form.
 function completeUrl(value: string): string {
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
 export function buildAnswerPack(profile: Profile, job: AnswerPackJob, resume: AnswerPackResume): AnswerPack {
