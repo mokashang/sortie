@@ -11,8 +11,8 @@ describe("experiences schema", () => {
     expect(row.title).toBe("Distributed Trainer");
     expect(JSON.parse(row.bullets)[0].directions).toEqual(["ai_infra"]);
   });
-  it("reports user_version 2", () => {
+  it("reports the current schema user_version", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(2);
+    expect(db.pragma("user_version", { simple: true })).toBe(3);
   });
 });

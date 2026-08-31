@@ -17,7 +17,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -32,8 +32,21 @@ export function openDb(file?: string): DB {
   // plans can branch on `found` to run incremental migrations instead of blindly overwriting.
   const found = db.pragma("user_version", { simple: true }) as number;
   db.exec(readSchema());
-  if (found < SCHEMA_VERSION) {
-    // migrations from `found` will go here in later plans
+  if (found > 0 && found < SCHEMA_VERSION) {
+    // v2 -> v3: applications gained answer_pack/filled_fields/confirm_decision/needs_manual_reason.
+    // CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so old DBs need explicit
+    // ALTER TABLE ADD COLUMN — guarded per-column so this is safe to run more than once.
+    const cols = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map(
+      (c) => c.name
+    );
+    for (const [col, type] of [
+      ["answer_pack", "TEXT"],
+      ["filled_fields", "TEXT"],
+      ["confirm_decision", "TEXT"],
+      ["needs_manual_reason", "TEXT"],
+    ] as const) {
+      if (!cols.includes(col)) db.exec(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);
+    }
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 

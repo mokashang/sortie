@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS applications (
   confirm_screenshot TEXT,
   referral_person_id INTEGER REFERENCES people(id),
   origin_outreach_id INTEGER REFERENCES outreach(id),
+  answer_pack TEXT,                -- JSON: full snapshot of this application's answers (auditable)
+  filled_fields TEXT,              -- JSON: field->value list reported back by the executor
+  confirm_decision TEXT,           -- NULL | approved | rejected
+  needs_manual_reason TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
