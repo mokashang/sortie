@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { ConfirmPanel } from "./confirm-panel";
 import { UnparkButton } from "./unpark-button";
+import { ExecutorPanel } from "@/app/components/executor-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -51,8 +52,12 @@ export default function ApplyPage() {
     <div>
       <h1>投递</h1>
       <p style={{ color: "#666", fontSize: 13, margin: "8px 0 16px" }}>
-        执行器会话填完表后,申请会出现在下面等你确认。点[确认提交]后执行器才会真正点提交;拒绝会把申请退回队列。
+        点下面的按钮直接从 App 里启动投递执行器(headless claude 会话,驱动你已登录的 Chrome)——不用再手动开
+        claude 会话。执行器会话填完表后,申请会出现在下面等你确认。点[确认提交]后执行器才会真正点提交;拒绝会把
+        申请退回队列。
       </p>
+
+      <ExecutorPanel kinds={[{ kind: "apply", label: "开始投递", withLimit: true }]} />
 
       <div style={{ display: "flex", gap: 24, margin: "8px 0 20px", fontSize: 14 }}>
         <span>今日已提交 <strong>{submittedRows.length}</strong></span>
