@@ -6,28 +6,38 @@ import { runMatching } from "../src/matcher/run";
 export interface MatchArgs {
   limit?: number;
   rescoreArchived: boolean;
+  concurrency: number;
 }
 
 // Pure argv parser (exported for unit testing): accepts an optional numeric limit (jobs scored
-// per pass) as any bare non-flag arg, and an optional --rescore-archived flag, in any order.
+// per pass) as any bare non-flag arg, an optional --rescore-archived flag, and an optional
+// --concurrency N flag (default 6), in any order.
 export function parseMatchArgs(argv: string[]): MatchArgs {
   let limit: number | undefined;
   let rescoreArchived = false;
-  for (const arg of argv) {
+  let concurrency = 6;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
     if (arg === "--rescore-archived") {
       rescoreArchived = true;
+      continue;
+    }
+    if (arg === "--concurrency") {
+      const n = Number(argv[i + 1]);
+      if (!Number.isNaN(n)) concurrency = n;
+      i++;
       continue;
     }
     const n = Number(arg);
     if (arg.trim() !== "" && !Number.isNaN(n)) limit = n;
   }
-  return { limit, rescoreArchived };
+  return { limit, rescoreArchived, concurrency };
 }
 
 const MAX_ITERATIONS = 60;
 
 async function main() {
-  const { limit, rescoreArchived } = parseMatchArgs(process.argv.slice(2));
+  const { limit, rescoreArchived, concurrency } = parseMatchArgs(process.argv.slice(2));
   const db = getDb();
   const profile = loadProfile();
   const backend = getBackend();
@@ -48,6 +58,7 @@ async function main() {
       threshold: 40,
       limit,
       rescoreArchived,
+      concurrency,
     });
     console.log(
       `pass ${iteration}: scored ${summary.scored}, matched ${summary.matched}, archived ${summary.archived}, ${summary.errors.length} errors, ${summary.durationMs}ms`

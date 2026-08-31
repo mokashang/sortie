@@ -8,6 +8,10 @@ export interface MatchOptions {
   batchSize?: number;   // jobs per LLM call
   threshold?: number;   // score below which (or skip=true) → archived
   limit?: number;       // max jobs to score this run (for incremental passes)
+  // Max number of LLM batch calls (opts.backend.complete) in flight at once. Default 1 preserves
+  // the original fully-sequential behavior. DB writes (one db.transaction per batch) always run
+  // synchronously as each call resolves, so writes never interleave regardless of concurrency.
+  concurrency?: number;
   // When true, also re-score jobs whose application already archived (overwriting their old
   // match row) — an escape hatch so a single under-calibrated pass doesn't permanently bury a
   // real opportunity behind the "already has a match row" resumable gate. Default false.
@@ -65,8 +69,19 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
   );
   const setStatus = db.prepare("UPDATE applications SET status=? WHERE job_id=? AND status IN ('discovered','matched','archived')");
 
+  // Slice the (already-selected, order-fixed) rows into fixed batches up front — concurrency only
+  // affects how these batches are *processed*, never which jobs land in which batch.
+  const batches: JobRow[][] = [];
   for (let i = 0; i < rows.length; i += batchSize) {
-    const batch = rows.slice(i, i + batchSize);
+    batches.push(rows.slice(i, i + batchSize));
+  }
+
+  // Runs one batch: the slow await (backend.complete) happens outside any transaction; the DB
+  // write below is a single synchronous db.transaction. better-sqlite3 is synchronous and JS is
+  // single-threaded, so as long as nothing awaits *inside* the transaction, concurrent batches can
+  // never interleave their writes — whichever batch's promise resolves first simply runs its
+  // transaction to completion before the next one gets a turn.
+  async function processBatch(batch: JobRow[], batchIndex: number): Promise<void> {
     const inputs: MatchJobInput[] = batch.map((r) => ({
       id: r.id,
       company: r.company,
@@ -80,8 +95,8 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
       const res = await opts.backend.complete(req);
       results = parseMatchResults(res.text);
     } catch (e) {
-      summary.errors.push({ batch: i / batchSize, error: String(e) });
-      continue;
+      summary.errors.push({ batch: batchIndex, error: String(e) });
+      return;
     }
 
     // First-occurrence wins: a stray duplicate job_id later in the model's response must not
@@ -112,6 +127,24 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
     });
     tx();
   }
+
+  const concurrency = Math.max(1, opts.concurrency ?? 1);
+
+  // A small worker pool: each worker pulls the next batch index off a shared cursor, awaits the
+  // (slow) LLM call, then does its synchronous DB write, then loops. With concurrency=1 this is
+  // exactly the original sequential loop. Batches write in whatever order their backend calls
+  // resolve, not necessarily index order — summary aggregation is safe because every mutation of
+  // `summary` happens synchronously after an await resolves, never concurrently with another.
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    for (;;) {
+      const batchIndex = nextIndex++;
+      if (batchIndex >= batches.length) return;
+      await processBatch(batches[batchIndex], batchIndex);
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, batches.length) }, () => worker());
+  await Promise.all(workers);
 
   summary.durationMs = Date.now() - startedAt;
   logEvent(db, "match_done", { entity: "matcher", payload: summary });

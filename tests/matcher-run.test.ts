@@ -219,4 +219,175 @@ describe("runMatching", () => {
     const m = db.prepare("SELECT score FROM matches WHERE job_id=?").get(jobId) as any;
     expect(m.score).toBe(80);
   });
+
+  it("concurrency=3 runs multiple batches in flight and still scores every job correctly", async () => {
+    const db = openDb(":memory:");
+    const ins = db.prepare(
+      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+    );
+    const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+    const jobIds: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const info = ins.run(`conc${i}`, "Acme", `Job ${i}`, "SF", "Do the thing.", "greenhouse", null);
+      const id = Number(info.lastInsertRowid);
+      insApp.run(id);
+      jobIds.push(id);
+    }
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const backend: LlmBackend = {
+      name: "concurrent",
+      complete: async (req) => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const ids = [...req.prompt.matchAll(/<job id="(\d+)"/g)].map((m) => Number(m[1]));
+        // Small delay so overlapping calls actually overlap instead of resolving synchronously.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        const arr = ids.map((id) => ({ job_id: id, direction: "swe_backend", score: 80, skip: false, reason: "ok" }));
+        return { text: JSON.stringify(arr), backend: "concurrent" };
+      },
+    };
+
+    const summary = await runMatching(db, {
+      backend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 1,
+      threshold: 40,
+      concurrency: 3,
+    });
+
+    expect(summary.scored).toBe(6);
+    expect(maxInFlight).toBeGreaterThan(1);
+    for (const id of jobIds) {
+      const m = db.prepare("SELECT score, direction FROM matches WHERE job_id=?").get(id) as any;
+      expect(m.score).toBe(80);
+      expect(m.direction).toBe("swe_backend");
+      const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(id) as any;
+      expect(app.status).toBe("matched");
+    }
+  });
+
+  it("concurrency=3 produces identical results to concurrency=1 for the same scripted inputs", async () => {
+    function seedSix(db: ReturnType<typeof openDb>) {
+      const ins = db.prepare(
+        "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+      );
+      const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+      const ids: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const info = ins.run(`par${i}`, "Acme", `Job ${i}`, "SF", "Do the thing.", "greenhouse", null);
+        const id = Number(info.lastInsertRowid);
+        insApp.run(id);
+        ids.push(id);
+      }
+      return ids;
+    }
+
+    function makeBackend(): LlmBackend {
+      return {
+        name: "parity",
+        complete: async (req) => {
+          const ids = [...req.prompt.matchAll(/<job id="(\d+)"/g)].map((m) => Number(m[1]));
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          const arr = ids.map((id, i) => ({
+            job_id: id,
+            direction: i % 2 === 0 ? "swe_backend" : null,
+            score: i % 2 === 0 ? 84 : 10,
+            skip: i % 2 !== 0,
+            reason: "parity",
+          }));
+          return { text: JSON.stringify(arr), backend: "parity" };
+        },
+      };
+    }
+
+    const dbSeq = openDb(":memory:");
+    const seqIds = seedSix(dbSeq);
+    const seqSummary = await runMatching(dbSeq, {
+      backend: makeBackend(),
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 1,
+      threshold: 40,
+      concurrency: 1,
+    });
+
+    const dbPar = openDb(":memory:");
+    const parIds = seedSix(dbPar);
+    const parSummary = await runMatching(dbPar, {
+      backend: makeBackend(),
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 1,
+      threshold: 40,
+      concurrency: 3,
+    });
+
+    expect(parSummary.scored).toBe(seqSummary.scored);
+    expect(parSummary.matched).toBe(seqSummary.matched);
+    expect(parSummary.archived).toBe(seqSummary.archived);
+    expect(parSummary.errors.length).toBe(seqSummary.errors.length);
+
+    for (let i = 0; i < seqIds.length; i++) {
+      const seqM = db2Match(dbSeq, seqIds[i]);
+      const parM = db2Match(dbPar, parIds[i]);
+      expect(parM).toEqual(seqM);
+    }
+
+    function db2Match(db: ReturnType<typeof openDb>, jobId: number) {
+      const m = db.prepare("SELECT direction, score, tier, skip_reason FROM matches WHERE job_id=?").get(jobId) as any;
+      const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as any;
+      return { score: m.score, direction: m.direction, tier: m.tier, skip_reason: m.skip_reason, status: app.status };
+    }
+  });
+
+  it("under concurrency>1, a batch failure is still isolated and other batches succeed", async () => {
+    const db = openDb(":memory:");
+    const ins = db.prepare(
+      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+    );
+    const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+    const jobIds: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const info = ins.run(`fail${i}`, "Acme", `Job ${i}`, "SF", "Do the thing.", "greenhouse", null);
+      const id = Number(info.lastInsertRowid);
+      insApp.run(id);
+      jobIds.push(id);
+    }
+    // The third job (batch index 2, when batchSize=1) will throw.
+    const failingId = jobIds[2];
+
+    const backend: LlmBackend = {
+      name: "flaky",
+      complete: async (req) => {
+        const ids = [...req.prompt.matchAll(/<job id="(\d+)"/g)].map((m) => Number(m[1]));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        if (ids.includes(failingId)) throw new Error("backend down for this batch");
+        const arr = ids.map((id) => ({ job_id: id, direction: "swe_backend", score: 84, skip: false, reason: "ok" }));
+        return { text: JSON.stringify(arr), backend: "flaky" };
+      },
+    };
+
+    const summary = await runMatching(db, {
+      backend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 1,
+      threshold: 40,
+      concurrency: 3,
+    });
+
+    expect(summary.errors.length).toBe(1);
+    expect(summary.scored).toBe(4);
+    for (const id of jobIds) {
+      if (id === failingId) {
+        const m = db.prepare("SELECT id FROM matches WHERE job_id=?").get(id);
+        expect(m).toBeUndefined();
+        const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(id) as any;
+        expect(app.status).toBe("discovered");
+      } else {
+        const m = db.prepare("SELECT score FROM matches WHERE job_id=?").get(id) as any;
+        expect(m.score).toBe(84);
+      }
+    }
+  });
 });
