@@ -1,0 +1,127 @@
+import { getDb } from "@/lib/db";
+import { ConfirmPanel } from "./confirm-panel";
+
+export const dynamic = "force-dynamic";
+
+interface ManualRow {
+  job_id: number;
+  company: string;
+  title: string;
+  apply_url: string | null;
+  needs_manual_reason: string;
+}
+
+interface SubmittedRow {
+  job_id: number;
+  company: string;
+  title: string;
+  submitted_at: string;
+}
+
+export default function ApplyPage() {
+  const db = getDb();
+
+  const pendingCount = (
+    db.prepare("SELECT COUNT(*) n FROM applications WHERE status='awaiting_confirm'").get() as { n: number }
+  ).n;
+
+  const manualRows = db
+    .prepare(
+      `SELECT a.job_id, j.company, j.title, j.apply_url, a.needs_manual_reason
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NOT NULL
+       ORDER BY a.job_id DESC`
+    )
+    .all() as ManualRow[];
+
+  const submittedRows = db
+    .prepare(
+      `SELECT a.job_id, j.company, j.title, a.submitted_at
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       WHERE a.status = 'submitted' AND a.submitted_at >= date('now')
+       ORDER BY a.submitted_at DESC`
+    )
+    .all() as SubmittedRow[];
+
+  return (
+    <div>
+      <h1>投递</h1>
+      <p style={{ color: "#666", fontSize: 13, margin: "8px 0 16px" }}>
+        执行器会话填完表后,申请会出现在下面等你确认。点[确认提交]后执行器才会真正点提交;拒绝会把申请退回队列。
+      </p>
+
+      <div style={{ display: "flex", gap: 24, margin: "8px 0 20px", fontSize: 14 }}>
+        <span>今日已提交 <strong>{submittedRows.length}</strong></span>
+        <span>待确认 <strong>{pendingCount}</strong></span>
+        <span>需人工 <strong>{manualRows.length}</strong></span>
+      </div>
+
+      <h3>待确认</h3>
+      <ConfirmPanel />
+
+      <details style={{ marginTop: 24 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>需人工清单 ({manualRows.length})</summary>
+        {manualRows.length === 0 ? (
+          <p style={{ color: "#666", marginTop: 8 }}>无。</p>
+        ) : (
+          <table style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>公司</th>
+                <th>标题</th>
+                <th>原因</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {manualRows.map((r) => (
+                <tr key={r.job_id}>
+                  <td>{r.company}</td>
+                  <td>{r.title}</td>
+                  <td style={{ fontSize: 12, color: "#555", maxWidth: 320 }}>{r.needs_manual_reason}</td>
+                  <td>
+                    {r.apply_url ? (
+                      <a href={r.apply_url} target="_blank" rel="noreferrer">
+                        申请
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </details>
+
+      <details style={{ marginTop: 16 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>今日已提交 ({submittedRows.length})</summary>
+        {submittedRows.length === 0 ? (
+          <p style={{ color: "#666", marginTop: 8 }}>无。</p>
+        ) : (
+          <table style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>公司</th>
+                <th>标题</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {submittedRows.map((r) => (
+                <tr key={r.job_id}>
+                  <td>{r.company}</td>
+                  <td>{r.title}</td>
+                  <td>{r.submitted_at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </details>
+    </div>
+  );
+}
