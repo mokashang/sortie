@@ -113,13 +113,15 @@ current and `followup` drafts you generate later have the real thread history:
       - Anything else (e.g. "Follow" only, no Connect/Message at all, a "Pending" state already
         showing) → you can't safely act; skip this row, note it in the session summary, and move
         on. Don't invent a workaround.
-   c. **Not connected: send a connection request with a note.**
+   c. **Not connected: send a connection request with a note.** Keep track of `sentText` — the
+      *exact* string you end up putting on the wire — because it's what you report back in (e);
+      it's not always identical to `row.draft`.
       - Click **Connect** → **Add a note** (do not send a connectionless request — the whole
         point of the draft is the note).
       - LinkedIn's note field caps at ~300 characters; treat **280** as your hard limit (matches
         the cap the draft prompt itself was written under, per Task 2).
       - If `row.draft` (trimmed of leading/trailing whitespace) is already ≤280 characters, use it
-        verbatim.
+        verbatim — `sentText = row.draft`.
       - If it's over 280, you may do a **light, meaning-preserving trim only**: drop trailing
         sentences from the end until it fits, never rewrite, paraphrase, or invent a shorter
         version. If even the *first* sentence alone is over 280 characters, or trimming away
@@ -127,23 +129,34 @@ current and `followup` drafts you generate later have the real thread history:
         doesn't stand on its own), **do not send it and do not guess** — skip this row, mark it
         `needs-edit` in the session summary ("draft for Jane Doe is too long to fit a connection
         note without cutting the ask — please shorten it in /network"), and move to the next row.
-      - Type the (verbatim-or-lightly-trimmed) note into the field.
+        Otherwise `sentText` = your trimmed version.
+      - Type `sentText` into the field.
       - **Verbatim check before sending**: `read_page` (or `get_page_text`) the note field's
-        actual current content and compare it character-for-character against exactly what you
-        intended to enter (the verbatim draft, or your trimmed version). Only if it matches
-        exactly do you proceed to click **Send**. If it doesn't match (autocomplete mangled it,
-        a stray keystroke, etc.), fix it and re-check before sending — never send on a mismatch.
+        actual current content and compare it character-for-character against `sentText`. Only if
+        it matches exactly do you proceed to click **Send**. If it doesn't match (autocomplete
+        mangled it, a stray keystroke, etc.), fix it and re-check before sending — never send on a
+        mismatch. If what's actually in the field ends up differing from `sentText` after a fix,
+        update `sentText` to match what you truly sent before moving to (e).
    d. **Already connected: send the full draft as a DM.**
-      - Click **Message**, wait for the compose box to open, type `row.draft` verbatim — no
-        trimming, no edits, this is a DM with no length constraint.
+      - **Double-send guard, before typing anything**: open the existing conversation thread with
+        this person (from their profile's Message button, or from `linkedin.com/messaging`) and
+        read the recent messages. If a message from you already matches `row.draft` — either the
+        full text or clearly the same opening — this was already sent (a prior session, a manual
+        send, a retry after a network hiccup) and typing it again would be a real duplicate send.
+        In that case **do not type or send anything**: skip straight to (e) using the *found*
+        message's actual text as `sentText`, then continue to (f)/(g).
+      - Otherwise, click **Message**, wait for the compose box to open, type `row.draft` verbatim
+        — no trimming, no edits, this is a DM with no length constraint. `sentText = row.draft`.
       - **Verbatim check before sending**: same as (c) — read back the compose box's actual
         content and confirm it's character-for-character identical to `row.draft` before clicking
         Send.
-   e. **After a successful send** (connection request or DM): `curl -s -X POST
-      http://127.0.0.1:3000/api/network/report -H 'content-type: application/json' -d
-      '{"outreachId": <row.id>, "event": "sent"}'`. If this call errors, stop and surface the
-      error to the user rather than continuing to send more messages while the App's state is in
-      question.
+   e. **After a successful send** (connection request, DM, or a double-send-guard match found in
+      (d)): `curl -s -X POST http://127.0.0.1:3000/api/network/report -H 'content-type:
+      application/json' -d '{"outreachId": <row.id>, "event": "sent", "text": "<sentText, exactly
+      what went out — JSON-escaped>"}'`. Always include `text` — even when it's identical to
+      `row.draft` — so the App's thread_log records what was truly sent rather than assuming the
+      full draft went out unmodified. If this call errors, stop and surface the error to the user
+      rather than continuing to send more messages while the App's state is in question.
    f. Close the tab.
    g. **Wait at least 30 seconds** before starting the next row (see the caps in §4).
 
@@ -222,6 +235,12 @@ here always goes through the normal draft → approve → send-mode pipeline in 
   CRM only, not a target list for sending.
 - **Verbatim-check the input box against the draft before every click on Send** (§2.2c/d). No
   exceptions — "it looked right" is not a check.
+- **Check the conversation thread for an already-sent match before typing a DM** (§2.2d). A
+  double send isn't just noisy — it can look erratic to the recipient and to LinkedIn's abuse
+  detection. If you find one, report it as sent with the found text; don't type it again.
+- **Report exactly what was sent, not what was approved.** Every `event: "sent"` report in §2.2e
+  includes `text` set to `sentText` — the trimmed note or the DM as it actually went out (or the
+  already-sent text found by the double-send guard) — never silently assumed to equal `row.draft`.
 - **Session caps**: at most **10 connection requests** and at most **15 messages (DMs)** per
   session — track your own running counts and stop sending (report a summary) the moment either
   cap is hit, even if more `sendables()` rows remain.

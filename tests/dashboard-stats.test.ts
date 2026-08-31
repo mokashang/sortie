@@ -115,6 +115,19 @@ describe("byDirection", () => {
     const d = db();
     expect(byDirection(d)).toEqual([]);
   });
+
+  it("sorts the NULL-direction bucket last, even when its tier would otherwise sort it first", () => {
+    const d = db();
+    // tier 1 with no direction (e.g. a match the scorer couldn't confidently bucket) — a plain
+    // "ORDER BY tier ASC" would put this ahead of every named-direction row.
+    seedApp(d, { direction: null, tier: 1, status: "matched" });
+    seedApp(d, { direction: "swe_general", tier: 3, status: "matched" });
+
+    const rows = byDirection(d);
+    expect(rows).toHaveLength(2);
+    expect(rows[rows.length - 1].direction).toBeNull();
+    expect(rows[0].direction).toBe("swe_general");
+  });
 });
 
 describe("networkingFunnel", () => {

@@ -4,9 +4,9 @@ import { approveOutreach, rejectOutreach } from "@/network/gate";
 
 // POST {outreachId, decision: 'approve'|'reject'} — user's decision from the draft-approval UI.
 export async function POST(req: Request) {
-  const body = await req.json();
-  const outreachId = Number(body.outreachId);
   try {
+    const body = await req.json();
+    const outreachId = Number(body.outreachId);
     if (body.decision === "approve") {
       approveOutreach(getDb(), outreachId);
     } else if (body.decision === "reject") {

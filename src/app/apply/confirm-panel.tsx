@@ -10,6 +10,7 @@ interface PendingRow {
   filledFields: Record<string, string>;
   resumeVersion: string | null;
   decision: string | null;
+  referralPersonName: string | null;
 }
 
 // filledFields is meant to be Record<string, string>, but it round-trips through unvalidated
@@ -92,6 +93,11 @@ export function ConfirmPanel() {
               <span style={{ color: "#666", marginLeft: 8 }}>
                 {r.direction ?? "—"} · 分 {r.score ?? "—"}
               </span>
+              {r.referralPersonName && (
+                <span style={{ color: "#2a7a2a", fontWeight: 600, marginLeft: 8 }}>
+                  带内推 · {r.referralPersonName}
+                </span>
+              )}
             </div>
             <div style={{ color: "#666", fontSize: 13 }}>简历版本:{r.resumeVersion ?? "—"}</div>
           </div>

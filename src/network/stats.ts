@@ -69,7 +69,7 @@ export function byDirection(db: DB): DirectionRow[] {
        FROM matches m
        JOIN applications a ON a.job_id = m.job_id
        GROUP BY m.direction, m.tier
-       ORDER BY m.tier ASC, m.direction ASC`
+       ORDER BY m.direction IS NULL ASC, m.tier ASC, m.direction ASC`
     )
     .all() as { direction: string | null; tier: number | null; total: number; submitted: number; interviews: number }[];
   return rows.map((r) => ({

@@ -108,7 +108,14 @@ export function sendables(db: DB): SendableRow[] {
 // 'pending_send' — i.e. a human already approved it via approveOutreach. This is the App-side
 // half of the double lock; the executor skill's own protocol (only ever send what sendables()
 // returned, verbatim) is the other half.
-export function reportSent(db: DB, id: number): void {
+//
+// `sentText` is what the executor actually put on the wire — for a LinkedIn connection request
+// this can be a trimmed-to-280-chars version of `draft` (the note field's hard limit), not the
+// draft verbatim. Recording `draft` in that case would leave the CRM's thread_log claiming text
+// that was never sent, which then feeds a wrong tail into a later `followup` draft prompt. When
+// omitted (DM sends, where the full draft always goes out unmodified), falls back to `draft` as
+// before. The `draft` column itself is never touched here either way.
+export function reportSent(db: DB, id: number, sentText?: string): void {
   const row = getStatus(db, id);
   if (row.status !== "pending_send") {
     throw new Error(
@@ -116,7 +123,7 @@ export function reportSent(db: DB, id: number): void {
     );
   }
   db.prepare("UPDATE outreach SET status = 'sent' WHERE id = ?").run(id);
-  appendThread(db, id, { dir: "sent", text: row.draft ?? "" });
+  appendThread(db, id, { dir: "sent", text: sentText ?? row.draft ?? "" });
 }
 
 // Reply-harvesting: records an incoming reply and advances sent -> replied. Only valid from
@@ -129,4 +136,45 @@ export function reportReply(db: DB, id: number, text: string): void {
   }
   db.prepare("UPDATE outreach SET status = 'replied' WHERE id = ?").run(id);
   appendThread(db, id, { dir: "received", text });
+}
+
+export const OUTCOMES = ["meeting", "referral_won", "no_response"] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+
+interface OutcomeRow {
+  status: string;
+  person_id: number;
+  job_id: number | null;
+}
+
+// Records how an outreach thread actually panned out (the CRM UI's [约到了]/[拿到内推]/[无回应]
+// buttons on a sent/replied thread — Task "outcome writers": without this, networkingFunnel's
+// meetings/referrals bars can never move off 0). Only legal from 'sent' or 'replied' — an
+// outcome only makes sense once something was actually sent. `outcome` doubles as the row's new
+// `status` (all three values are already members of OUTREACH_STATUSES in crm.ts).
+//
+// §7.4 bidirectional link: when the outcome is 'referral_won' and this outreach is tied to a
+// specific job (job_id set), also stamp that job's application.referral_person_id — this is what
+// makes crossStats' "with referral" bucket (and the /apply "带内推" badge) non-empty. Silently a
+// no-op if there's no job_id (an outreach not tied to any specific posting) or no matching
+// applications row (shouldn't normally happen since job_id references jobs, but defensive rather
+// than throwing — recording the outcome itself must not fail because of a downstream linkage
+// gap).
+export function recordOutcome(db: DB, id: number, outcome: Outcome): void {
+  if (!(OUTCOMES as readonly string[]).includes(outcome)) {
+    throw new Error(`recordOutcome: invalid outcome '${outcome}' (must be one of ${OUTCOMES.join(", ")})`);
+  }
+  const row = db.prepare("SELECT status, person_id, job_id FROM outreach WHERE id = ?").get(id) as
+    | OutcomeRow
+    | undefined;
+  if (!row) throw new Error(`recordOutcome: unknown outreach ${id}`);
+  if (row.status !== "sent" && row.status !== "replied") {
+    throw new Error(`recordOutcome: cannot record an outcome from status '${row.status}' (must be 'sent' or 'replied')`);
+  }
+
+  db.prepare("UPDATE outreach SET status = ? WHERE id = ?").run(outcome, id);
+
+  if (outcome === "referral_won" && row.job_id) {
+    db.prepare("UPDATE applications SET referral_person_id = ? WHERE job_id = ?").run(row.person_id, row.job_id);
+  }
 }

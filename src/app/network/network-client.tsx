@@ -282,6 +282,20 @@ export function NetworkClient() {
     }
   }
 
+  async function recordOutcome(outreachId: number, outcome: "meeting" | "referral_won" | "no_response") {
+    setActionBusyId(outreachId);
+    setError("");
+    try {
+      await postJson("/api/network/outcome", { outreachId, outcome });
+      await refreshAll();
+      if (selectedPersonId != null) await refreshSelected(selectedPersonId);
+    } catch (e) {
+      setError(`记录结果失败:${e}`);
+    } finally {
+      setActionBusyId(null);
+    }
+  }
+
   const selectedPerson = people.find((p) => p.id === selectedPersonId) ?? null;
   const linkedJobIds = Array.from(new Set(selectedOutreach.map((o) => o.jobId).filter((x): x is number => x != null)));
 
@@ -538,6 +552,19 @@ export function NetworkClient() {
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {(row.status === "sent" || row.status === "replied") && (
+                      <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                        <button onClick={() => recordOutcome(row.id, "meeting")} disabled={actionBusyId === row.id}>
+                          约到了
+                        </button>
+                        <button onClick={() => recordOutcome(row.id, "referral_won")} disabled={actionBusyId === row.id}>
+                          拿到内推
+                        </button>
+                        <button onClick={() => recordOutcome(row.id, "no_response")} disabled={actionBusyId === row.id}>
+                          无回应
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))

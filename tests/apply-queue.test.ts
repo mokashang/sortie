@@ -471,7 +471,21 @@ describe("pendingConfirmations", () => {
       filledFields: { email: "a@b.c" },
       resumeVersion: "ai_infra-v1",
       decision: null,
+      referralPersonName: null,
     });
+  });
+
+  it("carries referralPersonName when the application is linked to a referral (§7.4)", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "awaiting_confirm" });
+    const personId = db
+      .prepare("INSERT INTO people (name) VALUES (?)")
+      .run("Jane Doe").lastInsertRowid as number;
+    db.prepare("UPDATE applications SET referral_person_id = ? WHERE job_id = ?").run(personId, jobId);
+
+    const rows = pendingConfirmations(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].referralPersonName).toBe("Jane Doe");
   });
 
   it("carries confirm_decision so the UI can tell an approved card apart from an unreviewed one", () => {

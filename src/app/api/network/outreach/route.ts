@@ -25,8 +25,8 @@ export async function GET(req: Request) {
 // 'draft' status (updateDraft's own gate enforces this); this is Task 4's "edit before approve"
 // flow, implemented here on the outreach route per the plan's note.
 export async function PUT(req: Request) {
-  const body = await req.json();
   try {
+    const body = await req.json();
     updateDraft(getDb(), Number(body.outreachId), String(body.draft));
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -224,6 +224,11 @@ export interface PendingRow {
   // NULL until the user acts; 'approved' means "the executor is waiting to submit this" — the UI
   // must not offer the same card for approve/reject a second time once this is 'approved'.
   decision: string | null;
+  // Set when this application is linked to the outreach/person that produced it (§7.4
+  // bidirectional link — written by network/gate.ts's recordOutcome on a 'referral_won'
+  // outcome). Lets the /apply confirm card show "带内推 · <name>" instead of silently deciding
+  // for the user that this was a cold application.
+  referralPersonName: string | null;
 }
 
 interface PendingRawRow {
@@ -235,6 +240,7 @@ interface PendingRawRow {
   filled_fields: string | null;
   answer_pack: string | null;
   confirm_decision: string | null;
+  referral_person_name: string | null;
 }
 
 // The in-app confirmation queue's data source, and what the executor polls for job-by-job
@@ -243,10 +249,12 @@ interface PendingRawRow {
 export function pendingConfirmations(db: DB): PendingRow[] {
   const rows = db
     .prepare(
-      `SELECT j.id as job_id, j.company, j.title, m.direction, m.score, a.filled_fields, a.answer_pack, a.confirm_decision
+      `SELECT j.id as job_id, j.company, j.title, m.direction, m.score, a.filled_fields, a.answer_pack,
+              a.confirm_decision, p.name as referral_person_name
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
+       LEFT JOIN people p ON p.id = a.referral_person_id
        WHERE a.status = 'awaiting_confirm'
        ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC`
     )
@@ -274,6 +282,7 @@ export function pendingConfirmations(db: DB): PendingRow[] {
       filledFields,
       resumeVersion,
       decision: r.confirm_decision,
+      referralPersonName: r.referral_person_name,
     };
   });
 }
