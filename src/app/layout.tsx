@@ -10,6 +10,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/">JobSeeker OS</a>
           <a href="/jobs">职位</a>
           <a href="/queue">队列</a>
+          <a href="/profile">Profile</a>
         </nav>
         <main>{children}</main>
       </body>
