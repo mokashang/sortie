@@ -16,13 +16,20 @@ export default function QueuePage() {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched'
+       WHERE a.status = 'matched' AND j.loc_flag IS NULL
        ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
        LIMIT 1000`
     )
     .all() as QRow[];
 
-  const matchedTotal = (db.prepare("SELECT COUNT(*) n FROM applications WHERE status='matched'").get() as { n: number }).n;
+  const matchedTotal = (
+    db
+      .prepare(
+        `SELECT COUNT(*) n FROM applications a JOIN jobs j ON j.id = a.job_id
+         WHERE a.status='matched' AND j.loc_flag IS NULL`
+      )
+      .get() as { n: number }
+  ).n;
   const scoredTotal = (db.prepare("SELECT COUNT(*) n FROM matches").get() as { n: number }).n;
 
   return (

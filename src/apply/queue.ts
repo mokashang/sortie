@@ -54,7 +54,7 @@ export function takeNextApplication(db: DB, profile: Profile): ApplyTask | { don
          FROM applications a
          JOIN jobs j ON j.id = a.job_id
          JOIN matches m ON m.job_id = j.id
-         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL
+         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
          ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
          LIMIT 1`
       )

@@ -8,7 +8,8 @@
     "start": "next start -H 127.0.0.1 -p 3000",
     "test": "vitest run",
     "scan": "tsx scripts/scan.ts",
-    "match": "tsx scripts/match.ts"
+    "match": "tsx scripts/match.ts",
+    "backfill-locations": "tsx scripts/backfill-locations.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

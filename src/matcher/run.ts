@@ -50,7 +50,7 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
        FROM jobs j
        JOIN applications a ON a.job_id = j.id
        LEFT JOIN matches m ON m.job_id = j.id
-       WHERE j.visa_flag IS NULL AND (m.id IS NULL${rescoreClause})
+       WHERE j.visa_flag IS NULL AND j.loc_flag IS NULL AND (m.id IS NULL${rescoreClause})
        ORDER BY j.created_at DESC
        ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
     )

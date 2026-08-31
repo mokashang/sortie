@@ -56,6 +56,26 @@ describe("runScan", () => {
     expect(ev.n).toBe(1);
   });
 
+  it("applies the location flag alongside the visa flag and counts locSkipped separately", async () => {
+    const db = openDb(":memory:");
+    syncWatchlist(db, [{ name: "Acme", tier: 1, ats: "greenhouse", board_token: "acme", directions: [] }]);
+    const sources = {
+      greenhouse: async () => [
+        job({ title: "SWE London", location: "London, UK" }),
+        job({ title: "SWE SF", location: "San Francisco" }),
+      ],
+      lever: async () => [] as RawJob[],
+      ashby: async () => [] as RawJob[],
+      githubLists: async () => [] as RawJob[],
+    };
+    const summary = await runScan(db, sources);
+    expect(summary.locSkipped).toBe(1);
+    const london = db.prepare("SELECT loc_flag FROM jobs WHERE title='SWE London'").get() as { loc_flag: string };
+    expect(london.loc_flag).toBe("non_us");
+    const sf = db.prepare("SELECT loc_flag FROM jobs WHERE title='SWE SF'").get() as { loc_flag: string | null };
+    expect(sf.loc_flag).toBeNull();
+  });
+
   it("upgrades a thin (empty/listing-metadata-only) record with a richer record's JD and visa flag when the rich one arrives later, without creating a second application", async () => {
     const db = openDb(":memory:");
     syncWatchlist(db, [{ name: "Acme", tier: 1, ats: "greenhouse", board_token: "acme", directions: [] }]);

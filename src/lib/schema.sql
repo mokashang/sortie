@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   posted_at TEXT,
   job_kind TEXT NOT NULL DEFAULT 'newgrad',  -- newgrad | intern
   visa_flag TEXT,                  -- NULL | no_sponsor | citizen_only | clearance
+  loc_flag TEXT,                   -- NULL | non_us
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

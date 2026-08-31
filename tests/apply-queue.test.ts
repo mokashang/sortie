@@ -51,11 +51,12 @@ function seedJob(
     status?: string;
     createdAt?: string;
     updatedAt?: string;
+    locFlag?: string | null;
   } = {}
 ): number {
   const jobId = db
     .prepare(
-      "INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at, loc_flag) VALUES (?,?,?,?,?,?,?,?)"
     )
     .run(
       opts.fingerprint ?? `fp-${Math.random()}`,
@@ -64,7 +65,8 @@ function seedJob(
       opts.applyUrl ?? "https://acme.example/apply",
       opts.ats ?? "greenhouse",
       "manual",
-      opts.createdAt ?? "2026-01-01 00:00:00"
+      opts.createdAt ?? "2026-01-01 00:00:00",
+      opts.locFlag ?? null
     ).lastInsertRowid as number;
 
   db.prepare("INSERT INTO matches (job_id, direction, score, tier) VALUES (?,?,?,?)").run(
@@ -111,6 +113,15 @@ describe("takeNextApplication", () => {
     const db = openDb(":memory:");
     const result = takeNextApplication(db, testProfile());
     expect(result).toEqual({ done: true });
+  });
+
+  it("never offers a loc-flagged (non-US) job, even if it's otherwise the top match", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    seedJob(db, { company: "LondonCo", tier: 1, score: 99, locFlag: "non_us" });
+    const usJob = seedJob(db, { company: "USCo", tier: 2, score: 10 });
+    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    expect(result.jobId).toBe(usJob);
   });
 
   it("picks the highest-priority job: lower tier first, then higher score, then newest", () => {

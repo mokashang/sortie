@@ -8,7 +8,7 @@ async function main() {
   syncWatchlist(db, seed);
   const s = await runScan(db);
   console.log(
-    `scan done: +${s.inserted} new, ${s.upgraded} upgraded, ${s.duplicates} dup, ${s.visaSkipped} visa-flagged, ${s.sourceErrors.length} source errors (${s.durationMs}ms)`
+    `scan done: +${s.inserted} new, ${s.upgraded} upgraded, ${s.duplicates} dup, ${s.visaSkipped} visa-flagged, ${s.locSkipped} non-US, ${s.sourceErrors.length} source errors (${s.durationMs}ms)`
   );
   for (const e of s.sourceErrors) console.error(`  [${e.source}] ${e.error}`);
 }

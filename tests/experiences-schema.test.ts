@@ -13,6 +13,6 @@ describe("experiences schema", () => {
   });
   it("reports the current schema user_version", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
   });
 });

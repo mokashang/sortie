@@ -15,7 +15,7 @@ export async function GET(req: Request) {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND m.score >= ?
+       WHERE a.status = 'matched' AND j.loc_flag IS NULL AND m.score >= ?
        ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
        LIMIT 1000`
     )

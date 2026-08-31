@@ -2,6 +2,7 @@ import { DB, logEvent } from "@/lib/db";
 import { RawJob } from "@/scanner/types";
 import { fingerprint } from "@/scanner/fingerprint";
 import { visaFlag } from "@/scanner/visa-filter";
+import { locFlag } from "@/scanner/location-filter";
 import { jobKindFromTitle } from "@/scanner/entry-level";
 import { getEnabledCompanies, setProbeStatus } from "@/scanner/watchlist";
 import { fetchGreenhouse } from "@/scanner/sources/greenhouse";
@@ -21,6 +22,7 @@ export interface ScanSummary {
   upgraded: number;
   duplicates: number;
   visaSkipped: number;
+  locSkipped: number;
   sourceErrors: { source: string; error: string }[];
   durationMs: number;
 }
@@ -43,6 +45,7 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
     upgraded: 0,
     duplicates: 0,
     visaSkipped: 0,
+    locSkipped: 0,
     sourceErrors: [],
     durationMs: 0,
   };
@@ -82,12 +85,18 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
   // re-scan (marker jd_text is non-empty and the stored row still looks thin) and every re-scan counted
   // as an "upgrade" even though nothing changed — which made api/scan/route.ts fire a cron notification
   // about "new" upgrades every day, forever, for the same unchanged rows.
+  // loc_flag is always set on both insert and the richer-record upgrade path (excluded.loc_flag)
+  // — unlike jd_text/visa_flag it isn't gated behind the WHERE's "richer record" check because
+  // location rarely changes between a thin listing-metadata row and its rich ATS counterpart, so
+  // there's no meaningful "upgrade" semantics to protect here; always mirroring the freshly
+  // computed flag keeps it simple and correct either way.
   const insJob = db.prepare(
-    `INSERT INTO jobs (fingerprint, company, title, location, jd_text, apply_url, source, ats, posted_at, job_kind, visa_flag)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO jobs (fingerprint, company, title, location, jd_text, apply_url, source, ats, posted_at, job_kind, visa_flag, loc_flag)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(fingerprint) DO UPDATE SET
        jd_text=excluded.jd_text,
        visa_flag=excluded.visa_flag,
+       loc_flag=excluded.loc_flag,
        apply_url=excluded.apply_url,
        source=excluded.source,
        ats=excluded.ats,
@@ -101,6 +110,7 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
     for (const r of rows) {
       const fp = fingerprint(r.company, r.title, r.location);
       const flag = visaFlag(r.jdText);
+      const locF = locFlag(r.location);
       // Pre-check whether this fingerprint already exists: with ON CONFLICT DO UPDATE, .run()
       // no longer throws on conflict (nor does .changes alone distinguish a fresh INSERT from
       // an UPDATE — both report changes=1), so this SELECT is the cleanest way to classify the
@@ -109,7 +119,7 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
       try {
         const info = insJob.run(
           fp, r.company, r.title, r.location, r.jdText, r.applyUrl,
-          r.source, r.ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag
+          r.source, r.ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag, locF
         );
         if (!existing) {
           // Brand-new job: create its application row. Never done for upgrades — the job id
@@ -117,11 +127,13 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
           insApp.run(info.lastInsertRowid);
           summary.inserted++;
           if (flag) summary.visaSkipped++;
+          if (locF) summary.locSkipped++;
         } else if (info.changes > 0) {
           summary.upgraded++;
           // An upgrade that carries a visa flag is exactly the case the rich-record upsert
           // exists to catch — count it, or the metric never reflects the fix working.
           if (flag) summary.visaSkipped++;
+          if (locF) summary.locSkipped++;
         } else {
           summary.duplicates++; // conflict existed but WHERE didn't match = already-seen, no richer data
         }

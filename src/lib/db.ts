@@ -17,7 +17,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -49,6 +49,11 @@ export function openDb(file?: string): DB {
     }
     // v3 -> v4: executor_runs is a brand-new table, so CREATE TABLE IF NOT EXISTS above already
     // handles it on both fresh and pre-existing DBs — no ALTER needed here.
+    // v4 -> v5: jobs gained loc_flag (US-only location hard filter, mirrors visa_flag).
+    const jobCols = (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map(
+      (c) => c.name
+    );
+    if (!jobCols.includes("loc_flag")) db.exec("ALTER TABLE jobs ADD COLUMN loc_flag TEXT");
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 

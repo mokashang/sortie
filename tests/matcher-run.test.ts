@@ -70,6 +70,36 @@ describe("runMatching", () => {
     expect(appFlag.status).toBe("discovered");
   });
 
+  it("excludes loc-flagged (non-US) jobs from scoring, mirroring the visa-flag exclusion", async () => {
+    const db = openDb(":memory:");
+    const ins = db.prepare(
+      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, loc_flag) VALUES (?,?,?,?,?,?,?)"
+    );
+    const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+    const info = ins.run("loc1", "Acme", "Backend Engineer New Grad", "London, UK", "Do the thing.", "greenhouse", "non_us");
+    const jobId = Number(info.lastInsertRowid);
+    insApp.run(jobId);
+
+    const backend: LlmBackend = {
+      name: "loc",
+      complete: async () => ({
+        text: JSON.stringify([{ job_id: jobId, direction: "swe_backend", score: 90, skip: false, reason: "x" }]),
+        backend: "loc",
+      }),
+    };
+
+    const summary = await runMatching(db, {
+      backend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+      batchSize: 10,
+      threshold: 40,
+    });
+
+    expect(summary.scored).toBe(0);
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as any;
+    expect(app.status).toBe("discovered");
+  });
+
   it("is resumable: a second run only scores jobs without a match row", async () => {
     const db = openDb(":memory:");
     const ids = seedJobs(db);

@@ -20,6 +20,10 @@ describe("match prompt", () => {
     expect(p.system).toMatch(/recruiter|matching|career/i);
     // JD text is untrusted data — the prompt must fence it and instruct the model to treat it as data.
     expect(p.prompt).toMatch(/treat .* as data|do not follow|untrusted/i);
+    // Second net against non-US locations the list-based location-filter.ts missed: the prompt
+    // itself must tell the model the candidate only wants US-based roles and to skip+low-score
+    // anything clearly outside the US.
+    expect(p.prompt).toMatch(/only wants? US-based roles|only wants? US-based positions/i);
   });
 
   it("schema accepts a well-formed result and rejects a bad score", () => {
