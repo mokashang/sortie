@@ -24,8 +24,15 @@
 
 队列页 `/queue` 按 梯队 × 分数 × 新鲜度 展示已匹配职位。
 
+## Resume Studio
+在 /profile 页像填网申一样录入你的经历(教育/实习/项目/技能,每条带 bullets)。
+在 /studio 选一个方向,Claude 从你的经历里挑选、组版,tectonic 编译出一版 PDF 简历。
+生成多个方向版本进入简历库;后续申请执行时按岗位方向选最契合的版本。
+经历内容全部由你在 UI 录入 —— 系统不导入外部文件。需要 tectonic(brew install tectonic)。
+
 ## 数据
 - SQLite:`data/jobseeker.db`(gitignored)
+- 生成的简历(.tex/.pdf):`data/resumes/`(gitignored)
 - 个人档案:`profile/profile.yaml`(gitignored)
 - watchlist 种子:`config/watchlist.seed.json`
 
