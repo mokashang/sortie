@@ -17,7 +17,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -47,6 +47,8 @@ export function openDb(file?: string): DB {
     ] as const) {
       if (!cols.includes(col)) db.exec(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);
     }
+    // v3 -> v4: executor_runs is a brand-new table, so CREATE TABLE IF NOT EXISTS above already
+    // handles it on both fresh and pre-existing DBs — no ALTER needed here.
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 

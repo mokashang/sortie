@@ -119,6 +119,18 @@ CREATE TABLE IF NOT EXISTS experiences (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS executor_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,            -- apply | network_send | network_find
+  status TEXT NOT NULL DEFAULT 'running',  -- running | done | failed | stopped
+  pid INTEGER,
+  log_path TEXT,
+  options TEXT NOT NULL DEFAULT '{}',
+  summary TEXT,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ended_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at);
 CREATE INDEX IF NOT EXISTS idx_experiences_kind ON experiences(kind, sort_order);

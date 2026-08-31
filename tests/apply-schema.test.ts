@@ -6,7 +6,7 @@ import path from "path";
 import { openDb } from "@/lib/db";
 
 describe("apply executor schema (v3)", () => {
-  it("a fresh :memory: db has all four v3 applications columns and user_version 3", () => {
+  it("a fresh :memory: db has all four v3 applications columns and the current user_version", () => {
     const db = openDb(":memory:");
     const cols = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map(
       (c) => c.name
@@ -14,7 +14,7 @@ describe("apply executor schema (v3)", () => {
     for (const col of ["answer_pack", "filled_fields", "confirm_decision", "needs_manual_reason"]) {
       expect(cols).toContain(col);
     }
-    expect(db.pragma("user_version", { simple: true })).toBe(3);
+    expect(db.pragma("user_version", { simple: true })).toBe(4);
   });
 
   it("inserts and reads back the new columns", () => {
@@ -92,7 +92,7 @@ describe("apply executor schema (v3)", () => {
       for (const col of ["answer_pack", "filled_fields", "confirm_decision", "needs_manual_reason"]) {
         expect(cols).toContain(col);
       }
-      expect(db.pragma("user_version", { simple: true })).toBe(3);
+      expect(db.pragma("user_version", { simple: true })).toBe(4);
 
       // Pre-existing data survives the migration.
       const row = db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as {
@@ -101,9 +101,9 @@ describe("apply executor schema (v3)", () => {
       expect(row.status).toBe("matched");
       db.close();
 
-      // Idempotent: opening the now-v3 db again must not throw (columns already present).
+      // Idempotent: opening the now-current-version db again must not throw (columns already present).
       const db2 = openDb(tmpFile);
-      expect(db2.pragma("user_version", { simple: true })).toBe(3);
+      expect(db2.pragma("user_version", { simple: true })).toBe(4);
       db2.close();
     });
   });
