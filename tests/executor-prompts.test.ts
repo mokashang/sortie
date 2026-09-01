@@ -46,6 +46,19 @@ describe("executor prompts", () => {
       expect(p).toContain("dead link");
       expect(p).toMatch(/连续 3 个 needs_manual 或连续 2 个 error/);
     });
+
+    it("requires a live-page eligibility check before filling: PhD/no-sponsor/citizenship disqualifiers", () => {
+      const p = buildApplyPrompt();
+      expect(p).toMatch(/BEFORE filling anything/);
+      expect(p).toMatch(/read the job description on this live page/);
+      expect(p).toMatch(/a PhD is required and a Master'?s is not accepted/);
+      expect(p).toMatch(/no visa sponsorship is provided\/available/);
+      expect(p).toMatch(/US citizenship is required/);
+      expect(p).toMatch(/do NOT fill the form/);
+      expect(p).toContain('"status": "needs_manual", "reason": "<which disqualifier(s)');
+      // Must stay lenient: "PhD preferred" / "MS or PhD" must NOT trigger this check.
+      expect(p).toMatch(/"PhD preferred"、"MS or PhD"/);
+    });
   });
 
   describe("buildNetworkSendPrompt", () => {

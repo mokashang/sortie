@@ -34,9 +34,10 @@ export function buildApplyPrompt(options: { limit?: number } = {}): string {
    - \`{"done": true}\` → 没有更多待投递岗位,停止循环,跳到 §6 收尾。
    - 否则拿到 \`ApplyTask\`:\`{jobId, company, title, applyUrl, ats, answerPack}\`。answerPack 里有 contact/education/work_auth/eeo/resume/custom/job 几组字段,把它拍平成一份"字段: 值"列表——只用 answerPack 里实际存在的字段,绝不编造。
 
-2. **打开并填表**:用 \`mcp__browser__browser_start\` 委托一个精确任务,例如:
-   \`"Open <task.applyUrl>. Fill this application form with EXACTLY these values: <field: value list from answerPack, one per line>. Upload the resume file at <answerPack.resume.pdf_path>. Do NOT click the final Submit button. Report back the exact field values now present in the form."\`
+2. **上线页面最终资格检查 + 打开并填表**:用 \`mcp__browser__browser_start\` 委托一个精确任务,把资格检查放在填表**之前**,例如:
+   \`"Open <task.applyUrl>. BEFORE filling anything, read the job description on this live page and check three disqualifiers: (1) it explicitly states a PhD is required and a Master's is not accepted, (2) it explicitly states no visa sponsorship is provided/available, (3) it explicitly states US citizenship is required. If ANY of these is explicitly true, do NOT fill the form — report back exactly which disqualifier(s) applied and quote the relevant sentence. Otherwise, fill this application form with EXACTLY these values: <field: value list from answerPack, one per line>. Upload the resume file at <answerPack.resume.pdf_path>. Do NOT click the final Submit button. Report back the exact field values now present in the form."\`
    用 \`mcp__browser__browser_status\` 轮询直到子代理报告完成;如果它中途问澄清问题,用 \`mcp__browser__browser_message\` 回答(答案只能来自 answerPack,不能瞎编);必要时 \`mcp__browser__browser_screenshot\` 检查当前页面状态。
+   - 如果子代理报告触发了资格检查(PhD required/MS not accepted、no visa sponsorship、US citizenship required 任一项),**不要填表**,直接回报 \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_manual", "reason": "<which disqualifier(s), quoting the JD sentence>"}'\`,\`mcp__browser__browser_stop\` 结束这次子代理会话,继续下一轮。这条检查只看**明确写出**的文字——"PhD preferred"、"MS or PhD"、模糊的经验年限要求都不触发,只有招聘页面上明确写出的 PhD-only/无签证赞助/仅限美国公民才触发。
 
 3. **回报填表结果**(用子代理报告回来的**实际**字段值,不是你打算填的值):
    - 成功:\`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {"<人类可读字段名>": "<实际值>", ...}}'\`。任何有意留空的字段作为一条 \`"Unanswered questions"\` 写进 filledFields。
@@ -55,6 +56,7 @@ export function buildApplyPrompt(options: { limit?: number } = {}): string {
 6. **节流**:每完成一轮(报告已发、子代理会话已结束)到取下一个任务之间等 5-10 秒。
 
 ## 3. needs_manual 触发条件(遇到就报 needs_manual,绝不硬闯)
+- **上线页面 JD 明确写出的资格性硬伤**(填表前检查,见 §2 第 2 步):PhD is required and a Master's is not accepted / no visa sponsorship / US citizenship is required——只认明确文字,不臆测
 - 登录墙 / 需要新建账号且没有可用凭据
 - CAPTCHA 或其他机器人检测挑战
 - 视频回答题("录 60 秒视频回答…")
