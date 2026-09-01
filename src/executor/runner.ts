@@ -46,15 +46,8 @@ const ALLOWED_TOOLS =
 // launchd even though it works fine from an interactive shell. Resolve explicitly: an env
 // override always wins, then the known install path, then fall back to bare 'claude' and let
 // PATH resolution have a shot (e.g. in dev, where the interactive shell's PATH is inherited).
-export function resolveClaudeBin(): string {
-  const candidates = [process.env.CLAUDE_BIN, path.join(os.homedir(), ".local/bin/claude")].filter(
-    (c): c is string => !!c
-  );
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
-  }
-  return "claude";
-}
+import { resolveClaudeBin } from "@/lib/claude-bin";
+export { resolveClaudeBin };
 
 function isAlive(pid: number | null | undefined): boolean {
   if (pid == null || pid <= 0) return false;

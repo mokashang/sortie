@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import { LlmBackend, LlmRequest, LlmResult } from "@/llm/types";
+import { resolveClaudeBin } from "@/lib/claude-bin";
 
 // 真实执行器:调用本机 `claude` CLI 的无头模式。prompt 走 stdin,避免超长命令行。
 export type Runner = (
@@ -65,7 +66,9 @@ export class SubscriptionBackend implements LlmBackend {
   private runner: Runner;
 
   constructor(opts: SubscriptionOptions = {}) {
-    this.bin = opts.bin ?? process.env.CLAUDE_BIN ?? "claude";
+    // Same resolution as the executor: CLAUDE_BIN → ~/.local/bin/claude → PATH. The launchd
+    // server's PATH does not include ~/.local/bin, so a bare "claude" fails there.
+    this.bin = opts.bin ?? resolveClaudeBin();
     this.model = opts.model ?? { fast: "claude-haiku-4-5-20251001", smart: "claude-sonnet-5" };
     this.runner = opts.runner ?? defaultRunner;
   }
