@@ -111,3 +111,17 @@ describe("Jake's Resume renderer", () => {
     expect(t).toContain("\\resumeSubheading{Club Lead}{2024}{IEEE}{LA}");
   });
 });
+
+import { linkParts } from "@/resume/latex";
+describe("linkParts URL normalization", () => {
+  it("handles a full https URL with trailing slash (no double scheme)", () => {
+    const p = linkParts("https://www.linkedin.com/in/mengjia-shang-b5123029a/");
+    expect(p.href).toBe("https://www.linkedin.com/in/mengjia-shang-b5123029a");
+    expect(p.display).toBe("linkedin.com/in/mengjia-shang-b5123029a");
+  });
+  it("handles a bare host/path", () => {
+    const p = linkParts("github.com/mokashang");
+    expect(p.href).toBe("https://github.com/mokashang");
+    expect(p.display).toBe("github.com/mokashang");
+  });
+});

@@ -136,12 +136,26 @@ function renderListSection(s: ResumeSection, kind: SectionKind): string {
   return `\\section{${escapeLatex(s.heading)}}\n\\resumeSubHeadingListStart\n${entries}\n\\resumeSubHeadingListEnd\n`;
 }
 
+// A profile URL field may arrive bare ("linkedin.com/in/x"), with a scheme
+// ("https://linkedin.com/in/x"), or with a trailing slash. Normalize to a clean
+// display string (no scheme, no www., no trailing slash) and a well-formed https href
+// with exactly one scheme.
+export function linkParts(raw: string): { href: string; display: string } {
+  const noScheme = raw.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  const display = noScheme.replace(/^www\./i, "");
+  return { href: `https://${noScheme}`, display };
+}
+
 function renderHeader(c: ResumeContact): string {
+  const linkField = (raw: string): string => {
+    const { href, display } = linkParts(raw);
+    return `\\href{${href}}{\\underline{${escapeLatex(display)}}}`;
+  };
   const links = [
     c.email ? `\\href{mailto:${c.email}}{\\underline{${escapeLatex(c.email)}}}` : "",
     c.phone ? escapeLatex(c.phone) : "",
-    c.linkedin ? `\\href{https://${escapeLatex(c.linkedin)}}{\\underline{${escapeLatex(c.linkedin)}}}` : "",
-    c.github ? `\\href{https://${escapeLatex(c.github)}}{\\underline{${escapeLatex(c.github)}}}` : "",
+    c.linkedin ? linkField(c.linkedin) : "",
+    c.github ? linkField(c.github) : "",
   ].filter(Boolean);
   return (
     `\\begin{center}\n` +
