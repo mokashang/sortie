@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { directionLabel } from "@/matcher/directions";
 
 interface PendingRow {
   jobId: number;
   company: string;
   title: string;
   direction: string | null;
+  tier: number | null;
   score: number | null;
   filledFields: Record<string, string>;
   resumeVersion: string | null;
@@ -90,8 +92,11 @@ export function ConfirmPanel() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <div>
               <strong className="company-name">{r.company}</strong> · {r.title}
+              <span className="chip" style={{ marginLeft: 8 }}>
+                {r.direction ? directionLabel(r.direction) : "未分类"} · 梯队 {r.tier ?? "—"}
+              </span>
               <span className="text-sub" style={{ marginLeft: 8 }}>
-                {r.direction ?? "—"} · 分 <span className="mono">{r.score ?? "—"}</span>
+                分 <span className="mono">{r.score ?? "—"}</span>
               </span>
               {r.referralPersonName && (
                 <span className="text-good" style={{ fontWeight: 600, marginLeft: 8 }}>

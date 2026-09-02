@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { ConfirmPanel } from "./confirm-panel";
 import { UnparkButton } from "./unpark-button";
 import { ExecutorPanel } from "@/app/components/executor-panel";
+import { directionLabel } from "@/matcher/directions";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,7 @@ interface ManualRow {
   title: string;
   apply_url: string | null;
   needs_manual_reason: string;
+  direction: string | null;
 }
 
 interface SubmittedRow {
@@ -18,6 +20,7 @@ interface SubmittedRow {
   company: string;
   title: string;
   submitted_at: string;
+  direction: string | null;
 }
 
 export default function ApplyPage() {
@@ -29,9 +32,10 @@ export default function ApplyPage() {
 
   const manualRows = db
     .prepare(
-      `SELECT a.job_id, j.company, j.title, j.apply_url, a.needs_manual_reason
+      `SELECT a.job_id, j.company, j.title, j.apply_url, a.needs_manual_reason, m.direction
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
+       LEFT JOIN matches m ON m.job_id = j.id
        WHERE a.status = 'matched' AND a.needs_manual_reason IS NOT NULL
        ORDER BY a.job_id DESC
        LIMIT 100`
@@ -40,13 +44,28 @@ export default function ApplyPage() {
 
   const submittedRows = db
     .prepare(
-      `SELECT a.job_id, j.company, j.title, a.submitted_at
+      `SELECT a.job_id, j.company, j.title, a.submitted_at, m.direction
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
+       LEFT JOIN matches m ON m.job_id = j.id
        WHERE a.status = 'submitted' AND a.submitted_at >= date('now')
        ORDER BY a.submitted_at DESC`
     )
     .all() as SubmittedRow[];
+
+  // "今日已提交 7(swe_backend 4 · quant 3)" — per-direction breakdown, counts desc, NULL last.
+  const submittedByDirection = new Map<string | null, number>();
+  for (const r of submittedRows) {
+    submittedByDirection.set(r.direction, (submittedByDirection.get(r.direction) ?? 0) + 1);
+  }
+  const submittedBreakdown = [...submittedByDirection.entries()]
+    .sort((a, b) => {
+      if (a[0] === null) return 1;
+      if (b[0] === null) return -1;
+      return b[1] - a[1];
+    })
+    .map(([direction, count]) => `${direction ? directionLabel(direction) : "未分类"} ${count}`)
+    .join(" · ");
 
   return (
     <div>
@@ -57,10 +76,13 @@ export default function ApplyPage() {
         申请退回队列。
       </p>
 
-      <ExecutorPanel kinds={[{ kind: "apply", label: "开始投递", withLimit: true }]} />
+      <ExecutorPanel kinds={[{ kind: "apply", label: "开始投递", quotaTable: true }]} />
 
       <div style={{ display: "flex", gap: 24, margin: "16px 0 20px", fontSize: 14 }}>
-        <span>今日已提交 <strong className="mono">{submittedRows.length}</strong></span>
+        <span>
+          今日已提交 <strong className="mono">{submittedRows.length}</strong>
+          {submittedBreakdown && <span className="text-sub" style={{ marginLeft: 6 }}>({submittedBreakdown})</span>}
+        </span>
         <span>待确认 <strong className="mono">{pendingCount}</strong></span>
         <span>需人工 <strong className="mono">{manualRows.length}</strong></span>
       </div>
@@ -78,6 +100,7 @@ export default function ApplyPage() {
           <table style={{ marginTop: 8 }}>
             <thead>
               <tr>
+                <th>方向</th>
                 <th>公司</th>
                 <th>标题</th>
                 <th>原因</th>
@@ -88,6 +111,9 @@ export default function ApplyPage() {
             <tbody>
               {manualRows.map((r) => (
                 <tr key={r.job_id}>
+                  <td>
+                    <span className="chip">{r.direction ? directionLabel(r.direction) : "未分类"}</span>
+                  </td>
                   <td className="company">{r.company}</td>
                   <td>{r.title}</td>
                   <td className="text-sub" style={{ fontSize: 12, maxWidth: 320 }}>{r.needs_manual_reason}</td>
@@ -118,6 +144,7 @@ export default function ApplyPage() {
           <table style={{ marginTop: 8 }}>
             <thead>
               <tr>
+                <th>方向</th>
                 <th>公司</th>
                 <th>标题</th>
                 <th>时间</th>
@@ -126,6 +153,9 @@ export default function ApplyPage() {
             <tbody>
               {submittedRows.map((r) => (
                 <tr key={r.job_id}>
+                  <td>
+                    <span className="chip">{r.direction ? directionLabel(r.direction) : "未分类"}</span>
+                  </td>
                   <td className="company">{r.company}</td>
                   <td>{r.title}</td>
                   <td className="mono">{r.submitted_at}</td>

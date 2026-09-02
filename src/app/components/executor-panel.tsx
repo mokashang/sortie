@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { ApplyQuotaTable } from "@/app/apply/quota-table";
 
 export type ExecutorKind = "apply" | "network_send" | "network_find";
 
@@ -8,6 +9,9 @@ export interface ExecutorKindConfig {
   label: string; // start-button text
   // Shows a "前 N 个" number input next to the button and passes { limit } as options.
   withLimit?: boolean;
+  // apply-only: swaps the input+button for the per-direction quota table (quota-table.tsx),
+  // which drives its own "开始投递" button and passes { plan } as options instead of { limit }.
+  quotaTable?: boolean;
 }
 
 interface RunRow {
@@ -67,11 +71,10 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
     latestByKind[kind] = runs.find((r) => r.kind === kind);
   }
 
-  async function start(kind: ExecutorKind, withLimit?: boolean) {
+  async function startWithOptions(kind: ExecutorKind, options: Record<string, unknown>) {
     setBusyKind(kind);
     setError("");
     try {
-      const options = withLimit ? { limit: limits[kind] ?? 5 } : {};
       const r = await fetch("/api/executor/start", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -88,6 +91,11 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
     } finally {
       setBusyKind(null);
     }
+  }
+
+  async function start(kind: ExecutorKind, withLimit?: boolean) {
+    const options = withLimit ? { limit: limits[kind] ?? 5 } : {};
+    await startWithOptions(kind, options);
   }
 
   async function stop(runId: number) {
@@ -116,36 +124,57 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
     <div className="panel">
       {error && <p className="text-accent">{error}</p>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-        {kinds.map(({ kind, label, withLimit }) => {
+        {kinds.map(({ kind, label, withLimit, quotaTable }) => {
           const run = latestByKind[kind];
           const isRunning = run?.status === "running";
+          const busy = isRunning || busyKind === kind;
           return (
-            <div key={kind} style={{ flex: "1 1 320px", minWidth: 280 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {withLimit && (
-                  <>
-                    <span className="text-sub" style={{ fontSize: 13 }}>前</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      value={limits[kind] ?? 5}
-                      onChange={(e) => setLimits((prev) => ({ ...prev, [kind]: Number(e.target.value) || 1 }))}
-                      disabled={isRunning}
-                      style={{ width: 56 }}
-                    />
-                    <span className="text-sub" style={{ fontSize: 13 }}>个</span>
-                  </>
-                )}
-                <button onClick={() => start(kind, withLimit)} disabled={isRunning || busyKind === kind}>
-                  {label}
-                </button>
-                {isRunning && (
-                  <button className="btn-ghost" onClick={() => stop(run!.id)} disabled={busyKind === `stop-${run!.id}`}>
-                    停止
+            <div key={kind} style={{ flex: quotaTable ? "1 1 100%" : "1 1 320px", minWidth: 280 }}>
+              {quotaTable ? (
+                <div>
+                  <ApplyQuotaTable
+                    disabled={busy}
+                    onStart={(plan) => startWithOptions(kind, { plan })}
+                  />
+                  {isRunning && (
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        className="btn-ghost"
+                        onClick={() => stop(run!.id)}
+                        disabled={busyKind === `stop-${run!.id}`}
+                      >
+                        停止
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {withLimit && (
+                    <>
+                      <span className="text-sub" style={{ fontSize: 13 }}>前</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={limits[kind] ?? 5}
+                        onChange={(e) => setLimits((prev) => ({ ...prev, [kind]: Number(e.target.value) || 1 }))}
+                        disabled={isRunning}
+                        style={{ width: 56 }}
+                      />
+                      <span className="text-sub" style={{ fontSize: 13 }}>个</span>
+                    </>
+                  )}
+                  <button onClick={() => start(kind, withLimit)} disabled={isRunning || busyKind === kind}>
+                    {label}
                   </button>
-                )}
-              </div>
+                  {isRunning && (
+                    <button className="btn-ghost" onClick={() => stop(run!.id)} disabled={busyKind === `stop-${run!.id}`}>
+                      停止
+                    </button>
+                  )}
+                </div>
+              )}
 
               {run && (
                 <div className="text-sub" style={{ marginTop: 8, fontSize: 13 }}>

@@ -9,6 +9,7 @@ import {
   pendingConfirmations,
   confirmStatus,
   unpark,
+  queueByDirection,
   ApplyTask,
 } from "@/apply/queue";
 
@@ -275,6 +276,42 @@ describe("takeNextApplication", () => {
     expect(result).toEqual({ done: true });
     expect(getApplication(db, fresh).status).toBe("prepared");
   });
+
+  it("with opts.direction, only picks a job in that direction even when a higher-priority job exists in another direction", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    seedResume(db, "quant-v1", ["quant"]);
+    const aiJob = seedJob(db, { company: "AiCo", direction: "ai_infra", tier: 1, score: 99 });
+    const quantJob = seedJob(db, { company: "QuantCo", direction: "quant", tier: 2, score: 10 });
+
+    const result = takeNextApplication(db, testProfile(), { direction: "quant" }) as ApplyTask;
+
+    expect(result.jobId).toBe(quantJob);
+    // The higher-priority ai_infra job must be left untouched (still 'matched').
+    expect(getApplication(db, aiJob).status).toBe("matched");
+  });
+
+  it("with opts.direction, returns { done: true } for that direction even when other directions still have matched jobs", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    seedJob(db, { company: "AiCo", direction: "ai_infra", tier: 1, score: 99 });
+
+    const result = takeNextApplication(db, testProfile(), { direction: "quant" });
+
+    expect(result).toEqual({ done: true });
+  });
+
+  it("with no opts.direction, behaves exactly as before (picks across all directions)", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    seedResume(db, "quant-v1", ["quant"]);
+    const aiJob = seedJob(db, { company: "AiCo", direction: "ai_infra", tier: 1, score: 99 });
+    seedJob(db, { company: "QuantCo", direction: "quant", tier: 2, score: 10 });
+
+    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+
+    expect(result.jobId).toBe(aiJob);
+  });
 });
 
 describe("reportFill", () => {
@@ -486,6 +523,16 @@ describe("pendingConfirmations", () => {
     });
   });
 
+  it("carries tier alongside direction so the UI can render a '<direction label> · 梯队 N' chip", () => {
+    const db = openDb(":memory:");
+    seedJob(db, { direction: "quant", tier: 2, status: "awaiting_confirm" });
+
+    const rows = pendingConfirmations(db);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tier).toBe(2);
+  });
+
   it("carries referralPersonName when the application is linked to a referral (§7.4)", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
@@ -576,5 +623,67 @@ describe("unpark", () => {
   it("throws for an unknown jobId", () => {
     const db = openDb(":memory:");
     expect(() => unpark(db, 999)).toThrow();
+  });
+});
+
+describe("queueByDirection", () => {
+  it("returns [] when there are no matched applications", () => {
+    const db = openDb(":memory:");
+    expect(queueByDirection(db)).toEqual([]);
+  });
+
+  it("groups matched (non-parked) applications by direction, ordered by tier then matched count", () => {
+    const db = openDb(":memory:");
+    // quant: tier 2, 1 matched job
+    seedJob(db, { company: "QuantCo", direction: "quant", tier: 2, score: 80 });
+    // ai_infra: tier 1, 2 matched jobs — should sort first despite fewer total directions ties
+    seedJob(db, { company: "AiCo1", direction: "ai_infra", tier: 1, score: 90 });
+    seedJob(db, { company: "AiCo2", direction: "ai_infra", tier: 1, score: 70 });
+
+    const groups = queueByDirection(db);
+
+    expect(groups.map((g) => g.direction)).toEqual(["ai_infra", "quant"]);
+    expect(groups[0]).toMatchObject({ direction: "ai_infra", tier: 1, matched: 2 });
+    expect(groups[1]).toMatchObject({ direction: "quant", tier: 2, matched: 1 });
+  });
+
+  it("excludes parked (needs_manual_reason set) and loc-flagged applications from the count", () => {
+    const db = openDb(":memory:");
+    const parked = seedJob(db, { company: "ParkedCo", direction: "quant", tier: 1, score: 50 });
+    db.prepare("UPDATE applications SET needs_manual_reason = 'x' WHERE job_id = ?").run(parked);
+    seedJob(db, { company: "NonUsCo", direction: "quant", tier: 1, score: 60, locFlag: "non_us" });
+    const good = seedJob(db, { company: "GoodCo", direction: "quant", tier: 1, score: 70 });
+    void good;
+
+    const groups = queueByDirection(db);
+
+    expect(groups).toEqual([{ direction: "quant", tier: 1, matched: 1, top: expect.any(Array) }]);
+    expect(groups[0].matched).toBe(1);
+  });
+
+  it("includes up to the top 3 rows (score desc) per direction with score/company/title", () => {
+    const db = openDb(":memory:");
+    seedJob(db, { company: "A", title: "SWE A", direction: "quant", tier: 1, score: 50 });
+    seedJob(db, { company: "B", title: "SWE B", direction: "quant", tier: 1, score: 90 });
+    seedJob(db, { company: "C", title: "SWE C", direction: "quant", tier: 1, score: 70 });
+    seedJob(db, { company: "D", title: "SWE D", direction: "quant", tier: 1, score: 60 });
+
+    const groups = queueByDirection(db);
+
+    expect(groups[0].matched).toBe(4);
+    expect(groups[0].top).toHaveLength(3);
+    expect(groups[0].top.map((t) => t.company)).toEqual(["B", "C", "D"]);
+    expect(groups[0].top[0]).toMatchObject({ company: "B", title: "SWE B", score: 90 });
+  });
+
+  it("buckets NULL direction as '未分类' and sorts it last", () => {
+    const db = openDb(":memory:");
+    seedJob(db, { company: "NoDir", direction: null, tier: null, score: 50 });
+    seedJob(db, { company: "Tiered", direction: "quant", tier: 3, score: 10 });
+
+    const groups = queueByDirection(db);
+
+    expect(groups.map((g) => g.direction)).toEqual(["quant", "未分类"]);
+    expect(groups[1]).toMatchObject({ direction: "未分类", matched: 1 });
   });
 });

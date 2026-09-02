@@ -37,7 +37,11 @@ interface CandidateRow {
 // (or a concurrent executor) skips it. Jobs whose direction has no generated resume are parked
 // (needs_manual_reason set, status left at 'matched') and the loop moves on to the next
 // candidate — they never get returned to the caller as a task.
-export function takeNextApplication(db: DB, profile: Profile): ApplyTask | { done: true } {
+export function takeNextApplication(
+  db: DB,
+  profile: Profile,
+  opts: { direction?: string } = {}
+): ApplyTask | { done: true } {
   // Reclaim jobs stranded at 'prepared' by an executor that died mid-fill (crashed session,
   // killed process, network partition — anything that took a task and never reported back).
   // Without this they're invisible forever: 'prepared' fails the picker's 'matched' filter below,
@@ -48,17 +52,35 @@ export function takeNextApplication(db: DB, profile: Profile): ApplyTask | { don
   ).run();
 
   for (;;) {
-    const row = db
-      .prepare(
-        `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats
-         FROM applications a
-         JOIN jobs j ON j.id = a.job_id
-         JOIN matches m ON m.job_id = j.id
-         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
-         ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
-         LIMIT 1`
-      )
-      .get() as CandidateRow | undefined;
+    // opts.direction scopes the picker to a single direction (used by the per-direction apply
+    // quota plan — see buildApplyPrompt's `plan` mode) — every other semantic (priority order,
+    // parking, stale-prepared reclaim, no-URL park) is identical to the undirected picker.
+    const row = (
+      opts.direction
+        ? db
+            .prepare(
+              `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats
+               FROM applications a
+               JOIN jobs j ON j.id = a.job_id
+               JOIN matches m ON m.job_id = j.id
+               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+                 AND m.direction = ?
+               ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+               LIMIT 1`
+            )
+            .get(opts.direction)
+        : db
+            .prepare(
+              `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats
+               FROM applications a
+               JOIN jobs j ON j.id = a.job_id
+               JOIN matches m ON m.job_id = j.id
+               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+               ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+               LIMIT 1`
+            )
+            .get()
+    ) as CandidateRow | undefined;
 
     if (!row) return { done: true };
 
@@ -218,6 +240,7 @@ export interface PendingRow {
   company: string;
   title: string;
   direction: string | null;
+  tier: number | null;
   score: number | null;
   filledFields: Record<string, string>;
   resumeVersion: string | null;
@@ -236,6 +259,7 @@ interface PendingRawRow {
   company: string;
   title: string;
   direction: string | null;
+  tier: number | null;
   score: number | null;
   filled_fields: string | null;
   answer_pack: string | null;
@@ -249,7 +273,7 @@ interface PendingRawRow {
 export function pendingConfirmations(db: DB): PendingRow[] {
   const rows = db
     .prepare(
-      `SELECT j.id as job_id, j.company, j.title, m.direction, m.score, a.filled_fields, a.answer_pack,
+      `SELECT j.id as job_id, j.company, j.title, m.direction, m.tier, m.score, a.filled_fields, a.answer_pack,
               a.confirm_decision, p.name as referral_person_name
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
@@ -278,6 +302,7 @@ export function pendingConfirmations(db: DB): PendingRow[] {
       company: r.company,
       title: r.title,
       direction: r.direction,
+      tier: r.tier,
       score: r.score,
       filledFields,
       resumeVersion,
@@ -308,4 +333,88 @@ export function unpark(db: DB, jobId: number): void {
     throw new Error(`unpark: cannot unpark from status '${row.status}' (must be 'matched')`);
   }
   db.prepare("UPDATE applications SET needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
+}
+
+export interface DirectionQueueRow {
+  score: number;
+  company: string;
+  title: string;
+}
+
+export interface DirectionQueueGroup {
+  direction: string;
+  tier: number | null;
+  matched: number;
+  top: DirectionQueueRow[];
+}
+
+interface DirectionGroupRawRow {
+  direction: string | null;
+  tier: number | null;
+  matched: number;
+}
+
+interface TopRawRow {
+  direction: string | null;
+  score: number;
+  company: string;
+  title: string;
+}
+
+// The apply queue's per-direction summary — feeds /queue's grouped panels and /apply's
+// per-direction quota table. Same eligibility filter as takeNextApplication's undirected picker
+// (status='matched', not parked, not loc-flagged) so the "队列中" count shown to the user matches
+// what the picker can actually offer. NULL direction (unmatched/unscored jobs that somehow
+// reached 'matched') is bucketed as "未分类" and always sorts last.
+export function queueByDirection(db: DB): DirectionQueueGroup[] {
+  const groups = db
+    .prepare(
+      `SELECT m.direction as direction, MIN(m.tier) as tier, COUNT(*) as matched
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN matches m ON m.job_id = j.id
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       GROUP BY m.direction
+       ORDER BY COALESCE(m.tier, 9) ASC, COUNT(*) DESC`
+    )
+    .all() as DirectionGroupRawRow[];
+
+  if (groups.length === 0) return [];
+
+  const topRows = db
+    .prepare(
+      `SELECT m.direction as direction, m.score as score, j.company as company, j.title as title
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN matches m ON m.job_id = j.id
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       ORDER BY m.score DESC, j.created_at DESC`
+    )
+    .all() as TopRawRow[];
+
+  const topByDirection = new Map<string | null, DirectionQueueRow[]>();
+  for (const r of topRows) {
+    const key = r.direction;
+    const list = topByDirection.get(key) ?? [];
+    if (list.length < 3) {
+      list.push({ score: r.score, company: r.company, title: r.title });
+      topByDirection.set(key, list);
+    }
+  }
+
+  // NULL-direction group is re-sorted to the end regardless of its tier/count — it has no real
+  // tier (COALESCE'd to 9 like everything untiered) so it can otherwise land ahead of a
+  // low-matched-count but genuinely-directed group on a count tiebreak.
+  const ordered = [...groups].sort((a, b) => {
+    if (a.direction === null && b.direction !== null) return 1;
+    if (a.direction !== null && b.direction === null) return -1;
+    return 0; // stable: SQL ORDER BY above already sorted everything else correctly.
+  });
+
+  return ordered.map((g) => ({
+    direction: g.direction ?? "未分类",
+    tier: g.tier,
+    matched: g.matched,
+    top: topByDirection.get(g.direction) ?? [],
+  }));
 }

@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { DB } from "@/lib/db";
-import { buildApplyPrompt, buildNetworkSendPrompt, buildNetworkFindPrompt } from "@/executor/prompts";
+import { buildApplyPrompt, buildNetworkSendPrompt, buildNetworkFindPrompt, ApplyPlanEntry } from "@/executor/prompts";
 
 // The process manager for headless `claude -p` executor sessions launched from the App's UI.
 // See docs on the API routes (src/app/api/executor/*) and README's 投递执行/人脉 sections for the
@@ -16,6 +16,8 @@ export type ExecutorKind = "apply" | "network_send" | "network_find";
 export interface StartOptions {
   limit?: number;
   companies?: string[];
+  // apply kind only — per-direction quota plan, processed in order. See buildApplyPrompt.
+  plan?: ApplyPlanEntry[];
 }
 
 // A structural subset of child_process.ChildProcess — deliberately loose so tests can inject a
@@ -64,7 +66,7 @@ function isAlive(pid: number | null | undefined): boolean {
 function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
   switch (kind) {
     case "apply":
-      return buildApplyPrompt({ limit: options.limit });
+      return buildApplyPrompt({ limit: options.limit, plan: options.plan });
     case "network_send":
       return buildNetworkSendPrompt();
     case "network_find":

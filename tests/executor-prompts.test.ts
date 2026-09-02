@@ -59,6 +59,52 @@ describe("executor prompts", () => {
       // Must stay lenient: "PhD preferred" / "MS or PhD" must NOT trigger this check.
       expect(p).toMatch(/"PhD preferred"、"MS or PhD"/);
     });
+
+    describe("with a plan (per-direction quotas)", () => {
+      const plan = [
+        { direction: "swe_backend", count: 5 },
+        { direction: "quant", count: 3 },
+      ];
+
+      it("lists each direction and its count, in the given order", () => {
+        const p = buildApplyPrompt({ plan });
+        const backendIdx = p.indexOf("swe_backend");
+        const quantIdx = p.indexOf("quant");
+        expect(backendIdx).toBeGreaterThan(-1);
+        expect(quantIdx).toBeGreaterThan(-1);
+        expect(backendIdx).toBeLessThan(quantIdx);
+        expect(p).toMatch(/swe_backend.*\*\*5\*\*/);
+        expect(p).toMatch(/quant.*\*\*3\*\*/);
+      });
+
+      it("shows the total (sum of quotas) as the session's hard cap", () => {
+        const p = buildApplyPrompt({ plan });
+        expect(p).toContain("硬性上限 **8**");
+        expect(p).toMatch(/硬上限 8 个申请/);
+      });
+
+      it("shapes the /api/apply/next POST body with a direction field", () => {
+        const p = buildApplyPrompt({ plan });
+        expect(p).toContain(`${"http://127.0.0.1:3000/api/apply/next"}`);
+        expect(p).toContain('{"direction": "<direction>"}');
+        expect(p).toContain('{"direction": "swe_backend"}');
+      });
+
+      it("instructs moving to the next direction early on a per-direction done:true", () => {
+        const p = buildApplyPrompt({ plan });
+        expect(p).toMatch(/当前方向没有更多待投递岗位/);
+        expect(p).toMatch(/换下一个方向/);
+      });
+
+      it("still carries the unchanged red lines and needs_manual triggers", () => {
+        const p = buildApplyPrompt({ plan });
+        expect(p).toContain('decision: "approved"');
+        expect(p).toMatch(/绝不点最终 Submit/);
+        expect(p).toContain("already applied");
+        expect(p).toContain("dead link");
+        expect(p).toMatch(/连续 3 个 needs_manual 或连续 2 个 error/);
+      });
+    });
   });
 
   describe("buildNetworkSendPrompt", () => {
