@@ -73,6 +73,8 @@ const PREAMBLE = `\\documentclass[letterpaper,11pt]{article}
 \\urlstyle{same}
 \\raggedbottom
 \\raggedright
+\\sloppy
+\\setlength{\\emergencystretch}{2em}
 \\setlength{\\tabcolsep}{0in}
 \\titleformat{\\section}{\\vspace{-4pt}\\scshape\\raggedright\\large}{}{0em}{}[\\color{black}\\titlerule \\vspace{-5pt}]
 \\ifdefined\\pdfoutput
@@ -81,8 +83,8 @@ const PREAMBLE = `\\documentclass[letterpaper,11pt]{article}
   \\fi
 \\fi
 \\newcommand{\\resumeItem}[1]{\\item\\small{{#1 \\vspace{-2pt}}}}
-\\newcommand{\\resumeSubheading}[4]{\\vspace{-2pt}\\item\\begin{tabular*}{0.97\\textwidth}[t]{l@{\\extracolsep{\\fill}}r}\\textbf{#1} & #2 \\\\\\textit{\\small#3} & \\textit{\\small #4} \\\\\\end{tabular*}\\vspace{-7pt}}
-\\newcommand{\\resumeProjectHeading}[2]{\\item\\begin{tabular*}{0.97\\textwidth}{l@{\\extracolsep{\\fill}}r}\\small#1 & #2 \\\\\\end{tabular*}\\vspace{-7pt}}
+\\newcommand{\\resumeSubheading}[4]{\\vspace{-2pt}\\item\\begin{minipage}[t]{0.97\\textwidth}\\textbf{#1}\\hfill#2\\\\\\textit{\\small#3}\\hfill\\textit{\\small#4}\\end{minipage}\\vspace{-7pt}}
+\\newcommand{\\resumeProjectHeading}[2]{\\item\\begin{minipage}[t]{0.97\\textwidth}\\small#1\\hfill#2\\end{minipage}\\vspace{-7pt}}
 \\newcommand{\\resumeSubHeadingListStart}{\\begin{itemize}[leftmargin=0.15in, label={}]}
 \\newcommand{\\resumeSubHeadingListEnd}{\\end{itemize}}
 \\newcommand{\\resumeItemListStart}{\\begin{itemize}}

@@ -56,6 +56,7 @@ describe("Jake's Resume renderer", () => {
     expect(tex).toContain("\\usepackage[empty]{fullpage}");
     expect(tex).toContain("\\input{glyphtounicode}");
     expect(tex).toContain("\\pdfgentounicode=1");
+    expect(tex).toContain("\\sloppy");
     expect(tex).toContain("\\newcommand{\\resumeItem}");
     expect(tex).toContain("\\newcommand{\\resumeSubheading}");
     expect(tex).toContain("\\newcommand{\\resumeProjectHeading}");
@@ -90,6 +91,25 @@ describe("Jake's Resume renderer", () => {
     expect(skillsBlock).toContain("\\textbf{Languages}");
     expect(skillsBlock).toContain("Python, C++, Go");
     expect(skillsBlock).toContain("\\textbf{Frameworks}");
+  });
+
+  it("defines resumeSubheading/resumeProjectHeading with a wrapping left side (minipage + paragraph text), not a fixed-width tabular* cell", () => {
+    // Root-cause regression lock: a fixed-width `tabular*` left cell does NOT wrap, so a long
+    // title or "Title | tech-stack" project heading runs off the page (Overfull \hbox). It must
+    // wrap instead. (A naive `tabularx` X-column fix was tried and rejected: when the left
+    // cell's text wraps to a second line, a same-row single-line date/location cell docks with
+    // zero gap right after the wrapped first line's last word — real text-on-text overlap, e.g.
+    // "Beautiful2026 – Present" — even though tectonic reports zero Overfull \hbox for it. A
+    // plain paragraph with \hfill has no adjacent cell to collide with: \hfill's glue just lands
+    // wherever the date ends up after wrapping.)
+    expect(tex).not.toContain("\\begin{tabular*}");
+    expect(tex).not.toContain("\\begin{tabularx}");
+    const subheadingDef = tex.slice(tex.indexOf("\\newcommand{\\resumeSubheading}"), tex.indexOf("\\newcommand{\\resumeProjectHeading}"));
+    expect(subheadingDef).toContain("\\begin{minipage}[t]{0.97\\textwidth}");
+    expect(subheadingDef).toContain("\\hfill");
+    const projectDef = tex.slice(tex.indexOf("\\newcommand{\\resumeProjectHeading}"), tex.indexOf("\\newcommand{\\resumeSubHeadingListStart}"));
+    expect(projectDef).toContain("\\begin{minipage}[t]{0.97\\textwidth}");
+    expect(projectDef).toContain("\\hfill");
   });
 
   it("applies escaping throughout", () => {

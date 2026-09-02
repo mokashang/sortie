@@ -11,6 +11,11 @@ import { extractPdfText } from "@/resume/pdf-text";
 export interface CompileResult {
   pdfPath: string;
   pages: number;
+  // Count of "Overfull \hbox" occurrences in the compile log, and the worst (max) pt-too-wide
+  // value among them — see src/resume/compile.ts's parseOverfullHboxes. A fixed-width table
+  // cell with unwrapped text that runs off the page shows up here even when pages stays 1.
+  overfullCount: number;
+  worstOverfullPt: number;
 }
 export type Compiler = (tex: string, outPdfPath: string) => Promise<CompileResult>;
 
@@ -62,6 +67,7 @@ export interface GenerateResult {
   pdfPath: string;
   pages: number;
   trimmed: number;
+  overfullCount: number;
   warnings: string[];
 }
 
@@ -74,6 +80,12 @@ export interface GenerateResult {
 // the budget is set generously here so 1-page convergence isn't at the mercy of how verbose a
 // given completion happened to be.
 const MAX_TRIM_ATTEMPTS = 20;
+
+// Below this many points-too-wide, an Overfull \hbox is font-metric noise (sub-pixel at
+// render size) rather than content actually running off the page — not worth burning a trim
+// attempt on. Above it, real content is bleeding past the margin and gets treated exactly like
+// a page-count overflow: trim one step and recompile.
+const OVERFULL_THRESHOLD_PT = 2;
 
 function isEducationHeading(heading: string): boolean {
   return heading.toLowerCase().includes("education");
@@ -229,10 +241,15 @@ export async function generateResume(db: DB, opts: GenerateOptions): Promise<Gen
   let compiled = await opts.compile(tex, pdfPath);
 
   // Strict one-page enforcement: deterministically trim content and recompile until it fits
-  // on one page, or we exhaust the attempt budget / run out of anything left to trim.
+  // on one page AND has no meaningful horizontal overflow, or we exhaust the attempt budget /
+  // run out of anything left to trim. Page count alone misses horizontal overflow entirely —
+  // content can run off the right edge of a fixed-width page without ever pushing a second
+  // page into existence — so an Overfull \hbox past OVERFULL_THRESHOLD_PT is treated as the
+  // same kind of defect as pages>1 and drives the identical trim/recompile cycle.
+  const isDefective = (r: CompileResult) => r.pages > 1 || (r.overfullCount > 0 && r.worstOverfullPt > OVERFULL_THRESHOLD_PT);
   let trimmed = 0;
   let attempts = 0;
-  while (compiled.pages > 1 && attempts < MAX_TRIM_ATTEMPTS) {
+  while (isDefective(compiled) && attempts < MAX_TRIM_ATTEMPTS) {
     const step = trimOneStep(doc);
     if (!step) break;
     doc = step.doc;
@@ -255,6 +272,11 @@ export async function generateResume(db: DB, opts: GenerateOptions): Promise<Gen
   if (compiled.pages > 1) {
     warnings.push(`resume still spans ${compiled.pages} pages after ${trimmed} trim attempt(s)`);
   }
+  if (compiled.overfullCount > 0) {
+    warnings.push(
+      `resume still has ${compiled.overfullCount} overfull hbox line(s) after ${trimmed} trim attempt(s) (worst: ${compiled.worstOverfullPt.toFixed(1)}pt too wide)`
+    );
+  }
 
   db.prepare(
     `INSERT INTO resumes (version_name, directions, tex_path, pdf_path, compiled_at)
@@ -266,5 +288,5 @@ export async function generateResume(db: DB, opts: GenerateOptions): Promise<Gen
   // insert when this call takes the UPDATE branch. Always resolve by the unique key instead.
   const resumeId = (db.prepare("SELECT id FROM resumes WHERE version_name=?").get(opts.versionName) as { id: number }).id;
 
-  return { resumeId, texPath, pdfPath: compiled.pdfPath, pages: compiled.pages, trimmed, warnings };
+  return { resumeId, texPath, pdfPath: compiled.pdfPath, pages: compiled.pages, trimmed, overfullCount: compiled.overfullCount, warnings };
 }

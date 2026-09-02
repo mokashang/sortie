@@ -28,6 +28,18 @@ export function parsePageCount(log: string): number | null {
   return parseInt(m[1], 10);
 }
 
+// Tectonic/XeTeX logs "Overfull \hbox (<N>pt too wide) in ..." whenever a line's content is
+// too wide to fit its box and can't be broken (e.g. a fixed-width table cell with unwrapped
+// text running off the page). Count every occurrence and track the worst (max) pt-too-wide
+// value so the caller can decide whether the overflow is meaningful (a couple sub-pt overfulls
+// from font metrics are normal and harmless; hundreds of points is content running off-page).
+export function parseOverfullHboxes(log: string): { count: number; worstPt: number } {
+  const matches = [...log.matchAll(/Overfull \\hbox \(([\d.]+)pt too wide\)/g)];
+  const count = matches.length;
+  const worstPt = matches.reduce((max, m) => Math.max(max, parseFloat(m[1])), 0);
+  return { count, worstPt };
+}
+
 // tectonic compiles a .tex to a .pdf in an output dir. We write the tex to <outdir>/<name>.tex,
 // run tectonic on it, and it emits <outdir>/<name>.pdf (plus <outdir>/<name>.log with --keep-logs).
 export function makeTectonicCompiler(opts: TectonicOptions = {}): Compiler {
@@ -43,9 +55,12 @@ export function makeTectonicCompiler(opts: TectonicOptions = {}): Compiler {
     await exec(bin, [texPath, "--outdir", outDir, "--keep-logs"]);
 
     let pages: number | null = null;
+    let overfullCount = 0;
+    let worstOverfullPt = 0;
     try {
       const log = fs.readFileSync(logPath, "utf8");
       pages = parsePageCount(log);
+      ({ count: overfullCount, worstPt: worstOverfullPt } = parseOverfullHboxes(log));
     } catch {
       pages = null;
     }
@@ -53,6 +68,6 @@ export function makeTectonicCompiler(opts: TectonicOptions = {}): Compiler {
       console.warn(`makeTectonicCompiler: could not parse page count from ${logPath}; assuming 1 page`);
       pages = 1;
     }
-    return { pdfPath: outPdfPath, pages };
+    return { pdfPath: outPdfPath, pages, overfullCount, worstOverfullPt };
   };
 }

@@ -23,7 +23,7 @@ const fakeBackend = (selection: object): LlmBackend => ({
 });
 
 // One-page fake compiler: never trims, always reports the doc fits on one page.
-const onePageCompile = async (_tex: string, outPath: string) => ({ pdfPath: outPath, pages: 1 });
+const onePageCompile = async (_tex: string, outPath: string) => ({ pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 });
 const noText = async () => null;
 
 describe("generateResume", () => {
@@ -42,7 +42,7 @@ describe("generateResume", () => {
       ],
     };
     const compiled: { tex: string; pdfPath: string }[] = [];
-    const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex, pdfPath: outPath }); return { pdfPath: outPath, pages: 1 }; };
+    const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex, pdfPath: outPath }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
     const res = await generateResume(db, {
       backend: fakeBackend(selection),
@@ -142,7 +142,7 @@ describe("generateResume", () => {
         ],
       };
       const compiled: { tex: string }[] = [];
-      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1 }; };
+      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
       await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v1",
@@ -181,7 +181,7 @@ describe("generateResume", () => {
       // No project, no skill included.
       const selection = { include: [{ id: eduId, bullets: [] }, { id: workId, bullets: ["Shipped a backend service"] }] };
       const compiled: { tex: string }[] = [];
-      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1 }; };
+      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
       await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v2",
@@ -204,7 +204,7 @@ describe("generateResume", () => {
       // Reverse of DB sort_order: B listed before A in `include`.
       const selection = { include: [{ id: idB, bullets: ["b1"] }, { id: idA, bullets: ["a1"] }] };
       const compiled: { tex: string }[] = [];
-      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1 }; };
+      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
       await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "struct_v3",
@@ -283,7 +283,7 @@ describe("generateResume", () => {
       const fakeCompile = async (tex: string, outPath: string) => {
         callCount++;
         texByCall.push(tex);
-        return { pdfPath: outPath, pages: callCount <= 3 ? 2 : 1 };
+        return { pdfPath: outPath, pages: callCount <= 3 ? 2 : 1, overfullCount: 0, worstOverfullPt: 0 };
       };
 
       const res = await generateResume(db, {
@@ -337,7 +337,7 @@ describe("generateResume", () => {
       const fakeCompile = async (tex: string, outPath: string) => {
         calls++;
         texByCall.push(tex);
-        return { pdfPath: outPath, pages: calls === 1 ? 2 : 1 };
+        return { pdfPath: outPath, pages: calls === 1 ? 2 : 1, overfullCount: 0, worstOverfullPt: 0 };
       };
 
       await generateResume(db, {
@@ -363,7 +363,7 @@ describe("generateResume", () => {
       const selection = trimmableSelection(exps);
 
       let callCount = 0;
-      const fakeCompile = async (_tex: string, outPath: string) => { callCount++; return { pdfPath: outPath, pages: 2 }; };
+      const fakeCompile = async (_tex: string, outPath: string) => { callCount++; return { pdfPath: outPath, pages: 2, overfullCount: 0, worstOverfullPt: 0 }; };
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v2",
@@ -398,7 +398,7 @@ describe("generateResume", () => {
         ],
       };
       let callCount = 0;
-      const fakeCompile = async (_tex: string, outPath: string) => { callCount++; return { pdfPath: outPath, pages: 2 }; };
+      const fakeCompile = async (_tex: string, outPath: string) => { callCount++; return { pdfPath: outPath, pages: 2, overfullCount: 0, worstOverfullPt: 0 }; };
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v3",
         compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
@@ -406,6 +406,103 @@ describe("generateResume", () => {
       expect(res.pages).toBe(2);
       expect(callCount).toBe(21); // initial + exactly MAX_TRIM_ATTEMPTS (20)
       expect(res.trimmed).toBe(20);
+    });
+  });
+
+  describe("overfull hbox detection (safety net)", () => {
+    function seedOverfullable(db: ReturnType<typeof openDb>) {
+      createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
+      createExperience(db, {
+        kind: "work", title: "Entry A", organization: "Acme",
+        bullets: [{ text: "a1", directions: [] }, { text: "a2", directions: [] }], sort_order: 0,
+      });
+    }
+
+    it("treats a meaningful overfull hbox (>2pt) as a defect and trims/recompiles even though pages stays at 1", async () => {
+      const db = openDb(":memory:");
+      seedOverfullable(db);
+      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
+      const selection = {
+        include: [
+          { id: exps[0].id, bullets: [] },
+          { id: exps[1].id, bullets: ["a1", "a2"] },
+        ],
+      };
+
+      let callCount = 0;
+      const fakeCompile = async (_tex: string, outPath: string) => {
+        callCount++;
+        // First compile: fits on 1 page but has a meaningful overfull hbox (a long unwrapped
+        // title running off the page). Second compile (after one trim): clean.
+        return callCount === 1
+          ? { pdfPath: outPath, pages: 1, overfullCount: 1, worstOverfullPt: 50 }
+          : { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 };
+      };
+
+      const res = await generateResume(db, {
+        backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v1",
+        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      });
+
+      expect(callCount).toBe(2); // initial compile + one trim/recompile cycle
+      expect(res.trimmed).toBe(1);
+      expect(res.pages).toBe(1);
+      expect(res.overfullCount).toBe(0);
+      expect(res.warnings).toEqual([]);
+    });
+
+    it("does not trigger a trim iteration for a trivial sub-2pt overfull hbox", async () => {
+      const db = openDb(":memory:");
+      seedOverfullable(db);
+      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
+      const selection = {
+        include: [
+          { id: exps[0].id, bullets: [] },
+          { id: exps[1].id, bullets: ["a1", "a2"] },
+        ],
+      };
+
+      let callCount = 0;
+      const fakeCompile = async (_tex: string, outPath: string) => {
+        callCount++;
+        return { pdfPath: outPath, pages: 1, overfullCount: 1, worstOverfullPt: 1.5 };
+      };
+
+      const res = await generateResume(db, {
+        backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v2",
+        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      });
+
+      expect(callCount).toBe(1); // no trim triggered — trivial overfull is not a defect
+      expect(res.trimmed).toBe(0);
+      expect(res.overfullCount).toBe(1);
+      expect(res.warnings.some((w) => /overfull/i.test(w))).toBe(true);
+    });
+
+    it("surfaces a warning naming the remaining overfull count/severity if it never fully clears within the trim budget", async () => {
+      const db = openDb(":memory:");
+      seedOverfullable(db);
+      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
+      const selection = {
+        include: [
+          { id: exps[0].id, bullets: [] },
+          { id: exps[1].id, bullets: ["a1", "a2"] },
+        ],
+      };
+      let callCount = 0;
+      const fakeCompile = async (_tex: string, outPath: string) => {
+        callCount++;
+        return { pdfPath: outPath, pages: 1, overfullCount: 2, worstOverfullPt: 40 };
+      };
+
+      const res = await generateResume(db, {
+        backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v3",
+        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      });
+
+      expect(res.overfullCount).toBe(2);
+      expect(res.warnings.some((w) => /overfull/i.test(w) && /2/.test(w))).toBe(true);
+      expect(callCount).toBeLessThan(30); // still terminates within the attempt cap
     });
   });
 
