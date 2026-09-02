@@ -220,7 +220,10 @@ function buildDoc(contact: ResumeContact, experiences: Experience[], selection: 
 }
 
 function dateRange(e: Experience): string | null {
-  if (e.start_date && e.end_date) return `${e.start_date} – ${e.end_date}`;
+  if (e.start_date && e.end_date) {
+    if (e.start_date === e.end_date) return e.start_date; // "2026 – 2026" → "2026"
+    return `${e.start_date} – ${e.end_date}`;
+  }
   return e.start_date ?? e.end_date ?? null;
 }
 

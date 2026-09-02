@@ -83,8 +83,8 @@ const PREAMBLE = `\\documentclass[letterpaper,11pt]{article}
   \\fi
 \\fi
 \\newcommand{\\resumeItem}[1]{\\item\\small{{#1 \\vspace{-2pt}}}}
-\\newcommand{\\resumeSubheading}[4]{\\vspace{-2pt}\\item\\begin{minipage}[t]{0.97\\textwidth}\\textbf{#1}\\hfill#2\\\\\\textit{\\small#3}\\hfill\\textit{\\small#4}\\end{minipage}\\vspace{-7pt}}
-\\newcommand{\\resumeProjectHeading}[2]{\\item\\begin{minipage}[t]{0.97\\textwidth}\\small#1\\hfill#2\\end{minipage}\\vspace{-7pt}}
+\\newcommand{\\resumeSubheading}[4]{\\vspace{-2pt}\\item\\begin{tabularx}{0.97\\textwidth}[t]{@{}>{\\raggedright\\arraybackslash}X@{\\hspace{1em}}r@{}}\\textbf{#1} & #2 \\\\ \\textit{\\small#3} & \\textit{\\small #4}\\end{tabularx}\\vspace{-7pt}}
+\\newcommand{\\resumeProjectHeading}[2]{\\item\\begin{tabularx}{0.97\\textwidth}[t]{@{}>{\\raggedright\\arraybackslash}X@{\\hspace{1em}}r@{}}\\small#1 & #2\\end{tabularx}\\vspace{-7pt}}
 \\newcommand{\\resumeSubHeadingListStart}{\\begin{itemize}[leftmargin=0.15in, label={}]}
 \\newcommand{\\resumeSubHeadingListEnd}{\\end{itemize}}
 \\newcommand{\\resumeItemListStart}{\\begin{itemize}}

@@ -93,23 +93,19 @@ describe("Jake's Resume renderer", () => {
     expect(skillsBlock).toContain("\\textbf{Frameworks}");
   });
 
-  it("defines resumeSubheading/resumeProjectHeading with a wrapping left side (minipage + paragraph text), not a fixed-width tabular* cell", () => {
+  it("defines resumeSubheading/resumeProjectHeading with a wrapping X column and the date pinned right on the first line", () => {
     // Root-cause regression lock: a fixed-width `tabular*` left cell does NOT wrap, so a long
-    // title or "Title | tech-stack" project heading runs off the page (Overfull \hbox). It must
-    // wrap instead. (A naive `tabularx` X-column fix was tried and rejected: when the left
-    // cell's text wraps to a second line, a same-row single-line date/location cell docks with
-    // zero gap right after the wrapped first line's last word — real text-on-text overlap, e.g.
-    // "Beautiful2026 – Present" — even though tectonic reports zero Overfull \hbox for it. A
-    // plain paragraph with \hfill has no adjacent cell to collide with: \hfill's glue just lands
-    // wherever the date ends up after wrapping.)
+    // title or "Title | tech-stack" project heading runs off the page (Overfull \hbox). A plain
+    // minipage+\hfill wraps but lets a long left side push the DATE onto a second line. The
+    // tabularx form keeps the date in its own right-aligned column on the first line while the
+    // X column wraps; the @{\hspace{1em}} separator guarantees a visible gap so a wrapped
+    // first line can never abut the date ("Beautiful2026 – Present").
     expect(tex).not.toContain("\\begin{tabular*}");
-    expect(tex).not.toContain("\\begin{tabularx}");
+    expect(tex).not.toContain("\\begin{minipage}");
     const subheadingDef = tex.slice(tex.indexOf("\\newcommand{\\resumeSubheading}"), tex.indexOf("\\newcommand{\\resumeProjectHeading}"));
-    expect(subheadingDef).toContain("\\begin{minipage}[t]{0.97\\textwidth}");
-    expect(subheadingDef).toContain("\\hfill");
+    expect(subheadingDef).toContain("\\begin{tabularx}{0.97\\textwidth}[t]{@{}>{\\raggedright\\arraybackslash}X@{\\hspace{1em}}r@{}}");
     const projectDef = tex.slice(tex.indexOf("\\newcommand{\\resumeProjectHeading}"), tex.indexOf("\\newcommand{\\resumeSubHeadingListStart}"));
-    expect(projectDef).toContain("\\begin{minipage}[t]{0.97\\textwidth}");
-    expect(projectDef).toContain("\\hfill");
+    expect(projectDef).toContain("\\begin{tabularx}{0.97\\textwidth}[t]{@{}>{\\raggedright\\arraybackslash}X@{\\hspace{1em}}r@{}}");
   });
 
   it("applies escaping throughout", () => {
