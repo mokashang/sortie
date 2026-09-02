@@ -4,14 +4,19 @@ import { createExperience } from "@/resume/experiences";
 import { generateResume, isSafeVersionName } from "@/resume/generate";
 import { LlmBackend } from "@/llm/types";
 
+// Seed with one entry of each kind that matters for section-structure tests: education, work,
+// project, skill. Kept deliberately distinct per kind so tests can assert deterministic section
+// separation (Experience vs Projects) rather than relying on LLM-chosen headings.
 function seed(db: ReturnType<typeof openDb>) {
   createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
+  createExperience(db, { kind: "work", title: "SWE Intern", organization: "Acme", bullets: [{ text: "Shipped a backend service", directions: ["swe_backend"] }], sort_order: 0 });
   createExperience(db, { kind: "project", title: "Distributed Trainer", organization: "USC", bullets: [{ text: "Sharded training across 8 GPUs", directions: ["ai_infra"] }, { text: "Wrote a React dashboard", directions: ["swe_general"] }], sort_order: 0 });
+  createExperience(db, { kind: "skill", title: "Languages", organization: null, bullets: [{ text: "C++, Python", directions: [] }], sort_order: 0 });
 }
 
 const contact = { name: "M S", email: "m@x.com", phone: "+1", linkedin: "in/x", github: "gh/x" };
 
-// Fake backend returns a selection: keep the education entry and the ai_infra bullet only.
+// Fake backend returns a selection: { include: [...] }.
 const fakeBackend = (selection: object): LlmBackend => ({
   name: "fake",
   complete: async () => ({ text: JSON.stringify(selection), backend: "fake" }),
@@ -22,14 +27,18 @@ const onePageCompile = async (_tex: string, outPath: string) => ({ pdfPath: outP
 const noText = async () => null;
 
 describe("generateResume", () => {
-  it("builds a ResumeDoc from the model's selection, compiles, and records a resume version", async () => {
+  it("builds a ResumeDoc from the model's { include } selection, compiles, and records a resume version", async () => {
     const db = openDb(":memory:");
     seed(db);
-    const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
+    const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+    const eduId = exps.find((e) => e.kind === "education")!.id;
+    const workId = exps.find((e) => e.kind === "work")!.id;
+    const projId = exps.find((e) => e.kind === "project")!.id;
     const selection = {
-      sections: [
-        { heading: "Education", entry_ids: [exps[0].id] },
-        { heading: "Projects", entries: [{ id: exps[1].id, bullets: ["Sharded training across 8 GPUs"] }] },
+      include: [
+        { id: eduId, bullets: [] },
+        { id: workId, bullets: ["Shipped a backend service"] },
+        { id: projId, bullets: ["Sharded training across 8 GPUs"] },
       ],
     };
     const compiled: { tex: string; pdfPath: string }[] = [];
@@ -60,10 +69,21 @@ describe("generateResume", () => {
   it("throws a clear error if the model selects an experience id that does not exist", async () => {
     const db = openDb(":memory:");
     seed(db);
-    const selection = { sections: [{ heading: "Projects", entries: [{ id: 9999, bullets: ["ghost"] }] }] };
+    const selection = { include: [{ id: 9999, bullets: ["ghost"] }] };
     await expect(
       generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: "/tmp/x" })
     ).rejects.toThrow(/unknown experience id|9999/i);
+  });
+
+  it("rejects an empty-string bullet (each chosen bullet must be non-empty)", async () => {
+    const db = openDb(":memory:");
+    seed(db);
+    const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+    const workId = exps.find((e) => e.kind === "work")!.id;
+    const selection = { include: [{ id: workId, bullets: ["", "Shipped a backend service"] }] };
+    await expect(
+      generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: "/tmp/x" })
+    ).rejects.toThrow();
   });
 
   it("resolves resumeId by version_name on regenerate, not by stale last_insert_rowid", async () => {
@@ -72,8 +92,9 @@ describe("generateResume", () => {
     // return the id of the ORIGINAL row (updated in place), not whatever id was last inserted.
     const db = openDb(":memory:");
     seed(db);
-    const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
-    const selection = { sections: [{ heading: "Education", entry_ids: [exps[0].id] }] };
+    const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+    const eduId = exps.find((e) => e.kind === "education")!.id;
+    const selection = { include: [{ id: eduId, bullets: [] }] };
 
     const first = await generateResume(db, {
       backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "dup_v1",
@@ -101,6 +122,129 @@ describe("generateResume", () => {
     expect(dupCount).toBe(1);
   });
 
+  describe("deterministic section structure (by experience kind)", () => {
+    it("builds distinct Education / Experience / Projects / Technical Skills sections, in that fixed order, from a single flat include list", async () => {
+      const db = openDb(":memory:");
+      seed(db);
+      const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+      const eduId = exps.find((e) => e.kind === "education")!.id;
+      const workId = exps.find((e) => e.kind === "work")!.id;
+      const projId = exps.find((e) => e.kind === "project")!.id;
+      const skillId = exps.find((e) => e.kind === "skill")!.id;
+      // Deliberately out-of-kind-order in `include` — the app must still group by kind into the
+      // fixed section order, not follow the include array's raw order across kinds.
+      const selection = {
+        include: [
+          { id: projId, bullets: ["Sharded training across 8 GPUs"] },
+          { id: skillId, bullets: ["C++, Python"] },
+          { id: eduId, bullets: [] },
+          { id: workId, bullets: ["Shipped a backend service"] },
+        ],
+      };
+      const compiled: { tex: string }[] = [];
+      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1 }; };
+
+      await generateResume(db, {
+        backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v1",
+        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      });
+
+      const tex = compiled[0].tex;
+      const iEdu = tex.indexOf("\\section{Education}");
+      const iExp = tex.indexOf("\\section{Experience}");
+      const iProj = tex.indexOf("\\section{Projects}");
+      const iSkill = tex.indexOf("\\section{Technical Skills}");
+      expect(iEdu).toBeGreaterThan(-1);
+      expect(iExp).toBeGreaterThan(-1);
+      expect(iProj).toBeGreaterThan(-1);
+      expect(iSkill).toBeGreaterThan(-1);
+      // Fixed order regardless of include order: Education, Experience, Projects, Technical Skills.
+      expect(iEdu).toBeLessThan(iExp);
+      expect(iExp).toBeLessThan(iProj);
+      expect(iProj).toBeLessThan(iSkill);
+
+      // Content lands in the section matching its kind, not merged together.
+      const expSection = tex.slice(iExp, iProj);
+      const projSection = tex.slice(iProj, iSkill);
+      expect(expSection).toContain("Shipped a backend service");
+      expect(expSection).not.toContain("Sharded training across 8 GPUs");
+      expect(projSection).toContain("Sharded training across 8 GPUs");
+      expect(projSection).not.toContain("Shipped a backend service");
+    });
+
+    it("omits a section entirely when zero experiences of that kind are included", async () => {
+      const db = openDb(":memory:");
+      seed(db);
+      const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+      const eduId = exps.find((e) => e.kind === "education")!.id;
+      const workId = exps.find((e) => e.kind === "work")!.id;
+      // No project, no skill included.
+      const selection = { include: [{ id: eduId, bullets: [] }, { id: workId, bullets: ["Shipped a backend service"] }] };
+      const compiled: { tex: string }[] = [];
+      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1 }; };
+
+      await generateResume(db, {
+        backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v2",
+        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      });
+
+      const tex = compiled[0].tex;
+      expect(tex).toContain("\\section{Experience}");
+      expect(tex).not.toContain("\\section{Projects}");
+      expect(tex).not.toContain("\\section{Technical Skills}");
+    });
+
+    it("orders entries within a kind by their position in the model's `include` array, not by DB sort_order", async () => {
+      const db = openDb(":memory:");
+      createExperience(db, { kind: "work", title: "Entry A", organization: "Acme", bullets: [{ text: "a1", directions: [] }], sort_order: 0 });
+      createExperience(db, { kind: "work", title: "Entry B", organization: "Acme", bullets: [{ text: "b1", directions: [] }], sort_order: 1 });
+      const exps = db.prepare("SELECT id, title FROM experiences ORDER BY id").all() as { id: number; title: string }[];
+      const idA = exps.find((e) => e.title === "Entry A")!.id;
+      const idB = exps.find((e) => e.title === "Entry B")!.id;
+      // Reverse of DB sort_order: B listed before A in `include`.
+      const selection = { include: [{ id: idB, bullets: ["b1"] }, { id: idA, bullets: ["a1"] }] };
+      const compiled: { tex: string }[] = [];
+      const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1 }; };
+
+      await generateResume(db, {
+        backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "struct_v3",
+        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      });
+
+      const tex = compiled[0].tex;
+      expect(tex.indexOf("Entry B")).toBeLessThan(tex.indexOf("Entry A"));
+    });
+  });
+
+  describe("prompt content (direction angling + honesty constraint)", () => {
+    it("instructs the model to angle real experiences toward the target direction and never fabricate", async () => {
+      const db = openDb(":memory:");
+      seed(db);
+      let captured = "";
+      const capturingBackend: LlmBackend = {
+        name: "capture",
+        complete: async (req) => {
+          captured = `${req.system}\n${req.prompt}`;
+          return { text: JSON.stringify({ include: [] }), backend: "capture" };
+        },
+      };
+      await generateResume(db, {
+        backend: capturingBackend, contact, direction: "gpu_cuda", versionName: "prompt_v1",
+        compile: onePageCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      });
+
+      // Angling instruction present, bound to the target direction's label.
+      expect(captured).toMatch(/angl|emphasi[sz]e|prioriti[sz]e/i);
+      expect(captured).toContain("GPU / CUDA");
+      // Hard never-fabricate constraint present.
+      expect(captured).toMatch(/never (invent|fabricate)|do not (invent|fabricate)/i);
+      expect(captured).toMatch(/strongest adjacent real work|adjacent real work/i);
+      // New selection schema shape documented in the prompt, not the old free-form `sections`.
+      expect(captured).toContain("\"include\"");
+      expect(captured).not.toMatch(/"heading":\s*"Education"/);
+    });
+  });
+
   describe("one-page trim loop", () => {
     function seedTrimmable(db: ReturnType<typeof openDb>) {
       createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
@@ -118,16 +262,12 @@ describe("generateResume", () => {
 
     function trimmableSelection(exps: { id: number }[]) {
       return {
-        sections: [
-          { heading: "Education", entry_ids: [exps[0].id] },
-          { heading: "Experience", entries: [
-            { id: exps[1].id, bullets: ["a1", "a2", "a3"] },
-            { id: exps[2].id, bullets: ["b1", "b2", "b3"] },
-          ] },
-          { heading: "Projects", entries: [
-            { id: exps[3].id, bullets: ["c1"] },
-            { id: exps[4].id, bullets: ["d1"] },
-          ] },
+        include: [
+          { id: exps[0].id, bullets: [] },
+          { id: exps[1].id, bullets: ["a1", "a2", "a3"] },
+          { id: exps[2].id, bullets: ["b1", "b2", "b3"] },
+          { id: exps[3].id, bullets: ["c1"] },
+          { id: exps[4].id, bullets: ["d1"] },
         ],
       };
     }
@@ -185,10 +325,10 @@ describe("generateResume", () => {
       });
       const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
       const selection = {
-        sections: [
-          { heading: "Education", entry_ids: [exps[0].id] },
-          { heading: "Experience", entries: [{ id: exps[1].id, bullets: ["did x", "did y", "did z"] }] },
-          { heading: "Projects", entries: [{ id: exps[2].id, bullets: ["short one", "This is a very long and dense project bullet describing substantial technical work across many systems and components in great detail"] }] },
+        include: [
+          { id: exps[0].id, bullets: [] },
+          { id: exps[1].id, bullets: ["did x", "did y", "did z"] },
+          { id: exps[2].id, bullets: ["short one", "This is a very long and dense project bullet describing substantial technical work across many systems and components in great detail"] },
         ],
       };
 
@@ -252,9 +392,9 @@ describe("generateResume", () => {
       }
       const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
       const selection = {
-        sections: [
-          { heading: "Education", entry_ids: [exps[0].id] },
-          { heading: "Experience", entries: exps.slice(1).map((e) => ({ id: e.id, bullets: ["a", "b", "c"] })) },
+        include: [
+          { id: exps[0].id, bullets: [] },
+          ...exps.slice(1).map((e) => ({ id: e.id, bullets: ["a", "b", "c"] })),
         ],
       };
       let callCount = 0;
@@ -273,8 +413,9 @@ describe("generateResume", () => {
     it("surfaces a warning when the extracted PDF text is missing the candidate's name", async () => {
       const db = openDb(":memory:");
       seed(db);
-      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
-      const selection = { sections: [{ heading: "Education", entry_ids: [exps[0].id] }] };
+      const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+      const eduId = exps.find((e) => e.kind === "education")!.id;
+      const selection = { include: [{ id: eduId, bullets: [] }] };
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v1",
@@ -286,8 +427,9 @@ describe("generateResume", () => {
     it("surfaces a warning when raw LaTeX commands leak into the extracted text", async () => {
       const db = openDb(":memory:");
       seed(db);
-      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
-      const selection = { sections: [{ heading: "Education", entry_ids: [exps[0].id] }] };
+      const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+      const eduId = exps.find((e) => e.kind === "education")!.id;
+      const selection = { include: [{ id: eduId, bullets: [] }] };
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v2",
@@ -299,8 +441,9 @@ describe("generateResume", () => {
     it("surfaces a warning when extracted text looks empty", async () => {
       const db = openDb(":memory:");
       seed(db);
-      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
-      const selection = { sections: [{ heading: "Education", entry_ids: [exps[0].id] }] };
+      const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+      const eduId = exps.find((e) => e.kind === "education")!.id;
+      const selection = { include: [{ id: eduId, bullets: [] }] };
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v3",
@@ -312,8 +455,9 @@ describe("generateResume", () => {
     it("produces no warnings for clean one-page content", async () => {
       const db = openDb(":memory:");
       seed(db);
-      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
-      const selection = { sections: [{ heading: "Education", entry_ids: [exps[0].id] }] };
+      const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+      const eduId = exps.find((e) => e.kind === "education")!.id;
+      const selection = { include: [{ id: eduId, bullets: [] }] };
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v4",
@@ -325,8 +469,9 @@ describe("generateResume", () => {
     it("skips content checks (no warnings, no crash) when text extraction returns null", async () => {
       const db = openDb(":memory:");
       seed(db);
-      const exps = db.prepare("SELECT id FROM experiences ORDER BY id").all() as { id: number }[];
-      const selection = { sections: [{ heading: "Education", entry_ids: [exps[0].id] }] };
+      const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+      const eduId = exps.find((e) => e.kind === "education")!.id;
+      const selection = { include: [{ id: eduId, bullets: [] }] };
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v5",

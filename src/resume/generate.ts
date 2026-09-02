@@ -20,18 +20,29 @@ export function isSafeVersionName(name: string): boolean {
   return !/[/\\]|\.\./.test(name);
 }
 
+// The model no longer chooses section HEADINGS or structure — it only selects which
+// experiences to include and which (reworded/angled) bullets to use for each. Structure is
+// deterministic: see SECTION_ORDER below. Each bullet must be non-empty (validated here); it
+// need not exactly match the source bullet text (angling may reword it), but the prompt
+// instructs the model never to fabricate content not present in the source bullets.
 const SelectionSchema = z.object({
-  sections: z.array(
+  include: z.array(
     z.object({
-      heading: z.string().min(1),
-      entry_ids: z.array(z.number().int()).optional(),
-      entries: z
-        .array(z.object({ id: z.number().int(), bullets: z.array(z.string()) }))
-        .optional(),
+      id: z.number().int(),
+      bullets: z.array(z.string().min(1)),
     })
   ),
 });
 export type Selection = z.infer<typeof SelectionSchema>;
+
+// Fixed section structure, keyed by experience `kind`, in the fixed order the resume renders
+// them. A section is omitted entirely when nothing of that kind was included (see buildDoc).
+const SECTION_ORDER: { kind: Experience["kind"]; heading: string }[] = [
+  { kind: "education", heading: "Education" },
+  { kind: "work", heading: "Experience" },
+  { kind: "project", heading: "Projects" },
+  { kind: "skill", heading: "Technical Skills" },
+];
 
 export interface GenerateOptions {
   backend: LlmBackend;
@@ -136,37 +147,63 @@ function buildPrompt(experiences: Experience[], direction: string): LlmRequest {
   const expJson = experiences.map((e) => ({
     id: e.id, kind: e.kind, title: e.title, organization: e.organization,
     location: e.location, start_date: e.start_date, end_date: e.end_date,
-    bullets: e.bullets.map((b) => b.text),
+    bullets: e.bullets.map((b) => ({ text: b.text, directions: b.directions })),
   }));
   const system =
-    "You are an expert technical resume writer. From a candidate's full experience bank, you select and order the most relevant items for ONE target direction and pick/lightly-tighten the strongest bullets. You never invent facts — only reuse or trim the provided bullet text. Return ONLY JSON.";
+    "You are an expert technical resume writer. From a candidate's full experience bank, you SELECT which experiences to include for ONE target direction and choose/lightly-angle the strongest bullets for each. " +
+    "You never invent facts, technologies, or results — you only reuse, trim, or re-emphasize wording already present in the provided bullet text. Return ONLY JSON.";
   const prompt =
     `Target direction: ${dirLabel} — ${blurb}\n\n` +
-    `Candidate experience bank (JSON):\n${JSON.stringify(expJson, null, 2)}\n\n` +
-    `Produce a one-page resume selection as JSON with this shape:\n` +
-    `{ "sections": [ { "heading": "Education", "entry_ids": [<id>...] }, ` +
-    `{ "heading": "Experience", "entries": [ { "id": <id>, "bullets": ["<chosen or tightened bullet text>", ...] } ] } ] }\n` +
-    `Rules: use only ids from the bank; for education/skills you may use entry_ids (all bullets kept); for work/projects use entries with a curated bullets array; ` +
-    `prioritize items relevant to ${dirLabel}; keep it to ~1 page (usually 3-5 experiences). Bullet text MUST be copied or trimmed from the provided bullets — do not fabricate. Output ONLY the JSON.`;
+    `Candidate experience bank (JSON). Each bullet carries a "directions" tag array showing which directions it is genuinely relevant to (from the candidate's own prior tagging) — use this as a hint for relevance, not a hard filter:\n` +
+    `${JSON.stringify(expJson, null, 2)}\n\n` +
+    `Produce a resume SELECTION as JSON with this exact shape (do not invent any other structure):\n` +
+    `{ "include": [ { "id": <experience id from the bank>, "bullets": ["<chosen or lightly-angled bullet text>", ...] }, ... ] }\n\n` +
+    `Rules:\n` +
+    `- Use only ids that appear in the bank above.\n` +
+    `- Do NOT choose section headings or structure yourself — the app deterministically places each included id's kind (education / work / project / skill) into a fixed section (Education / Experience / Projects / Technical Skills). You only choose WHICH ids to include, WHICH bullets, and in what order.\n` +
+    `- Order matters: list the ids for a given kind in the order you want them to appear, most-relevant-to-${dirLabel}-first.\n` +
+    `- Include roughly 3-5 of the strongest, most relevant work/project entries (plus all education entries and 2-4 skill entries) — keep it to about one page.\n` +
+    `- For education entries, keep the bullets array as given (or empty).\n` +
+    `- For skill entries, you may merge/curate/reorder the bullet text, but every word must trace back to something already in that entry's bullets — do not add tools or techniques that aren't there.\n\n` +
+    `DIRECTION ANGLING (do this, honestly):\n` +
+    `- Prioritize and order the most ${dirLabel}-relevant experiences FIRST within each section.\n` +
+    `- Where a REAL experience genuinely touches ${dirLabel}, phrase/emphasize that bullet toward this angle — e.g. for gpu_cuda emphasize real CUDA/FlashAttention/BF16/memory-profiling work; for quant emphasize real C++/low-latency/probability work; for systems_perf emphasize real profiling/latency work.\n` +
+    `- You may lightly reword a bullet to foreground the ${dirLabel}-relevant part of what it already says (e.g. reorder clauses, trim an unrelated clause), but the underlying facts, numbers, and technologies must already be present in that bullet's original text.\n\n` +
+    `HARD CONSTRAINT — NEVER FABRICATE:\n` +
+    `- NEVER invent facts, technologies, metrics, or results that are not present in the source bullets, even if they would make the resume a better fit for ${dirLabel}.\n` +
+    `- If the candidate has essentially nothing real for ${dirLabel}, do not manufacture direction-specific accomplishments — just select and lightly angle the strongest adjacent real work instead.\n` +
+    `- Every bullet you output must be traceable to real content already in the bank above.\n\n` +
+    `Output ONLY the JSON, no commentary.`;
   return { system, prompt, tier: "smart", maxTokens: 3000 };
 }
 
+// Deterministically builds the ResumeDoc's section structure from the model's flat `include`
+// list: each included id is routed into the fixed section for its experience `kind` (see
+// SECTION_ORDER), in SECTION_ORDER's fixed order. Within a section, entries keep the relative
+// order they appear in `include` (the model's chosen priority/angling order) — DB sort_order is
+// not consulted since `include`'s order fully determines it. A section is omitted when it has
+// zero included entries.
 function buildDoc(contact: ResumeContact, experiences: Experience[], selection: Selection): ResumeDoc {
   const byId = new Map(experiences.map((e) => [e.id, e]));
-  const sections: ResumeSection[] = selection.sections.map((s) => {
-    const entries = [] as ResumeSection["entries"];
-    for (const id of s.entry_ids ?? []) {
-      const e = byId.get(id);
-      if (!e) throw new Error(`generateResume: unknown experience id ${id}`);
-      entries.push({ title: e.title, organization: e.organization, location: e.location, dates: dateRange(e), bullets: e.bullets.map((b) => b.text) });
-    }
-    for (const sel of s.entries ?? []) {
-      const e = byId.get(sel.id);
-      if (!e) throw new Error(`generateResume: unknown experience id ${sel.id}`);
-      entries.push({ title: e.title, organization: e.organization, location: e.location, dates: dateRange(e), bullets: sel.bullets });
-    }
-    return { heading: s.heading, entries };
+  const resolved = selection.include.map((sel) => {
+    const e = byId.get(sel.id);
+    if (!e) throw new Error(`generateResume: unknown experience id ${sel.id}`);
+    return { exp: e, bullets: sel.bullets };
   });
+
+  const sections: ResumeSection[] = [];
+  for (const { kind, heading } of SECTION_ORDER) {
+    const entries: ResumeEntry[] = resolved
+      .filter((r) => r.exp.kind === kind)
+      .map((r) => ({
+        title: r.exp.title,
+        organization: r.exp.organization,
+        location: r.exp.location,
+        dates: dateRange(r.exp),
+        bullets: r.bullets,
+      }));
+    if (entries.length > 0) sections.push({ heading, entries });
+  }
   return { contact, sections };
 }
 
