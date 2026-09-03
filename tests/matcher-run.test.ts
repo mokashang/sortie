@@ -507,4 +507,21 @@ describe("runMatching", () => {
     const m = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(ids.paralegal) as any;
     expect(m.skip_reason).toBe("non-engineering role");
   });
+
+  it("promotes a pinned discovered row (jd_review requeue) back to matched on a passing score — pinned blocks archiving, not promotion", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    // Simulate a jd_review requeue: pinned, status reset to 'discovered', match row deleted.
+    db.prepare("UPDATE applications SET status='discovered', pinned=1 WHERE job_id=?").run(ids.backend);
+    const backend = scriptedBackend({
+      "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false },
+    });
+    const s = await runMatching(db, {
+      backend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+    });
+    expect(s.matched).toBe(1);
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.backend) as any;
+    expect(app.status).toBe("matched");
+  });
 });

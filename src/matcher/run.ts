@@ -137,12 +137,17 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
         const skipReason = failReason ?? (res.skip ? "low fit" : lowScore ? `low score (${res.score})` : null);
         insMatch.run(r.id, res.direction, res.score, tier, res.reason, opts.rescoreMatched && !failReason ? null : skipReason);
         if (failReason && archived) archiveCluster(db, r.id, failReason, { respectPinned: true });
-        // Pinned rows are never auto-archived by the matcher (see `archived` above) — and for the
-        // same reason, the matcher must not touch their status at all here: flipping a pinned
-        // 'archived' row to 'matched' just because it wasn't archived would be an equally
-        // unwanted automatic status change. Score/skip_reason/eligibility fields are still written
-        // above regardless of pinned status.
-        const changes = r.pinned === 0 ? setStatus.run(archived ? "archived" : "matched", r.id).changes : 0;
+        // Pinned rows are protected from auto-ARCHIVING only, never from PROMOTION: a pinned row
+        // never gets flipped to 'archived' by the matcher (see `archived` above), but a pinned
+        // row a human requeued to 'discovered' (e.g. via jd_review) must still be promotable back
+        // to 'matched' once it scores — otherwise it silently vanishes from every surface. Score/
+        // skip_reason/eligibility fields are still written above regardless of pinned status.
+        const changes =
+          r.pinned === 0
+            ? setStatus.run(archived ? "archived" : "matched", r.id).changes
+            : archived
+              ? 0
+              : db.prepare("UPDATE applications SET status = 'matched' WHERE job_id = ? AND status = 'discovered'").run(r.id).changes;
         summary.scored++;
         // Only count matched/archived when the UPDATE actually changed a row — a job already past
         // these states (e.g. 'submitted') still gets its match row written, but the counters
