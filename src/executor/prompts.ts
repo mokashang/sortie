@@ -112,7 +112,7 @@ ${plan.map((p) => `- \`${p.direction}\` × **${p.count}**(该方向最多调用 
   const takeTaskStep = plan
     ? `1. **按当前方向取任务**:依次处理上面列出的每个方向。对当前方向(把 \`<direction>\` 换成实际方向 slug,例如第一个方向请求体是 \`{"direction": "swe_backend"}\`):\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{"direction": "<direction>"}'\`
    - \`{"done": true}\` → 当前方向没有更多待投递岗位了,放弃该方向剩余配额,换下一个方向;如果这已经是最后一个方向,跳到 §6 收尾。
-   - 否则拿到 \`ApplyTask\`:\`{jobId, company, title, applyUrl, ats, answerPack}\`。answerPack 里有 contact/education/work_auth/eeo/resume/custom/job 几组字段,把它拍平成一份"字段: 值"列表——只用 answerPack 里实际存在的字段,绝不编造。这个方向的已投递计数 +1;达到该方向配额后,换下一个方向。`
+   - 否则拿到 \`ApplyTask\`:\`{jobId, company, title, applyUrl, ats, answerPack}\`。answerPack 里有 contact/education/work_auth/eeo/resume/custom/job 几组字段,把它拍平成一份"字段: 值"列表——只用 answerPack 里实际存在的字段,绝不编造。这个方向的取数次数 +1(上限 3 × 配额,达到即换下一个方向)。只有当这条任务最终回报 awaiting_confirm 时,该方向的完成计数才 +1;完成计数达到配额后换下一个方向。被资格检查拦下 / 登录墙 / already applied / dead link / error 不计入完成计数。`
     : `1. **取任务**:\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{}'\`
    - \`{"done": true}\` → 没有更多待投递岗位,停止循环,跳到 §6 收尾。
    - 否则拿到 \`ApplyTask\`:\`{jobId, company, title, applyUrl, ats, answerPack}\`。answerPack 里有 contact/education/work_auth/eeo/resume/custom/job 几组字段,把它拍平成一份"字段: 值"列表——只用 answerPack 里实际存在的字段,绝不编造。`;
@@ -177,10 +177,10 @@ ${GREENHOUSE_HEURISTICS}
 ## 5. 节流与熔断
 - 完成一个到开始下一个之间等 5-10 秒。
 - **连续 3 个 needs_manual 或连续 2 个 error → 立刻停止循环**,不再取新任务,总结:这次会话提交了几个、最近几条 needs_manual/error 的原因是什么。孤立的一次不触发熔断;一次成功的 awaiting_confirm 回报会重置连续计数。
-- **本会话硬上限 ${capCount} 个申请**——达到后立刻停止循环并总结,即使 /api/apply/next 还有更多任务。
+- **本会话硬上限 ${capCount} 份填好待确认的申请**——达到后立刻停止循环并总结,即使 /api/apply/next 还有更多任务。
 
 ## 6. 收尾
-循环结束时(done / 达到 ${capCount} 上限 / 触发熔断),打印**一段话**总结:本次提交了几个、需人工几个、原因摘要(含是否遇到过登录墙)、是否触发了熔断或上限。这段总结会被记录进日志供用户查看,请确保信息完整、具体。`;
+循环结束时(done / 达到 ${capCount} 份填好待确认的上限 / 触发熔断),打印**一段话**总结:本次提交了几个、需人工几个、原因摘要(含是否遇到过登录墙)、是否触发了熔断或上限。这段总结会被记录进日志供用户查看,请确保信息完整、具体。`;
 }
 
 export function buildNetworkSendPrompt(): string {

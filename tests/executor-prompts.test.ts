@@ -6,13 +6,13 @@ describe("executor prompts", () => {
     it("interpolates the limit (default 5) and repeats it as the hard cap", () => {
       const p = buildApplyPrompt();
       expect(p).toContain("最多投递 **5** 个申请");
-      expect(p).toMatch(/硬上限 5 个申请/);
+      expect(p).toMatch(/硬上限 5 份填好待确认的申请/);
     });
 
     it("honors a custom limit", () => {
       const p = buildApplyPrompt({ limit: 12 });
       expect(p).toContain("最多投递 **12** 个申请");
-      expect(p).toMatch(/硬上限 12 个申请/);
+      expect(p).toMatch(/硬上限 12 份填好待确认的申请/);
       expect(p).not.toContain("最多投递 **5** 个申请");
     });
 
@@ -91,6 +91,12 @@ describe("executor prompts", () => {
       expect(p).toMatch(/被拦下.*不计数/);
     });
 
+    it("main-loop take step does not use the old raw-take count semantics", () => {
+      const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2 }] });
+      expect(p).not.toContain("已投递计数 +1");
+      expect(p).toContain("只有当这条任务最终回报 awaiting_confirm");
+    });
+
     describe("with a plan (per-direction quotas)", () => {
       const plan = [
         { direction: "swe_backend", count: 5 },
@@ -111,7 +117,7 @@ describe("executor prompts", () => {
       it("shows the total (sum of quotas) as the session's hard cap", () => {
         const p = buildApplyPrompt({ plan });
         expect(p).toContain("硬性上限 **8**");
-        expect(p).toMatch(/硬上限 8 个申请/);
+        expect(p).toMatch(/硬上限 8 份填好待确认的申请/);
       });
 
       it("shapes the /api/apply/next POST body with a direction field", () => {
