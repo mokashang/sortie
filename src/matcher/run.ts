@@ -1,6 +1,7 @@
 import { DB, logEvent } from "@/lib/db";
 import { LlmBackend } from "@/llm/types";
 import { buildMatchPrompt, parseMatchResults, MatchProfile, MatchJobInput, MatchResult } from "@/matcher/prompt";
+import { applyEligibility, archiveCluster } from "@/apply/eligibility";
 
 export interface MatchOptions {
   backend: LlmBackend;
@@ -16,6 +17,11 @@ export interface MatchOptions {
   // match row) — an escape hatch so a single under-calibrated pass doesn't permanently bury a
   // real opportunity behind the "already has a match row" resumable gate. Default false.
   rescoreArchived?: boolean;
+  // When true, re-score jobs already in 'matched' status with a real JD (instead of the normal
+  // "score unscored jobs" pass) — used to backfill sponsorship/degree/role on the existing queue.
+  // Archives only on an eligibility hard-rule failure, never purely for a low score, and never
+  // for a pinned row. Default false.
+  rescoreMatched?: boolean;
 }
 
 export interface MatchSummary {
@@ -32,6 +38,8 @@ interface JobRow {
   title: string;
   location: string | null;
   jd_text: string | null;
+  pinned: number;
+  status: string;
 }
 
 export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSummary> {
@@ -44,17 +52,22 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
   // when rescoreArchived is set, jobs whose application status is 'archived' even though they
   // already have a match row (the rescue path for an under-calibrated earlier pass).
   const rescoreClause = opts.rescoreArchived ? " OR a.status = 'archived'" : "";
-  const rows = db
-    .prepare(
-      `SELECT j.id, j.company, j.title, j.location, j.jd_text
-       FROM jobs j
-       JOIN applications a ON a.job_id = j.id
-       LEFT JOIN matches m ON m.job_id = j.id
-       WHERE j.visa_flag IS NULL AND j.loc_flag IS NULL AND (m.id IS NULL${rescoreClause})
-       ORDER BY j.created_at DESC
-       ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
-    )
-    .all() as JobRow[];
+  const rows = (
+    opts.rescoreMatched
+      ? db.prepare(
+          `SELECT j.id, j.company, j.title, j.location, j.jd_text, a.pinned, a.status
+           FROM jobs j JOIN applications a ON a.job_id = j.id JOIN matches m ON m.job_id = j.id
+           WHERE a.status = 'matched' AND j.duplicate_of IS NULL AND j.visa_flag IS NULL AND j.loc_flag IS NULL
+             AND j.jd_text <> '' AND j.jd_text NOT LIKE '[listing metadata]%'
+           ORDER BY j.created_at DESC ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
+        )
+      : db.prepare(
+          `SELECT j.id, j.company, j.title, j.location, j.jd_text, a.pinned, a.status
+           FROM jobs j JOIN applications a ON a.job_id = j.id LEFT JOIN matches m ON m.job_id = j.id
+           WHERE j.visa_flag IS NULL AND j.loc_flag IS NULL AND j.duplicate_of IS NULL AND (m.id IS NULL${rescoreClause})
+           ORDER BY j.created_at DESC ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
+        )
+  ).all() as JobRow[];
 
   // ON CONFLICT ... DO UPDATE (rather than DO NOTHING) so the rescoreArchived path can overwrite
   // an existing match row with fresh score/direction/reason.
@@ -110,19 +123,25 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
         const res = byId.get(r.id);
         if (!res) continue; // model omitted this job — leave unscored for a later run
         const tier = res.direction ? (opts.profile.directions[res.direction] ?? null) : null;
-        const archived = res.skip || res.score < threshold;
-        // Archived rows should always carry a reason: the model's own skip vs. our threshold cut.
-        const skipReason = res.skip ? "low fit" : archived ? `low score (${res.score})` : null;
-        insMatch.run(r.id, res.direction, res.score, tier, res.reason, skipReason);
+        const elig = applyEligibility(
+          db,
+          { jobId: r.id, sponsorship: res.sponsorship, degree: res.degree, role: res.role, source: "match_llm", evidence: res.reason },
+          { archive: false }
+        );
+        const failReason = elig.written ? elig.failReason : null;
+        const lowScore = res.skip || res.score < threshold;
+        // rescoreMatched: 只因资格失败归档(且不动 pinned);常规打分:资格失败或低分都归档。
+        const archived = opts.rescoreMatched ? failReason !== null && r.pinned === 0 : failReason !== null || lowScore;
+        const skipReason = failReason ?? (res.skip ? "low fit" : lowScore ? `low score (${res.score})` : null);
+        insMatch.run(r.id, res.direction, res.score, tier, res.reason, opts.rescoreMatched && !failReason ? null : skipReason);
+        if (failReason && archived) archiveCluster(db, r.id, failReason, { respectPinned: true });
         const info = setStatus.run(archived ? "archived" : "matched", r.id);
         summary.scored++;
         // Only count matched/archived when the UPDATE actually changed a row — a job already past
         // these states (e.g. 'submitted') still gets its match row written, but the counters
         // should reflect the real status transition, not a no-op.
-        if (info.changes > 0) {
-          if (archived) summary.archived++;
-          else summary.matched++;
-        }
+        if (archived) summary.archived++;
+        else if (info.changes > 0) summary.matched++;
       }
     });
     tx();

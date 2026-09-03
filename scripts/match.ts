@@ -7,19 +7,25 @@ export interface MatchArgs {
   limit?: number;
   rescoreArchived: boolean;
   concurrency: number;
+  rescoreMatched: boolean;
 }
 
 // Pure argv parser (exported for unit testing): accepts an optional numeric limit (jobs scored
-// per pass) as any bare non-flag arg, an optional --rescore-archived flag, and an optional
-// --concurrency N flag (default 6), in any order.
+// per pass) as any bare non-flag arg, an optional --rescore-archived flag, an optional
+// --rescore-matched flag, and an optional --concurrency N flag (default 6), in any order.
 export function parseMatchArgs(argv: string[]): MatchArgs {
   let limit: number | undefined;
   let rescoreArchived = false;
   let concurrency = 6;
+  let rescoreMatched = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--rescore-archived") {
       rescoreArchived = true;
+      continue;
+    }
+    if (arg === "--rescore-matched") {
+      rescoreMatched = true;
       continue;
     }
     if (arg === "--concurrency") {
@@ -31,13 +37,13 @@ export function parseMatchArgs(argv: string[]): MatchArgs {
     const n = Number(arg);
     if (arg.trim() !== "" && !Number.isNaN(n)) limit = n;
   }
-  return { limit, rescoreArchived, concurrency };
+  return { limit, rescoreArchived, concurrency, rescoreMatched };
 }
 
 const MAX_ITERATIONS = 60;
 
 async function main() {
-  const { limit, rescoreArchived, concurrency } = parseMatchArgs(process.argv.slice(2));
+  const { limit, rescoreArchived, concurrency, rescoreMatched } = parseMatchArgs(process.argv.slice(2));
   const db = getDb();
   const profile = loadProfile();
   const backend = getBackend();
@@ -59,6 +65,7 @@ async function main() {
       limit,
       rescoreArchived,
       concurrency,
+      rescoreMatched,
     });
     console.log(
       `pass ${iteration}: scored ${summary.scored}, matched ${summary.matched}, archived ${summary.archived}, ${summary.errors.length} errors, ${summary.durationMs}ms`
@@ -72,8 +79,9 @@ async function main() {
     totals.durationMs += summary.durationMs;
 
     // Archived jobs already carry a match row, so a rescore pass never naturally converges to
-    // scored===0 the way fresh jobs do — one full pass is the intended behavior here.
-    if (rescoreArchived) break;
+    // scored===0 the way fresh jobs do — one full pass is the intended behavior here. Same for
+    // rescoreMatched (already-'matched' rows also always carry a match row).
+    if (rescoreArchived || rescoreMatched) break;
     if (summary.scored === 0) break;
     if (iteration >= MAX_ITERATIONS) break;
   }

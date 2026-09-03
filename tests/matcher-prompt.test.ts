@@ -79,6 +79,26 @@ describe("match prompt", () => {
     expect(p.prompt).toMatch(/score penalty proportional to the gap/i);
   });
 
+  it("asks for structured sponsorship/degree/role and states the tightened rules", () => {
+    const req = buildMatchPrompt({ directions: { swe_general: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } }, [
+      { id: 1, company: "A", title: "T", location: "SF", jdText: "x" },
+    ]);
+    expect(req.prompt).toContain("sponsorship (\"yes\" | \"no\" | \"unknown\")");
+    expect(req.prompt).toContain("degree (\"ms_ok\" | \"phd_only\")");
+    expect(req.prompt).toContain("role (\"eng\" | \"non_tech\")");
+    expect(req.prompt).toMatch(/Will you require sponsorship/);
+    expect(req.prompt).toMatch(/currently pursuing/i);
+  });
+
+  it("parses the new fields and defaults them when absent", () => {
+    const out = parseMatchResults(JSON.stringify([
+      { job_id: 1, direction: "swe_general", score: 70, skip: false, reason: "r", sponsorship: "no", degree: "phd_only", role: "non_tech" },
+      { job_id: 2, direction: "swe_general", score: 70, skip: false, reason: "r" },
+    ]));
+    expect(out[0]).toMatchObject({ sponsorship: "no", degree: "phd_only", role: "non_tech" });
+    expect(out[1]).toMatchObject({ sponsorship: "unknown", degree: "ms_ok", role: "eng" });
+  });
+
   it("escapes angle brackets inside JD text so it cannot break out of the <job> fence", () => {
     const maliciousJobs = [
       {
