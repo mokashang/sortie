@@ -65,10 +65,17 @@ export default async function QueuePage({
       <ScanButton />
       <p className="panel-sub">
         按方向分 tab,每 tab 内按所选排序展示,每页 {PAGE_SIZE} 条。分数 ≥ 阈值且未归档的职位在方向 tab 里,最值钱的排最前;
-        「全部入库」是扫描进来的全部可见职位(含未打分)。
+        「全部入库」是扫描进来的全部可见职位(含未打分)。每行的「建议内推 / 海投」是 Claude 的建议,可逐条改;
+        「投递」页按这个模式分开取件。
       </p>
       <QueueBoard
-        tabs={tabs.map((t) => ({ direction: t.direction, tier: t.tier, matched: t.matched }))}
+        tabs={tabs.map((t) => ({
+          direction: t.direction,
+          tier: t.tier,
+          matched: t.matched,
+          referralSuggested: t.referralSuggested,
+          directSuggested: t.directSuggested,
+        }))}
         allJobsCount={visibleTotal}
         initialDirection={resolvedDirection}
         initialPage={page}

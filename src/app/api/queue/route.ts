@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { pagedQueue, pagedAllJobs, ALL_JOBS_DIRECTION, QueueSort } from "@/apply/queue";
+import { isApplyMode } from "@/apply/mode";
 
 const VALID_SORTS: QueueSort[] = ["score", "fresh", "company"];
 
@@ -20,12 +21,15 @@ export async function GET(req: Request) {
     const pageSize = Number(url.searchParams.get("pageSize") ?? "25") || 25;
     const sortParam = url.searchParams.get("sort") ?? "score";
     const sort: QueueSort = VALID_SORTS.includes(sortParam as QueueSort) ? (sortParam as QueueSort) : "score";
+    // ?mode=referral|direct — the /queue 全部/建议内推/海投 filter (direction tabs only).
+    const modeParam = url.searchParams.get("mode");
+    const mode = isApplyMode(modeParam) ? modeParam : undefined;
     // ALL_JOBS_DIRECTION is the merged /queue page's "全部入库" tab: every visible job, scored or
     // not — same {rows,total,pages} shape, rows additionally carry source/created_at/in_queue.
     const result =
       direction === ALL_JOBS_DIRECTION
         ? pagedAllJobs(getDb(), { page, pageSize, sort })
-        : pagedQueue(getDb(), { direction, page, pageSize, sort });
+        : pagedQueue(getDb(), { direction, page, pageSize, sort, mode });
     return NextResponse.json(result);
   }
 

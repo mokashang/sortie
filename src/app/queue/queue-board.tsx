@@ -1,7 +1,8 @@
 "use client";
-import { Fragment, useCallback, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { directionLabel } from "@/matcher/directions";
 import { ALL_JOBS_DIRECTION } from "@/apply/queue";
+import { ModeFilter, ModeFilterValue } from "@/app/components/mode-filter";
 
 export type QueueSort = "score" | "fresh" | "company";
 
@@ -9,6 +10,8 @@ interface TabInfo {
   direction: string;
   tier: number | null;
   matched: number;
+  referralSuggested: number;
+  directSuggested: number;
 }
 
 interface QueueRow {
@@ -23,6 +26,11 @@ interface QueueRow {
   reason: string | null;
   posted_at: string | null;
   pinned: number;
+  // Referral-in-apply (spec §3): Claude's suggestion, the user's override, and the resolved mode.
+  referral_fit?: number | null;
+  apply_mode?: string | null;
+  effective_mode?: "referral" | "direct";
+  referral_reason?: string | null;
   // Only present on the 全部入库 tab (pagedAllJobs rows): scan time, and whether the job is
   // currently in the apply queue (pin/skip only apply to those).
   created_at?: string;
@@ -91,6 +99,9 @@ export function QueueBoard({
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [jdCache, setJdCache] = useState<Map<number, JdState>>(new Map());
   const [pinBusy, setPinBusy] = useState<Set<number>>(new Set());
+  const [mode, setMode] = useState<ModeFilterValue>("all");
+  const [modeBusy, setModeBusy] = useState<Set<number>>(new Set());
+  const [fitInfo, setFitInfo] = useState<{ unclassified: number; running: boolean } | null>(null);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   function updateUrl(d: string, p: number, s: QueueSort) {
@@ -99,11 +110,12 @@ export function QueueBoard({
   }
 
   const fetchPage = useCallback(
-    async (d: string, p: number, s: QueueSort) => {
+    async (d: string, p: number, s: QueueSort, m: ModeFilterValue = mode) => {
       setLoading(true);
       setError("");
       try {
         const params = new URLSearchParams({ direction: d, page: String(p), pageSize: String(pageSize), sort: s });
+        if (m !== "all" && d !== ALL_JOBS_DIRECTION) params.set("mode", m);
         const r = await fetch(`/api/queue?${params.toString()}`);
         if (!r.ok) throw new Error(String(r.status));
         const j = (await r.json()) as PagedResult;
@@ -114,8 +126,22 @@ export function QueueBoard({
         setLoading(false);
       }
     },
-    [pageSize]
+    [pageSize, mode]
   );
+
+  const fetchFitInfo = useCallback(async () => {
+    try {
+      const r = await fetch("/api/queue/referral-fit");
+      if (!r.ok) return;
+      setFitInfo(await r.json());
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchFitInfo();
+  }, [fetchFitInfo]);
 
   const fetchTabs = useCallback(async () => {
     try {
@@ -154,6 +180,56 @@ export function QueueBoard({
     setPage(1);
     updateUrl(direction, 1, s);
     fetchPage(direction, 1, s);
+  }
+
+  function changeMode(m: ModeFilterValue) {
+    setMode(m);
+    setPage(1);
+    fetchPage(direction, 1, sort, m);
+  }
+
+  async function setRowMode(row: QueueRow, m: "referral" | "direct" | null) {
+    setModeBusy((prev) => new Set(prev).add(row.id));
+    try {
+      const r = await fetch("/api/queue/mode", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobId: row.id, mode: m }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      await fetchPage(direction, page, sort);
+      fetchTabs();
+    } catch (e) {
+      setError(`修改模式失败:${e}`);
+    } finally {
+      setModeBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
+    }
+  }
+
+  // 补判内推建议: kick off the background classification, then poll until it reports done.
+  async function runFit() {
+    setError("");
+    try {
+      const r = await fetch("/api/queue/referral-fit", { method: "POST" });
+      if (!r.ok) throw new Error(String(r.status));
+      setFitInfo((prev) => ({ unclassified: prev?.unclassified ?? 0, running: true }));
+      const poll = async () => {
+        const s = await fetch("/api/queue/referral-fit").then((x) => x.json());
+        setFitInfo(s);
+        if (s.running) setTimeout(poll, 5000);
+        else {
+          fetchPage(direction, page, sort);
+          fetchTabs();
+        }
+      };
+      setTimeout(poll, 5000);
+    } catch (e) {
+      setError(`补判失败:${e}`);
+    }
   }
 
   async function archiveRow(jobId: number) {
@@ -305,6 +381,25 @@ export function QueueBoard({
             <option value="company">公司名</option>
           </select>
         </label>
+        {!isAllTab && (
+          <ModeFilter
+            value={mode}
+            onChange={changeMode}
+            disabled={loading}
+            counts={(() => {
+              const t = tabs.find((x) => x.direction === direction);
+              return t ? { all: t.matched, referral: t.referralSuggested, direct: t.directSuggested } : undefined;
+            })()}
+          />
+        )}
+        <button
+          className="btn-ghost"
+          onClick={runFit}
+          disabled={!fitInfo || fitInfo.running || fitInfo.unclassified === 0}
+          title="让 Claude 给还没判定的队列岗位打上「建议内推 / 海投」"
+        >
+          {fitInfo?.running ? "补判中…" : `补判内推建议${fitInfo ? `(未判 ${fitInfo.unclassified})` : ""}`}
+        </button>
       </div>
 
       {result.rows.length === 0 ? (
@@ -337,7 +432,19 @@ export function QueueBoard({
                       {r.score ?? "—"}
                     </td>
                     <td className="company">{r.company}</td>
-                    <td>{r.title}</td>
+                    <td>
+                      {r.title}
+                      {r.effective_mode && (
+                        <span
+                          className={`chip${r.effective_mode === "referral" ? " text-good" : ""}`}
+                          style={{ marginLeft: 6 }}
+                          title={r.referral_reason ?? undefined}
+                        >
+                          {r.apply_mode ? "手动·" : ""}
+                          {r.effective_mode === "referral" ? "内推" : r.referral_fit == null ? "未判定" : "海投"}
+                        </span>
+                      )}
+                    </td>
                     <td title={loc.full || undefined}>{loc.display}</td>
                     {isAllTab && (
                       <td className="mono" style={{ whiteSpace: "nowrap" }}>
@@ -358,6 +465,18 @@ export function QueueBoard({
                           <button className="btn-ghost" disabled={isPinBusy} onClick={() => togglePin(r.id, !r.pinned)}>
                             {r.pinned ? "取消置顶" : "置顶"}
                           </button>
+                          <button
+                            className="btn-ghost"
+                            disabled={modeBusy.has(r.id)}
+                            onClick={() => setRowMode(r, r.effective_mode === "referral" ? "direct" : "referral")}
+                          >
+                            {r.effective_mode === "referral" ? "改为海投" : "改为找内推"}
+                          </button>
+                          {r.apply_mode && (
+                            <button className="btn-ghost" disabled={modeBusy.has(r.id)} onClick={() => setRowMode(r, null)}>
+                              跟随建议
+                            </button>
+                          )}
                           <button className="btn-ghost" onClick={() => archiveRow(r.id)}>
                             跳过
                           </button>
@@ -382,6 +501,12 @@ export function QueueBoard({
                                 {jd.data.resume_version ? ` · 简历版本 ${jd.data.resume_version}` : ""}
                               </p>
                               <p style={{ fontSize: 13, marginBottom: 12 }}>{jd.data.match.reason ?? "(无理由记录)"}</p>
+                              <h4>内推建议</h4>
+                              <p style={{ fontSize: 13, marginBottom: 12 }}>
+                                {r.effective_mode === "referral" ? "建议先找内推" : r.referral_fit == null ? "尚未判定" : "建议海投"}
+                                {r.apply_mode ? `(已手动改为${r.apply_mode === "referral" ? "找内推" : "海投"})` : ""}
+                                {r.referral_reason ? ` · ${r.referral_reason}` : ""}
+                              </p>
                               <h4>JD</h4>
                               <pre>{jd.data.jd_text ?? "(无 JD 文本)"}</pre>
                             </>
