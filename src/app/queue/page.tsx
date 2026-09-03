@@ -1,12 +1,15 @@
 import { getDb } from "@/lib/db";
-import { queueByDirection, pagedQueue, QueueSort } from "@/apply/queue";
+import { queueByDirection, pagedQueue, pagedAllJobs, QueueSort, ALL_JOBS_DIRECTION } from "@/apply/queue";
 import { QueueBoard } from "./queue-board";
+import { ScanButton } from "./scan-button";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 25;
 const VALID_SORTS: QueueSort[] = ["score", "fresh", "company"];
 
+// The single "职位" section: the old /jobs page (funnel counts, scan button, raw listing) merged
+// into the direction-tabbed apply queue. The raw listing lives on as the trailing "全部入库" tab.
 export default async function QueuePage({
   searchParams,
 }: {
@@ -15,15 +18,17 @@ export default async function QueuePage({
   const sp = await searchParams;
   const db = getDb();
 
-  const matchedTotal = (
-    db
-      .prepare(
-        `SELECT COUNT(*) n FROM applications a JOIN jobs j ON j.id = a.job_id
-         WHERE a.status='matched' AND j.loc_flag IS NULL`
-      )
-      .get() as { n: number }
-  ).n;
-  const scoredTotal = (db.prepare("SELECT COUNT(*) n FROM matches").get() as { n: number }).n;
+  const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
+  // "可见" is the population the 全部入库 tab draws from (visa_flag IS NULL AND loc_flag IS NULL);
+  // the two hidden counts explain what the hard filters removed and are mutually exclusive.
+  const visibleTotal = count("SELECT COUNT(*) n FROM jobs WHERE visa_flag IS NULL AND loc_flag IS NULL");
+  const visaHidden = count("SELECT COUNT(*) n FROM jobs WHERE visa_flag IS NOT NULL");
+  const locHidden = count("SELECT COUNT(*) n FROM jobs WHERE visa_flag IS NULL AND loc_flag IS NOT NULL");
+  const scoredTotal = count("SELECT COUNT(*) n FROM matches");
+  const matchedTotal = count(
+    `SELECT COUNT(*) n FROM applications a JOIN jobs j ON j.id = a.job_id
+     WHERE a.status='matched' AND j.loc_flag IS NULL`
+  );
 
   // Tab strip: one tab per direction that currently has matched jobs, already ordered exactly
   // the way the user asked (tier ASC then count DESC, "未分类" last) — queueByDirection already
@@ -32,37 +37,45 @@ export default async function QueuePage({
 
   const requestedDirection = sp.direction;
   const resolvedDirection =
-    requestedDirection && tabs.some((t) => t.direction === requestedDirection)
+    requestedDirection === ALL_JOBS_DIRECTION
+      ? ALL_JOBS_DIRECTION
+      : requestedDirection && tabs.some((t) => t.direction === requestedDirection)
       ? requestedDirection
-      : (tabs[0]?.direction ?? null);
+      : (tabs[0]?.direction ?? ALL_JOBS_DIRECTION);
 
   const page = Math.max(1, Number(sp.page) || 1);
-  const sort: QueueSort = VALID_SORTS.includes(sp.sort as QueueSort) ? (sp.sort as QueueSort) : "score";
+  // The raw listing defaults to scan order (what the old /jobs page showed); queue tabs to score.
+  const defaultSort: QueueSort = resolvedDirection === ALL_JOBS_DIRECTION ? "fresh" : "score";
+  const sort: QueueSort = VALID_SORTS.includes(sp.sort as QueueSort) ? (sp.sort as QueueSort) : defaultSort;
 
-  const result = resolvedDirection
-    ? pagedQueue(db, { direction: resolvedDirection, page, pageSize: PAGE_SIZE, sort })
-    : { rows: [], total: 0, pages: 1 };
+  const result =
+    resolvedDirection === ALL_JOBS_DIRECTION
+      ? pagedAllJobs(db, { page, pageSize: PAGE_SIZE, sort })
+      : pagedQueue(db, { direction: resolvedDirection, page, pageSize: PAGE_SIZE, sort });
 
   return (
     <div>
       <h1>
-        申请队列 <small>(已匹配 {matchedTotal} / 已打分 {scoredTotal})</small>
+        职位{" "}
+        <small>
+          (入库可见 {visibleTotal} · 已打分 {scoredTotal} · 已入队 {matchedTotal} · 已隐藏 {visaHidden} 个签证不符 ·{" "}
+          {locHidden} 个海外)
+        </small>
       </h1>
+      <ScanButton />
       <p className="panel-sub">
-        按方向分 tab,每 tab 内按所选排序展示,每页 {PAGE_SIZE} 条。分数 ≥ 阈值且未归档的职位在此,最值钱的排最前。
+        按方向分 tab,每 tab 内按所选排序展示,每页 {PAGE_SIZE} 条。分数 ≥ 阈值且未归档的职位在方向 tab 里,最值钱的排最前;
+        「全部入库」是扫描进来的全部可见职位(含未打分)。
       </p>
-      {tabs.length === 0 ? (
-        <p className="text-sub">队列中没有已匹配的职位。</p>
-      ) : (
-        <QueueBoard
-          tabs={tabs.map((t) => ({ direction: t.direction, tier: t.tier, matched: t.matched }))}
-          initialDirection={resolvedDirection as string}
-          initialPage={page}
-          initialSort={sort}
-          initialResult={result}
-          pageSize={PAGE_SIZE}
-        />
-      )}
+      <QueueBoard
+        tabs={tabs.map((t) => ({ direction: t.direction, tier: t.tier, matched: t.matched }))}
+        allJobsCount={visibleTotal}
+        initialDirection={resolvedDirection}
+        initialPage={page}
+        initialSort={sort}
+        initialResult={result}
+        pageSize={PAGE_SIZE}
+      />
     </div>
   );
 }

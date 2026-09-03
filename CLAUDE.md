@@ -16,7 +16,7 @@ Mengjia Shang(USC M.S. ECE 2027/05,F-1)的 2026 秋招求职作战系统。本�
 
 ## 2. 架构地图
 - Next.js 15 + better-sqlite3(`data/jobseeker.db`,schema v7,`src/lib/schema.sql` + `src/lib/db.ts` 迁移)。UI 设计语言"制版间"(`src/app/globals.css`)。
-- 扫描 `src/scanner/`(GitHub 清单 + Greenhouse/Lever/Ashby API,每天 7:00/13:00,`src/instrumentation.ts` 零 import 定时器)→ 签证/地点硬过滤 → 匹配 `src/matcher/`(Claude 打分,`src/llm/` 适配层,订阅后端 = `claude -p`)→ 队列 `/queue`(方向 tab+分页+置顶/跳过/JD 抽屉)→ 投递 `/apply`(待确认/需人工/今日已提交)→ 历史 `/history`(已提交后的状态追踪,`src/apply/history.ts`)→ CRM `/network` → `/dashboard`。
+- 扫描 `src/scanner/`(GitHub 清单 + Greenhouse/Lever/Ashby API,每天 7:00/13:00,`src/instrumentation.ts` 零 import 定时器)→ 签证/地点硬过滤 → 匹配 `src/matcher/`(Claude 打分,`src/llm/` 适配层,订阅后端 = `claude -p`)→ 职位 `/queue`(原「职位」+「队列」已合并为一个板块:漏斗计数+立即扫描+方向 tab+分页+置顶/跳过/JD 抽屉,末尾「全部入库」tab 是原始清单;`/jobs` 仅重定向)→ 投递 `/apply`(待确认/需人工/今日已提交)→ 历史 `/history`(已提交后的状态追踪,`src/apply/history.ts`)→ CRM `/network` → `/dashboard`。
 - 简历 `src/resume/`:Profile 经历(38 条,含 10 个用户授权的"构想中"项目)→ Jake's Resume 模板 → tectonic 编译 → 12 方向各一版(`data/resumes/<dir>_v1.pdf`),一页强制 + Overfull 溢出检测 + 自检。
 - 执行器 `src/executor/`:两个通道。**user_chrome(默认)**:App 只入队,交互会话接单;**headless**:spawn `claude -p --allowedTools "Bash(curl:*),mcp__playwright__*"` 驱动专属 Chrome 档案 `data/browser-profile`(需先用 /apply 的"打开浏览器档案"登录一次)。hanzi-browse 通道已废弃。
 - 改代码后部署:`npm run build && launchctl kickstart -k gui/$(id -u)/com.jobseeker.os`。dev 模式 `npm run dev` 也能用。测试 `npm test`。

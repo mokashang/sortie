@@ -623,3 +623,60 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
 
   return { rows, total, pages };
 }
+
+// Sentinel `direction` value the merged /queue page uses for its "全部入库" tab — every visa/US
+// visible job in the database, scored or not, queued or not. Like UNCLASSIFIED_DIRECTION it is a
+// routing key only and never appears as a matches.direction column value.
+export const ALL_JOBS_DIRECTION = "__all__";
+
+export interface PagedAllJobsRow extends PagedQueueRow {
+  source: string;
+  created_at: string;
+  // 1 when the job is currently in the apply queue (matched, not parked) — the row-level
+  // pin/skip actions only make sense for those; raw scanner output has no applications row.
+  in_queue: number;
+}
+
+export interface PagedAllJobsResult {
+  rows: PagedAllJobsRow[];
+  total: number;
+  pages: number;
+}
+
+// The population of the old /jobs page (visa_flag IS NULL AND loc_flag IS NULL), served in the
+// same paged/sorted shape as pagedQueue so the /queue board can render both from one table.
+// matches/applications are LEFT JOINed: an unscored job still shows up with score NULL.
+export function pagedAllJobs(db: DB, opts: Omit<PagedQueueOpts, "direction">): PagedAllJobsResult {
+  const where = "j.visa_flag IS NULL AND j.loc_flag IS NULL";
+  const total = (db.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${where}`).get() as { n: number }).n;
+
+  const pages = total === 0 ? 1 : Math.max(1, Math.ceil(total / opts.pageSize));
+  const page = Math.min(Math.max(1, opts.page), pages);
+  const offset = (page - 1) * opts.pageSize;
+
+  // "fresh" here means scan time (created_at), not posted_at — it mirrors the old /jobs listing,
+  // whose whole point was "what did the last scan bring in".
+  const orderBy =
+    opts.sort === "company"
+      ? "j.company COLLATE NOCASE ASC, j.title ASC"
+      : opts.sort === "fresh"
+      ? "j.created_at DESC, j.id DESC"
+      : "(m.score IS NULL) ASC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC";
+
+  const rows = db
+    .prepare(
+      `SELECT j.id, j.company, j.title, j.location, j.apply_url, j.source, j.created_at,
+              m.direction, m.score, m.tier, m.reason, j.posted_at,
+              COALESCE(a.pinned, 0) AS pinned,
+              CASE WHEN a.status = 'matched' AND a.needs_manual_reason IS NULL THEN 1 ELSE 0 END AS in_queue
+       FROM jobs j
+       LEFT JOIN matches m ON m.job_id = j.id
+       LEFT JOIN applications a ON a.job_id = j.id
+       WHERE ${where}
+       ORDER BY ${orderBy}
+       LIMIT ? OFFSET ?`
+    )
+    .all(opts.pageSize, offset) as PagedAllJobsRow[];
+
+  return { rows, total, pages };
+}

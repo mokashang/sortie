@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useCallback, useRef, useState } from "react";
 import { directionLabel } from "@/matcher/directions";
+import { ALL_JOBS_DIRECTION } from "@/apply/queue";
 
 export type QueueSort = "score" | "fresh" | "company";
 
@@ -22,6 +23,10 @@ interface QueueRow {
   reason: string | null;
   posted_at: string | null;
   pinned: number;
+  // Only present on the 全部入库 tab (pagedAllJobs rows): scan time, and whether the job is
+  // currently in the apply queue (pin/skip only apply to those).
+  created_at?: string;
+  in_queue?: number;
 }
 
 interface PagedResult {
@@ -60,6 +65,7 @@ function truncateLocations(location: string | null): { display: string; full: st
 
 export function QueueBoard({
   tabs: initialTabs,
+  allJobsCount,
   initialDirection,
   initialPage,
   initialSort,
@@ -67,6 +73,7 @@ export function QueueBoard({
   pageSize,
 }: {
   tabs: TabInfo[];
+  allJobsCount: number;
   initialDirection: string;
   initialPage: number;
   initialSort: QueueSort;
@@ -123,10 +130,15 @@ export function QueueBoard({
 
   function selectTab(d: string) {
     if (d === direction) return;
+    // Each side has its own natural default (queue: score; raw listing: scan time) — only swap
+    // when the user is still on the previous side's default, so an explicit choice sticks.
+    const wasDefault = sort === (direction === ALL_JOBS_DIRECTION ? "fresh" : "score");
+    const nextSort: QueueSort = wasDefault ? (d === ALL_JOBS_DIRECTION ? "fresh" : "score") : sort;
     setDirection(d);
+    setSort(nextSort);
     setPage(1);
-    updateUrl(d, 1, sort);
-    fetchPage(d, 1, sort);
+    updateUrl(d, 1, nextSort);
+    fetchPage(d, 1, nextSort);
   }
 
   function goToPage(p: number) {
@@ -232,6 +244,8 @@ export function QueueBoard({
     }
   }
 
+  const isAllTab = direction === ALL_JOBS_DIRECTION;
+
   return (
     <div>
       <div className="tabbar">
@@ -245,6 +259,12 @@ export function QueueBoard({
             <span className="tab-count">{t.matched}</span>
           </button>
         ))}
+        <button
+          className={`tab ${direction === ALL_JOBS_DIRECTION ? "active" : ""}`}
+          onClick={() => selectTab(ALL_JOBS_DIRECTION)}
+        >
+          全部入库 <span className="tab-count">{allJobsCount}</span>
+        </button>
       </div>
 
       {undos.length > 0 && (
@@ -281,14 +301,14 @@ export function QueueBoard({
           排序{" "}
           <select value={sort} onChange={(e) => changeSort(e.target.value as QueueSort)} disabled={loading}>
             <option value="score">分数</option>
-            <option value="fresh">新鲜度</option>
+            <option value="fresh">{isAllTab ? "入库时间" : "新鲜度"}</option>
             <option value="company">公司名</option>
           </select>
         </label>
       </div>
 
       {result.rows.length === 0 ? (
-        <p className="text-sub">{loading ? "加载中…" : "该方向暂无队列职位。"}</p>
+        <p className="text-sub">{loading ? "加载中…" : isAllTab ? "还没有入库的职位,先扫描一次。" : "该方向暂无队列职位。"}</p>
       ) : (
         <table>
           <thead>
@@ -297,6 +317,7 @@ export function QueueBoard({
               <th>公司</th>
               <th>标题</th>
               <th>地点</th>
+              {isAllTab && <th>入库</th>}
               <th></th>
             </tr>
           </thead>
@@ -306,6 +327,8 @@ export function QueueBoard({
               const isExpanded = expanded.has(r.id);
               const jd = jdCache.get(r.id);
               const isPinBusy = pinBusy.has(r.id);
+              // Direction tabs only ever contain queue rows; the 全部入库 tab says so per row.
+              const inQueue = isAllTab ? r.in_queue === 1 : true;
               return (
                 <Fragment key={r.id}>
                   <tr>
@@ -316,6 +339,11 @@ export function QueueBoard({
                     <td className="company">{r.company}</td>
                     <td>{r.title}</td>
                     <td title={loc.full || undefined}>{loc.display}</td>
+                    {isAllTab && (
+                      <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                        {r.created_at?.slice(0, 16) ?? "—"}
+                      </td>
+                    )}
                     <td className="row-actions">
                       {r.apply_url && (
                         <a href={r.apply_url} target="_blank" rel="noreferrer" className="btn-ghost">
@@ -325,17 +353,21 @@ export function QueueBoard({
                       <button className="btn-ghost" onClick={() => toggleExpand(r.id)}>
                         {isExpanded ? "收起" : "展开"}
                       </button>
-                      <button className="btn-ghost" disabled={isPinBusy} onClick={() => togglePin(r.id, !r.pinned)}>
-                        {r.pinned ? "取消置顶" : "置顶"}
-                      </button>
-                      <button className="btn-ghost" onClick={() => archiveRow(r.id)}>
-                        跳过
-                      </button>
+                      {inQueue && (
+                        <>
+                          <button className="btn-ghost" disabled={isPinBusy} onClick={() => togglePin(r.id, !r.pinned)}>
+                            {r.pinned ? "取消置顶" : "置顶"}
+                          </button>
+                          <button className="btn-ghost" onClick={() => archiveRow(r.id)}>
+                            跳过
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={5} style={{ padding: 0, borderBottom: "1px solid var(--line)" }}>
+                      <td colSpan={isAllTab ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--line)" }}>
                         <div className="jd-drawer">
                           {!jd || jd.status === "loading" ? (
                             <p className="text-sub">加载中…</p>
