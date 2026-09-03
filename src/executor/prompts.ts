@@ -50,7 +50,10 @@ export function buildApplyPrompt(options: { limit?: number; plan?: ApplyPlanEntr
   const limit = options.limit ?? 5;
   // With a plan, the session's hard cap is the sum of per-direction quotas rather than the bare
   // `limit` — every other §2/§5/§6 reference to "the cap" reuses this so plan and non-plan modes
-  // share identical wording (only §2 step 1's task-taking differs).
+  // share identical wording (only §2 step 1's task-taking differs). In plan mode this counts
+  // filled-and-awaiting-confirm applications, NOT raw /api/apply/next calls — a job disqualified
+  // by the eligibility check, a login wall, "already applied", a dead link, or an error does not
+  // consume it (see introSection's plan branch and §2 step 1's per-direction 3x take cap).
   const capCount = plan ? plan.reduce((sum, p) => sum + p.count, 0) : limit;
 
   // Resume mode's first phase: re-fill and re-submit anything a prior executor process left
@@ -97,11 +100,13 @@ ${GREENHOUSE_HEURISTICS}
   const introSection = plan
     ? `本会话按以下方向配额投递,**按方向顺序依次处理**(不并行、不打乱顺序):
 
-${plan.map((p) => `- \`${p.direction}\` × **${p.count}**`).join("\n")}
+${plan.map((p) => `- \`${p.direction}\` × **${p.count}**(该方向最多调用 /api/apply/next **${p.count * 3}** 次)`).join("\n")}
 
-每个方向最多投递其配额个数;若某方向配额还没用完,但对该方向调用 /api/apply/next 已经返回 \`{"done": true}\`,立即放弃该方向剩余配额、换下一个方向——这不算失败,不计入 §5 的 needs_manual/error 熔断计数。全部方向处理完(或撞到下面的硬性上限/熔断)后跳到 §6 收尾。
+**count 的含义 = 填好并回报 awaiting_confirm 的份数。** 被拦下的任务(资格检查未通过、登录墙、already applied、dead link、error)**不计数**,继续对同一方向取下一个;但每个方向调用 /api/apply/next 的次数达到 3 × count 时,放弃该方向剩余配额、换下一个方向。
 
-本会话总硬性上限 **${capCount}** 个申请(以上各方向配额之和),达到后停止循环并总结,即使某个方向仍有未用完的配额。`
+若某方向对 /api/apply/next 的调用已经返回 \`{"done": true}\`,立即放弃该方向剩余配额、换下一个方向——这不算失败,不计入 §5 的 needs_manual/error 熔断计数。全部方向处理完(或撞到下面的硬性上限/熔断)后跳到 §6 收尾。
+
+本会话总硬性上限 **${capCount}** 份填好待确认的申请(以上各方向配额之和),达到后停止循环并总结,即使某个方向仍有未用完的配额。`
     : `本会话最多投递 **${limit}** 个申请(硬性上限,达到后停止循环并总结,即使 /api/apply/next 还有更多任务)。`;
 
   const takeTaskStep = plan
@@ -128,7 +133,7 @@ ${takeTaskStep}
    \`mcp__playwright__browser_navigate\` 打开 \`<task.applyUrl>\`,然后 \`mcp__playwright__browser_snapshot\` 拿到无障碍树(每个可交互元素都带一个 \`ref\`)。**BEFORE filling anything**, read the job description on this live page yourself from the snapshot and check three disqualifiers: (1) it explicitly states a PhD is required and a Master's is not accepted, (2) it explicitly states no visa sponsorship is provided/available, (3) it explicitly states US citizenship is required. If ANY of these is explicitly true, do NOT fill the form — go straight to the "资格性未通过" branch below, quoting the relevant sentence. 这条检查只看**明确写出**的文字——"PhD preferred"、"MS or PhD"、模糊的经验年限要求都不触发,只有招聘页面上明确写出的 PhD-only/无签证赞助/仅限美国公民才触发。
    如果这次快照显示的是登录/注册墙而不是招聘表单本身(这个 Playwright 浏览器是专属持久化档案,可能还没在这个站点登录过),go to the "登录墙" branch below——不要试图自己登录,没有可用凭据。
    否则,用 \`mcp__playwright__browser_type\` / \`mcp__playwright__browser_click\` / \`mcp__playwright__browser_select_option\` / \`mcp__playwright__browser_fill_form\`(按快照给出的 \`ref\`)把下面这份字段值列表逐一填进表单,一字不差:<field: value list from answerPack, one per line>。用 \`mcp__playwright__browser_file_upload\` 把简历文件 \`<answerPack.resume.pdf_path>\` 上传到简历上传控件上。**Do NOT click the final Submit button.** 填完后再做一次 \`mcp__playwright__browser_snapshot\`(必要时配合 \`mcp__playwright__browser_take_screenshot\`),读出表单里的**实际**值,准备第 3 步回报——不是你打算填的值。
-   - **资格性未通过**:不要填表,直接回报 \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_manual", "reason": "<which disqualifier(s), quoting the JD sentence>"}'\`,\`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab,继续下一轮。
+   - **资格性未通过**:不要填表,直接回报 \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_manual", "reason": "<which disqualifier(s), quoting the JD sentence>", "eligibility": {"sponsorship": "yes|no|unknown", "degree": "ms_ok|phd_only", "role": "eng|non_tech", "evidence": "<原句>"}}'\`。三个字段的口径:sponsorship 只有明文不 sponsor / 要求公民或绿卡 / not considering applicants who require sponsorship 才是 "no",表单问句不是证据;degree 明文 PhD required 且不收 MS、实习岗 "currently pursuing a PhD"、标题 "(PhD)" 才是 "phd_only";role 非工程岗才是 "non_tech"。App 会据此直接归档该岗及其同簇重复项,不再进需人工清单。然后 \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab,继续下一轮(不计入本方向 count)。
    - **登录墙**:回报 \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_manual", "reason": "${LOGIN_WALL_REASON}"}'\`,关掉 tab,继续下一轮。
 
 3. **回报填表结果**(用 §2 第 2 步快照读回的**实际**字段值,不是你打算填的值):
@@ -150,7 +155,7 @@ ${takeTaskStep}
 ${GREENHOUSE_HEURISTICS}
 
 ## 3. needs_manual 触发条件(遇到就报 needs_manual,绝不硬闯)
-- **上线页面 JD 明确写出的资格性硬伤**(填表前检查,见 §2 第 2 步):PhD is required and a Master's is not accepted / no visa sponsorship / US citizenship is required——只认明确文字,不臆测
+- **上线页面 JD 明确写出的资格性硬伤**(填表前检查,见 §2 第 2 步;带 eligibility 回报,见 §2):PhD is required and a Master's is not accepted / no visa sponsorship / US citizenship is required——只认明确文字,不臆测
 - 登录墙(专属浏览器档案还没登录过这个站点)/ 需要新建账号且没有可用凭据
 - CAPTCHA 或其他机器人检测挑战
 - 视频回答题("录 60 秒视频回答…")

@@ -77,6 +77,20 @@ describe("executor prompts", () => {
       expect(p).toMatch(/"PhD preferred"、"MS or PhD"/);
     });
 
+    it("reports live-page disqualifiers with a structured eligibility object", () => {
+      const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2 }] });
+      expect(p).toContain('"eligibility": {"sponsorship"');
+      expect(p).toMatch(/currently pursuing/);
+    });
+
+    it("plan count means filled-and-awaiting-confirm, with a 3x take cap per direction", () => {
+      const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2 }, { direction: "mle", count: 1 }] });
+      expect(p).toContain("填好并回报 awaiting_confirm");
+      expect(p).toContain("最多调用 /api/apply/next **6** 次"); // 3 × 2 for swe_general
+      expect(p).toContain("最多调用 /api/apply/next **3** 次"); // 3 × 1 for mle
+      expect(p).toMatch(/被拦下.*不计数/);
+    });
+
     describe("with a plan (per-direction quotas)", () => {
       const plan = [
         { direction: "swe_backend", count: 5 },

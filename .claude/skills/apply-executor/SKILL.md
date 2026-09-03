@@ -224,6 +224,13 @@ never even attempt it before polling confirms approval. Concretely:
 
 ---
 
+### Live-page disqualifiers → structured eligibility
+When the live JD explicitly says no sponsorship / citizenship required / PhD-only / the role is non-engineering, report:
+`POST /api/apply/report {"jobId", "status":"needs_manual", "reason":"<quote>", "eligibility":{"sponsorship":"yes|no|unknown","degree":"ms_ok|phd_only","role":"eng|non_tech","evidence":"<quote>"}}`
+The App archives the job **and every duplicate in its cluster**; it does not go to the needs-manual list. Form questions like "Will you require sponsorship?" are NOT evidence → "unknown". Disqualified jobs do not count toward the direction's `count`; keep taking from the same direction up to 3 × count calls.
+
+---
+
 ## 5. `needs_manual` triggers
 
 Report `needs_manual` (never try to power through these) whenever you hit:

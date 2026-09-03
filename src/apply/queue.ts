@@ -2,6 +2,7 @@ import { DB } from "@/lib/db";
 import { Profile } from "@/lib/profile";
 import { buildAnswerPack, AnswerPack } from "@/apply/answers";
 import { selectResumeForJob } from "@/apply/resume-select";
+import { applyEligibility, Sponsorship, DegreeReq, RoleKind } from "@/apply/eligibility";
 
 // 队列/取数的统一资格过滤(spec 2026-09-03 §3)。以 `j` 为 jobs 别名。所有"用户会看到 / 执行器会取到"
 // 的查询都必须带上它,否则重复行或被判不合格的岗会从某个入口漏回来。
@@ -146,6 +147,11 @@ export interface ReportFillInput {
   // unvalidated JSON — see coerceFieldValue below for why the runtime doesn't trust the type.
   filledFields?: Record<string, string>;
   reason?: string;
+  // Live-page eligibility read by the executor while it was on the job's actual apply page —
+  // stronger evidence than anything the match/jd_review passes saw (see SOURCE_RANK in
+  // @/apply/eligibility). When this is present and disqualifying, reportFill archives the job
+  // and its duplicate cluster instead of parking it in the needs-manual list.
+  eligibility?: { sponsorship?: Sponsorship; degree?: DegreeReq; role?: RoleKind; evidence?: string };
 }
 
 // The confirm queue UI renders filledFields values directly as React children. An executor
@@ -186,6 +192,34 @@ export function reportFill(db: DB, input: ReportFillInput): void {
       "UPDATE applications SET filled_fields = ?, status = 'awaiting_confirm', confirm_decision = NULL WHERE job_id = ?"
     ).run(JSON.stringify(coerced), input.jobId);
     return;
+  }
+
+  // needs_manual carrying a live-page eligibility read: apply it before parking. A disqualifying
+  // read (no sponsorship / phd_only / non_tech) archives this job and its whole duplicate cluster
+  // via applyEligibility -> archiveCluster, which also covers a 'prepared' row (archive's status
+  // IN list includes 'prepared'). respectPinned:false because live-page text is stronger evidence
+  // than a user's earlier pin. When it archives, clear needs_manual_reason/confirm_decision so
+  // the now-archived row doesn't linger on the needs-manual list.
+  if (input.status === "needs_manual" && input.eligibility) {
+    const e = input.eligibility;
+    const out = applyEligibility(
+      db,
+      {
+        jobId: input.jobId,
+        sponsorship: e.sponsorship ?? "unknown",
+        degree: e.degree ?? "ms_ok",
+        role: e.role ?? "eng",
+        source: "executor_live",
+        evidence: e.evidence ?? input.reason,
+      },
+      { respectPinned: false }
+    );
+    if (out.failReason) {
+      db.prepare("UPDATE applications SET needs_manual_reason = NULL, confirm_decision = NULL WHERE job_id = ?").run(
+        input.jobId
+      );
+      return;
+    }
   }
 
   // needs_manual | error: both park the application back at 'matched' with a reason recorded;
