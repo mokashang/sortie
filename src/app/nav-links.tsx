@@ -3,7 +3,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
-  { href: "/dashboard", label: "Dashboard" },
   { href: "/queue", label: "职位" },
   { href: "/apply", label: "投递" },
   { href: "/history", label: "历史" },
