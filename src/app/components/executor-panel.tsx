@@ -18,16 +18,19 @@ interface RunRow {
   id: number;
   kind: string;
   status: string;
+  channel: string;
   pid: number | null;
   logPath: string | null;
   options: unknown;
   summary: string | null;
   startedAt: string;
+  claimedAt: string | null;
   endedAt: string | null;
   logTail?: string[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
+  queued: "已排队",
   running: "运行中",
   done: "已完成",
   failed: "失败",
@@ -47,6 +50,12 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
   const [busyKind, setBusyKind] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [profileMsg, setProfileMsg] = useState("");
+  // Which channel new runs start on. Defaults to 值守会话 (user_chrome) — the App's default: an
+  // already-open interactive Claude Code session with the claude-in-chrome extension attached to
+  // the user's own logged-in Chrome claims queued runs and drives that browser itself. The
+  // alternative, 无人值守 (headless), spawns `claude -p` against a separate persistent Chrome
+  // profile — see the 打开浏览器档案 button below, which only makes sense for that channel.
+  const [channel, setChannel] = useState<"user_chrome" | "headless">("user_chrome");
 
   async function openProfile() {
     setBusyKind("open-profile");
@@ -98,7 +107,7 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
       const r = await fetch("/api/executor/start", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind, options }),
+        body: JSON.stringify({ kind, options, channel }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -144,23 +153,53 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
     <div className="panel">
       {error && <p className="text-accent">{error}</p>}
       <div style={{ marginBottom: 12 }}>
-        <button className="btn-ghost" onClick={openProfile} disabled={busyKind === "open-profile"}>
-          打开浏览器档案(登录一次)
-        </button>
-        <p className="text-sub" style={{ fontSize: 12, margin: "4px 0 0" }}>
-          执行器用的是一个专属的持久化 Chrome 档案,不是你日常用的浏览器——第一次用前(或换了账号密码后)点这个按钮,在弹出的窗口里登录一次 LinkedIn/Workday 等站点,登录状态会保留给之后的无人值守执行器使用。
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input
+              type="radio"
+              name="executor-channel"
+              checked={channel === "user_chrome"}
+              onChange={() => setChannel("user_chrome")}
+            />
+            用我的 Chrome(值守会话)【默认】
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input
+              type="radio"
+              name="executor-channel"
+              checked={channel === "headless"}
+              onChange={() => setChannel("headless")}
+            />
+            无人值守(专属浏览器档案)
+          </label>
+        </div>
+        <p className="text-sub" style={{ fontSize: 12, margin: "6px 0 0" }}>
+          {channel === "user_chrome"
+            ? "开始投递后,任务会排队等待一个已经打开、连了 claude-in-chrome 扩展的交互式 Claude Code 会话(值守会话)来接手——它会在你自己已登录的 Chrome 里逐个操作,你可以随时看着它做。"
+            : "开始投递后,App 会直接启动一个 headless 执行器,在下面这个专属的、持久化的 Chrome 档案里无人值守地操作——不是你日常登录的浏览器,需要先登录一次。"}
         </p>
-        {profileMsg && (
-          <p className="text-sub" style={{ fontSize: 12, marginTop: 4 }}>
-            {profileMsg}
-          </p>
-        )}
       </div>
+      {channel === "headless" && (
+        <div style={{ marginBottom: 12 }}>
+          <button className="btn-ghost" onClick={openProfile} disabled={busyKind === "open-profile"}>
+            打开浏览器档案(登录一次)
+          </button>
+          <p className="text-sub" style={{ fontSize: 12, margin: "4px 0 0" }}>
+            执行器用的是一个专属的持久化 Chrome 档案,不是你日常用的浏览器——第一次用前(或换了账号密码后)点这个按钮,在弹出的窗口里登录一次 LinkedIn/Workday 等站点,登录状态会保留给之后的无人值守执行器使用。
+          </p>
+          {profileMsg && (
+            <p className="text-sub" style={{ fontSize: 12, marginTop: 4 }}>
+              {profileMsg}
+            </p>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
         {kinds.map(({ kind, label, withLimit, quotaTable }) => {
           const run = latestByKind[kind];
           const isRunning = run?.status === "running";
-          const busy = isRunning || busyKind === kind;
+          const isQueued = run?.status === "queued";
+          const busy = isRunning || isQueued || busyKind === kind;
           return (
             <div key={kind} style={{ flex: quotaTable ? "1 1 100%" : "1 1 320px", minWidth: 280 }}>
               {quotaTable ? (
@@ -169,12 +208,12 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                     disabled={busy}
                     onStart={(plan) => startWithOptions(kind, { plan })}
                   />
-                  {isRunning && (
+                  {busy && run && (
                     <div style={{ marginTop: 8 }}>
                       <button
                         className="btn-ghost"
-                        onClick={() => stop(run!.id)}
-                        disabled={busyKind === `stop-${run!.id}`}
+                        onClick={() => stop(run.id)}
+                        disabled={busyKind === `stop-${run.id}`}
                       >
                         停止
                       </button>
@@ -192,17 +231,17 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                         max={50}
                         value={limits[kind] ?? 5}
                         onChange={(e) => setLimits((prev) => ({ ...prev, [kind]: Number(e.target.value) || 1 }))}
-                        disabled={isRunning}
+                        disabled={busy}
                         style={{ width: 56 }}
                       />
                       <span className="text-sub" style={{ fontSize: 13 }}>个</span>
                     </>
                   )}
-                  <button onClick={() => start(kind, withLimit)} disabled={isRunning || busyKind === kind}>
+                  <button onClick={() => start(kind, withLimit)} disabled={busy}>
                     {label}
                   </button>
-                  {isRunning && (
-                    <button className="btn-ghost" onClick={() => stop(run!.id)} disabled={busyKind === `stop-${run!.id}`}>
+                  {busy && run && (
+                    <button className="btn-ghost" onClick={() => stop(run.id)} disabled={busyKind === `stop-${run.id}`}>
                       停止
                     </button>
                   )}
@@ -211,12 +250,21 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
 
               {run && (
                 <div className="text-sub" style={{ marginTop: 8, fontSize: 13 }}>
-                  <span>
-                    #{run.id} · {STATUS_LABELS[run.status] ?? run.status}
-                    {run.pid != null ? ` · pid ${run.pid}` : ""}
-                  </span>
+                  {run.channel === "user_chrome" && isQueued ? (
+                    <span>已排队,等待值守会话接手…(run #{run.id})</span>
+                  ) : run.channel === "user_chrome" && isRunning ? (
+                    <span>
+                      值守会话执行中 · run #{run.id}
+                      {(run.logTail ?? []).length > 0 ? ` · 最近: ${run.logTail![run.logTail!.length - 1]}` : ""}
+                    </span>
+                  ) : (
+                    <span>
+                      #{run.id} · {STATUS_LABELS[run.status] ?? run.status}
+                      {run.pid != null ? ` · pid ${run.pid}` : ""}
+                    </span>
+                  )}
                   {run.summary && <p style={{ margin: "4px 0", color: "var(--ink)" }}>{run.summary}</p>}
-                  {isRunning && (
+                  {(isRunning || isQueued) && (
                     <pre
                       style={{
                         marginTop: 6,
@@ -228,7 +276,8 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                         whiteSpace: "pre-wrap",
                       }}
                     >
-                      {(run.logTail ?? []).join("\n") || "(暂无输出)"}
+                      {(run.channel === "user_chrome" ? (run.logTail ?? []).slice(-5) : run.logTail ?? []).join("\n") ||
+                        "(暂无输出)"}
                     </pre>
                   )}
                 </div>

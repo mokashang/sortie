@@ -19,6 +19,7 @@ interface ExecutorRunRow {
   id: number;
   kind: string;
   status: string;
+  channel: string;
   startedAt: string;
   logTail?: string[];
 }
@@ -116,7 +117,11 @@ export function ConfirmPanel() {
       }
       const j = await r.json().catch(() => ({}));
       if (j.autoStarted) {
-        setNotice(`已自动启动执行器完成提交(run #${j.runId})。`);
+        setNotice(
+          j.channel === "user_chrome"
+            ? `已排队,等待值守会话接手提交(run #${j.runId})。`
+            : `已自动启动执行器完成提交(run #${j.runId})。`
+        );
         refreshExecutor();
       }
       await refresh();
@@ -127,13 +132,22 @@ export function ConfirmPanel() {
     }
   }
 
+  // A queued/running user_chrome run counts as "执行器在线" too — it just hasn't been claimed by
+  // the attended session yet (queued) or is being driven by one right now (running). Either way,
+  // approving here won't silently sit forever, so the warning strip below shouldn't fire.
   const executorRunning = executorRun?.status === "running";
+  const executorQueued = executorRun?.status === "queued";
+  const executorOnline = executorRunning || executorQueued;
   const logTail = (executorRun?.logTail ?? []).slice(-3);
 
-  const statusStrip = executorRunning ? (
+  const statusStrip = executorOnline ? (
     <div className="panel" style={{ marginBottom: 12, padding: "10px 14px" }}>
       <span className="chip">
-        执行器:运行中(run #{executorRun!.id},已运行 {minutesSince(executorRun!.startedAt)} 分钟)
+        {executorQueued
+          ? `执行器:已排队,等待值守会话接手(run #${executorRun!.id})`
+          : executorRun!.channel === "user_chrome"
+          ? `执行器:值守会话执行中(run #${executorRun!.id},已运行 ${minutesSince(executorRun!.startedAt)} 分钟)`
+          : `执行器:运行中(run #${executorRun!.id},已运行 ${minutesSince(executorRun!.startedAt)} 分钟)`}
       </span>
       {logTail.length > 0 && (
         <pre
@@ -219,8 +233,8 @@ export function ConfirmPanel() {
 
           {r.decision === "approved" ? (
             <p className="text-good" style={{ marginTop: 12, fontWeight: 600 }}>
-              已批准,等待执行器提交。如需撤回,请直接告诉执行器会话。
-              {!executorRunning && <span className="text-warn"> (执行器未运行)</span>}
+              {executorQueued ? "已批准,已排队,等待值守会话提交。" : "已批准,等待执行器提交。如需撤回,请直接告诉执行器会话。"}
+              {!executorOnline && <span className="text-warn"> (执行器未运行)</span>}
             </p>
           ) : (
             <div style={{ marginTop: 12, display: "flex", gap: 8 }}>

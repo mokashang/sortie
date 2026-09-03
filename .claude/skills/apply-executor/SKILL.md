@@ -21,6 +21,11 @@ browser — see the README's 投递执行 section. The two never share a browser
 dedicated profile isn't logged into a site yet, the headless run reports `needs_manual` and the
 user logs in once via the App's [打开浏览器档案(登录一次)] button rather than this skill's Chrome.
 
+When the App's 值守会话 channel is selected (the default), it enqueues a run instead of spawning
+anything: poll `GET /api/executor/claim-next?channel=user_chrome` to claim it, work the loop below,
+call `POST /api/executor/log` as you go and `POST /api/executor/finish` when done (or check
+`GET /api/executor/run?id=` to see if the user hit 停止).
+
 Read this whole file before starting. If you have not already, load the tool schemas you'll need
 in one batch:
 

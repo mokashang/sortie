@@ -31,10 +31,21 @@
 经历内容全部由你在 UI 录入 —— 系统不导入外部文件。需要 tectonic(brew install tectonic)。
 
 ## 投递执行
-半自动填表:App 负责选岗、建答案包(标准字段 + 命中方向的最新简历版本),一个**由 App 按钮直接启动的
-headless `claude -p` 会话**(执行器)负责驱动一个**专属的、持久化的 Chrome 浏览器档案**逐个打开申请页、
-填表,填完把"字段→填入值"清单回报给 App;真正点提交前必须先在 App 里人工确认。**不用再手动开 claude
-会话**——`/apply` 页顶部就是启动/停止入口。
+半自动填表:App 负责选岗、建答案包(标准字段 + 命中方向的最新简历版本),执行器负责逐个打开申请页、填表,
+填完把"字段→填入值"清单回报给 App;真正点提交前必须先在 App 里人工确认。`/apply` 页顶部执行器面板可选两条
+**渠道**(`POST /api/executor/start` 的 `channel`):
+
+- **值守会话(默认,`user_chrome`)**:你自己保持一个已打开、连了 claude-in-chrome 扩展的**交互式**
+  Claude Code 会话("值守会话")。点[开始投递]只是把任务排进队列;那个值守会话轮询
+  `GET /api/executor/claim-next?channel=user_chrome` 接手,用**你自己已登录的真实 Chrome**逐个操作,
+  经 `POST /api/executor/log`/`POST /api/executor/finish` 报告进度、收尾。这条通道存在是因为
+  claude-in-chrome 扩展只能连交互式会话——headless `claude -p --chrome` 连不上它。
+- **无人值守(`headless`)**:和以前一样,由 App 按钮直接 `spawn` 一个**headless `claude -p` 会话**
+  (执行器),驱动一个**专属的、持久化的 Chrome 浏览器档案**——不是你日常登录的浏览器,首次要单独登录一次
+  (见下)。**不用手动开 claude 会话**,面板启动/停止即可。
+
+两条通道走同一套 App 侧确认/红线机制:真正点提交前都要先在 `/apply` 页人工批准。批准后若没有存活/排队中的
+`apply` 执行器,会按上次用的渠道自动补一个(`src/apply/decide-auto-start.ts`),没跑过的话默认走值守会话。
 
 **"专属浏览器档案"是什么:** 执行器用的不是你日常登录的 Chrome,而是一个单独的、持久化到磁盘的 Chrome
 profile(`data/browser-profile`,已 gitignore),由官方 Playwright MCP(`@playwright/mcp`,CLI-scope
