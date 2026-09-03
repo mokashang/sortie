@@ -71,7 +71,7 @@ export default function ApplyPage() {
     <div>
       <h1>投递</h1>
       <p className="panel-sub">
-        点下面的按钮直接从 App 里启动投递执行器(headless claude 会话,驱动你已登录的 Chrome)——不用再手动开
+        点下面的按钮直接从 App 里启动投递执行器(headless claude 会话,用系统专属的浏览器档案自动填表)——不用再手动开
         claude 会话。执行器会话填完表后,申请会出现在下面等你确认。点[确认提交]后执行器才会真正点提交;拒绝会把
         申请退回队列。
       </p>
