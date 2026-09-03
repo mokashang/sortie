@@ -4,6 +4,8 @@ import { ManualList, ManualRow } from "./manual-list";
 import { ExecutorPanel } from "@/app/components/executor-panel";
 import { directionLabel } from "@/matcher/directions";
 import { todaySubmitted } from "@/apply/history";
+import { referralBoard } from "@/apply/referral";
+import { ReferralPanel } from "./referral-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +32,16 @@ export default function ApplyPage() {
   // Local calendar day (resets at local midnight) — see todaySubmitted.
   const submittedRows = todaySubmitted(db);
 
+  // 内推进行中 counts for the strip (the board itself is the client-side ReferralPanel).
+  const cards = referralBoard(db);
+  const referralJobs = cards.flatMap((c) => c.jobs);
+  const referralCounts = {
+    draft: cards.filter((c) => c.outreach?.status === "draft").length,
+    waiting: cards.filter((c) => c.outreach && (c.outreach.status === "sent" || c.outreach.status === "pending_send")).length,
+    noContact: cards.filter((c) => !c.outreach && c.jobs.some((j) => j.noContactReason)).length,
+    ready: cards.filter((c) => c.jobs.some((j) => j.status === "referral_ready")).length,
+  };
+
   // "今日已提交 7(swe_backend 4 · quant 3)" — per-direction breakdown, counts desc, NULL last.
   const submittedByDirection = new Map<string | null, number>();
   for (const r of submittedRows) {
@@ -48,9 +60,10 @@ export default function ApplyPage() {
     <div>
       <h1>投递</h1>
       <p className="panel-sub">
-        在下面选好每个方向的份数、点「开始投递」,值守会话(你自己的 Chrome)或无人值守执行器就会接手填表。
-        填完的申请出现在「待确认」等你点[确认提交],执行器才会真正点提交;拒绝会把申请退回队列。
-        已提交及之后的追踪在「历史」页。
+        在下面选好每个方向「找内推」和「海投」的份数、点「开始投递」,值守会话(你自己的 Chrome)就会接手。
+        海投的申请填完出现在「待确认」等你点[确认提交],执行器才会真正点提交;拒绝会把申请退回队列。
+        找内推的岗位出现在「内推进行中」:值守会话找到人后起草首条消息等你批准,之后的往来你自己处理;
+        拿到内推点「有内推了」填入,或随时「直接投」。已提交及之后的追踪在「历史」页。
       </p>
 
       <ExecutorPanel kinds={[{ kind: "apply", label: "开始投递", quotaTable: true }]} />
@@ -61,12 +74,25 @@ export default function ApplyPage() {
           {submittedBreakdown && <span className="text-sub" style={{ marginLeft: 6 }}>({submittedBreakdown})</span>}
         </span>
         <span>待确认 <strong className="mono">{pendingCount}</strong></span>
+        <span>
+          内推进行中 <strong className="mono">{referralJobs.length}</strong>
+          {referralJobs.length > 0 && (
+            <span className="text-sub" style={{ marginLeft: 6 }}>
+              (等草稿 {referralCounts.draft} · 等回复 {referralCounts.waiting} · 找不到人 {referralCounts.noContact} · 待投 {referralCounts.ready})
+            </span>
+          )}
+        </span>
         <span>需人工 <strong className="mono">{manualRows.length}</strong></span>
       </div>
 
       <section className="panel">
         <div className="panel-title">待确认</div>
         <ConfirmPanel />
+      </section>
+
+      <section className="panel">
+        <div className="panel-title">内推进行中</div>
+        <ReferralPanel />
       </section>
 
       <details style={{ marginTop: 24 }}>
@@ -83,6 +109,7 @@ export default function ApplyPage() {
             <thead>
               <tr>
                 <th>方向</th>
+                <th>方式</th>
                 <th>公司</th>
                 <th>标题</th>
                 <th>时间</th>
@@ -93,6 +120,13 @@ export default function ApplyPage() {
                 <tr key={r.jobId}>
                   <td>
                     <span className="chip">{r.direction ? directionLabel(r.direction) : "未分类"}</span>
+                  </td>
+                  <td style={{ fontSize: 13 }}>
+                    {r.applyMode === "referral" ? (
+                      <span className="text-good">内推{r.referralPersonName ? ` · ${r.referralPersonName}` : ""}</span>
+                    ) : (
+                      <span className="text-sub">海投</span>
+                    )}
                   </td>
                   <td className="company">{r.company}</td>
                   <td>{r.title}</td>
