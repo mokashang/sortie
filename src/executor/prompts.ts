@@ -126,7 +126,7 @@ ${resumeSection}${introSection}
 ## 1. Preflight
 \`curl -s ${APP_BASE}/api/apply/pending\` — 期望 200,body 形如 \`{"pending":[...]}\`。失败说明 App 没在跑,停止并说明。
 
-## 2. 主循环(最多 ${capCount} 轮,达到即停)
+## 2. 主循环(填好 ${capCount} 份待确认后停止)
 ${takeTaskStep}
 
 2. **上线页面最终资格检查 + 打开并填表**:
