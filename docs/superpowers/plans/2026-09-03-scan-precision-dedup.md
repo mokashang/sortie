@@ -309,7 +309,7 @@ describe("QUEUE_ELIGIBLE_SQL", () => {
     db.prepare("UPDATE jobs SET sponsorship='no' WHERE id=?").run(nos);
     db.prepare("UPDATE jobs SET degree_req='phd_only' WHERE id=?").run(phd);
     db.prepare("UPDATE jobs SET role_kind='non_tech' WHERE id=?").run(sales);
-    const page = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
+    const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
     expect(page.rows.map((r) => r.id)).toEqual([ok]);
     const groups = queueByDirection(db);
     expect(groups[0].matched).toBe(1);
@@ -317,7 +317,7 @@ describe("QUEUE_ELIGIBLE_SQL", () => {
 });
 ```
 
-(`seedJob` 在该文件里已创建 applications status='matched' 与 matches direction='swe_general';确认其签名后按需传参。`queueByDirection` 需从 `@/apply/queue` 额外 import。)
+(该文件的 `seedJob(db, opts)` 已插入 jobs + matches(默认 direction `ai_infra`、tier 1、score 80)+ applications(默认 status `matched`),所以这里查 `ai_infra` 方向。`queueByDirection` 需从 `@/apply/queue` 额外 import。)
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -1234,14 +1234,14 @@ describe("buildJdReviewPrompt", () => {
 });
 ```
 
-追加到 `tests/executor-runner.test.ts`(仿照现有 apply 的 spawn 断言用例,用文件里的 fake spawn 工具):
+追加到 `tests/executor-runner.test.ts` 的 `describe("startExecutor")` 内(文件顶层已有 `makeFakeSpawn(pid)` 返回 `{ spawnFn, child }`,`beforeEach` 已准备 `db` 与 `tmpLogDir`):
 
 ```ts
 it("starts a headless jd_review run and pipes the jd_review prompt to stdin", () => {
-  const { db, spawn, children, logDir } = setup(); // 若文件里没有 setup 助手,按现有用例的写法内联:openDb(':memory:')、fake spawn、临时 logDir
-  const r = startExecutor(db, "jd_review", { limit: 40 }, { spawn, logDir }, "headless");
-  expect(r.pid).toBeGreaterThan(0);
-  expect(children[0].written).toContain("/api/jd-review/batch?limit=40");
+  const { spawnFn, child } = makeFakeSpawn(process.pid);
+  const r = startExecutor(db, "jd_review", { limit: 40 }, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+  expect(r.pid).toBe(process.pid);
+  expect(child.written).toContain("/api/jd-review/batch?limit=40");
   const row = db.prepare("SELECT kind, channel FROM executor_runs WHERE id=?").get(r.id) as any;
   expect(row).toEqual({ kind: "jd_review", channel: "headless" });
 });
@@ -1766,7 +1766,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 1: 写失败测试(reportFill)**
 
-追加到 `tests/apply-queue.test.ts`(用文件里已有的 `seedJob`/`testProfile`/`takeNextApplication` 把一条推到 prepared):
+追加到 `tests/apply-queue.test.ts`(用文件里已有的 `seedJob`(jobs+matches direction `ai_infra`+applications matched)、`seedResume`、`testProfile`、`takeNextApplication` 把一条推到 prepared):
 
 ```ts
 it("needs_manual with failing eligibility archives the job and its cluster instead of parking it", () => {
@@ -1775,6 +1775,7 @@ it("needs_manual with failing eligibility archives the job and its cluster inste
   const sib = seedJob(db, { fingerprint: "s", title: "SWE" });
   db.prepare("UPDATE jobs SET duplicate_of=? WHERE id=?").run(main, sib);
   db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(sib);
+  seedResume(db, "ai_infra-v1", ["ai_infra"]); // seedJob 默认 direction ai_infra;没有简历会被停车而不是取到
   const task = takeNextApplication(db, testProfile()) as ApplyTask;
   expect(task.jobId).toBe(main);
   reportFill(db, { jobId: main, status: "needs_manual", reason: "no sponsorship (live page)", eligibility: { sponsorship: "no", evidence: "We cannot sponsor" } });
@@ -1788,6 +1789,7 @@ it("needs_manual with failing eligibility archives the job and its cluster inste
 it("needs_manual with passing eligibility still parks (login wall etc.)", () => {
   const db = openDb(":memory:");
   const id = seedJob(db, { fingerprint: "m", title: "SWE" });
+  seedResume(db, "ai_infra-v1", ["ai_infra"]);
   takeNextApplication(db, testProfile());
   reportFill(db, { jobId: id, status: "needs_manual", reason: "login wall", eligibility: { sponsorship: "unknown" } });
   const a = db.prepare("SELECT status, needs_manual_reason FROM applications WHERE job_id=?").get(id) as any;
@@ -1924,7 +1926,7 @@ it("pagedQueue rows carry dup_count and jd_status", () => {
   const d2 = seedJob(db, { fingerprint: "d2", title: "SWE" });
   db.prepare("UPDATE jobs SET duplicate_of=? WHERE id IN (?,?)").run(main, d1, d2);
   db.prepare("UPDATE jobs SET jd_status='missing' WHERE id=?").run(main);
-  const page = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
+  const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
   expect(page.rows).toHaveLength(1);
   expect(page.rows[0]).toMatchObject({ id: main, dup_count: 2, jd_status: "missing" });
 });
