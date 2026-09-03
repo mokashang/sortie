@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS applications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id),
   status TEXT NOT NULL DEFAULT 'discovered',
-  -- discovered|matched|prepared|needs_info|awaiting_confirm|submitted|oa|interview|offer|rejected|stale|archived
+  -- discovered|matched|prepared|needs_info|awaiting_confirm|submitted|oa|interview|offer|offer_accepted|offer_declined|rejected|stale|archived
   submitted_at TEXT,
   resume_id INTEGER REFERENCES resumes(id),
   form_screenshot TEXT,

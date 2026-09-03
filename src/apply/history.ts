@@ -11,9 +11,17 @@ import { DB, logEvent } from "@/lib/db";
 // no marker. Every query here converts with sqlite's 'localtime' modifier so "today" and the
 // day-grouping headers follow the server's wall clock (the user's own day), not the UTC day.
 
-import { POST_SUBMIT_STAGES, PostSubmitStage, isPostSubmitStage, HistoryRow } from "@/apply/stages";
+import {
+  POST_SUBMIT_STAGES,
+  PostSubmitStage,
+  PeakStage,
+  isPostSubmitStage,
+  peakOf,
+  maxPeak,
+  HistoryRow,
+} from "@/apply/stages";
 export { POST_SUBMIT_STAGES, STAGE_LABELS } from "@/apply/stages";
-export type { PostSubmitStage, HistoryRow } from "@/apply/stages";
+export type { PostSubmitStage, PeakStage, HistoryRow } from "@/apply/stages";
 
 // User -> App from /history's per-row status selector. Any post-submit stage may move to any
 // other post-submit stage (including backwards — a mis-click must be undoable without a special
@@ -51,6 +59,7 @@ interface HistoryRawRow {
   updated_at: string;
   answer_pack: string | null;
   last_note: string | null;
+  stage_path: string | null; // JSON array of every 'to' in this row's application_stage events
 }
 
 const STAGE_IN = `(${POST_SUBMIT_STAGES.map((s) => `'${s}'`).join(",")})`;
@@ -68,7 +77,9 @@ export function applicationHistory(db: DB): HistoryRow[] {
               (SELECT json_extract(e.payload, '$.note') FROM events e
                  WHERE e.kind = 'application_stage' AND e.entity_id = a.job_id
                    AND json_extract(e.payload, '$.note') IS NOT NULL
-                 ORDER BY e.id DESC LIMIT 1) as last_note
+                 ORDER BY e.id DESC LIMIT 1) as last_note,
+              (SELECT json_group_array(json_extract(e.payload, '$.to')) FROM events e
+                 WHERE e.kind = 'application_stage' AND e.entity_id = a.job_id) as stage_path
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        LEFT JOIN matches m ON m.job_id = j.id
@@ -84,13 +95,26 @@ export function applicationHistory(db: DB): HistoryRow[] {
     } catch {
       resumeVersion = null;
     }
+    // Peak = furthest rung across the whole timeline and the current status. Rows that predate
+    // stage events (or were never touched) fall back to the current status alone.
+    const status = r.status as PostSubmitStage;
+    let peak: PeakStage = peakOf(status);
+    try {
+      const path: unknown[] = r.stage_path ? JSON.parse(r.stage_path) : [];
+      for (const to of path) {
+        if (typeof to === "string" && isPostSubmitStage(to)) peak = maxPeak(peak, peakOf(to));
+      }
+    } catch {
+      /* malformed payload: keep the status-derived peak */
+    }
     return {
       jobId: r.job_id,
       company: r.company,
       title: r.title,
       applyUrl: r.apply_url,
       direction: r.direction,
-      status: r.status as PostSubmitStage,
+      status,
+      peak,
       submittedAt: r.submitted_at,
       submittedDay: r.submitted_day,
       updatedAt: r.updated_at,

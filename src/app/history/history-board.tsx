@@ -2,16 +2,19 @@
 import { useMemo, useState } from "react";
 import { directionLabel } from "@/matcher/directions";
 import { POST_SUBMIT_STAGES, STAGE_LABELS, HistoryRow, PostSubmitStage } from "@/apply/stages";
+import { HistorySankey } from "./history-sankey";
 
 const ALL = "__all__";
 
 function stageClass(stage: PostSubmitStage): string {
   switch (stage) {
     case "offer":
+    case "offer_accepted":
       return "text-warn";
     case "oa":
     case "interview":
       return "text-good";
+    case "offer_declined":
     case "rejected":
     case "stale":
       return "text-sub";
@@ -105,6 +108,8 @@ export function HistoryBoard({ rows }: { rows: HistoryRow[] }) {
           </span>
         ))}
       </div>
+
+      <HistorySankey rows={visible} />
 
       {error && <p className="text-accent">{error}</p>}
 

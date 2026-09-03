@@ -60,6 +60,9 @@ describe("funnel", () => {
     // Not part of the named funnel stages — must not be silently folded into any bucket.
     seedApp(d, { status: "prepared" });
     seedApp(d, { status: "awaiting_confirm" });
+    // accepted / declined offers fold into the offer bucket — an offer is an offer
+    seedApp(d, { status: "offer_accepted", submittedAt: daysAgo(30) });
+    seedApp(d, { status: "offer_declined", submittedAt: daysAgo(30) });
 
     expect(funnel(d)).toEqual({
       discovered: 1,
@@ -67,7 +70,7 @@ describe("funnel", () => {
       submitted: 1,
       oa: 1,
       interview: 1,
-      offer: 1,
+      offer: 3,
       rejected: 1,
       archived: 1,
     });
@@ -102,13 +105,16 @@ describe("byDirection", () => {
     seedApp(d, { direction: "ai_infra", tier: 2, status: "oa", submittedAt: daysAgo(0) });
     seedApp(d, { direction: "ai_infra", tier: 2, status: "offer", submittedAt: daysAgo(10) });
     seedApp(d, { direction: "ai_infra", tier: 2, status: "rejected", submittedAt: daysAgo(20) });
+    // an accepted / declined offer is still an interview-or-beyond
+    seedApp(d, { direction: "ai_infra", tier: 2, status: "offer_accepted", submittedAt: daysAgo(30) });
+    seedApp(d, { direction: "ai_infra", tier: 2, status: "offer_declined", submittedAt: daysAgo(30) });
 
     const rows = byDirection(d);
     const swe = rows.find((r) => r.direction === "swe_general" && r.tier === 1);
     const ai = rows.find((r) => r.direction === "ai_infra" && r.tier === 2);
 
     expect(swe).toEqual({ direction: "swe_general", tier: 1, total: 4, submitted: 2, interviews: 1 });
-    expect(ai).toEqual({ direction: "ai_infra", tier: 2, total: 3, submitted: 3, interviews: 1 });
+    expect(ai).toEqual({ direction: "ai_infra", tier: 2, total: 5, submitted: 5, interviews: 3 });
   });
 
   it("returns an empty array on an empty db", () => {
