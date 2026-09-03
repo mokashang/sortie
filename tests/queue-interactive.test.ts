@@ -416,3 +416,24 @@ describe("pagedAllJobs", () => {
     });
   });
 });
+
+describe("pagedQueue mode filter", () => {
+  it("filters by effective mode and exposes mode columns", () => {
+    const db = openDb(":memory:");
+    const a = seedJob(db, { direction: "ai_infra", score: 90 });
+    const b = seedJob(db, { direction: "ai_infra", score: 80 });
+    db.prepare("UPDATE matches SET referral_fit = 1, referral_reason = 'big tech' WHERE job_id = ?").run(a);
+    const all = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    expect(all.total).toBe(2);
+    expect(all.rows[0].effective_mode).toBe("referral");
+    expect(all.rows[0].referral_reason).toBe("big tech");
+    expect(all.rows[1].effective_mode).toBe("direct");
+    const onlyRef = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "referral" });
+    expect(onlyRef.rows.map((r) => r.id)).toEqual([a]);
+    expect(onlyRef.total).toBe(1);
+    const onlyDirect = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "direct" });
+    expect(onlyDirect.rows.map((r) => r.id)).toEqual([b]);
+    const allJobs = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+    expect(allJobs.rows.find((r) => r.id === a)!.effective_mode).toBe("referral");
+  });
+});

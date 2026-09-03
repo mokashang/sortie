@@ -710,7 +710,7 @@ describe("queueByDirection", () => {
 
     const groups = queueByDirection(db);
 
-    expect(groups).toEqual([{ direction: "quant", tier: 1, matched: 1, top: expect.any(Array) }]);
+    expect(groups).toEqual([{ direction: "quant", tier: 1, matched: 1, referralSuggested: 0, directSuggested: 1, top: expect.any(Array) }]);
     expect(groups[0].matched).toBe(1);
   });
 
@@ -738,5 +738,61 @@ describe("queueByDirection", () => {
 
     expect(groups.map((g) => g.direction)).toEqual(["quant", "未分类"]);
     expect(groups[1]).toMatchObject({ direction: "未分类", matched: 1 });
+  });
+});
+
+describe("apply modes in the picker", () => {
+  function setFit(db: DB, jobId: number, fit: number | null, override: string | null = null) {
+    db.prepare("UPDATE matches SET referral_fit = ? WHERE job_id = ?").run(fit, jobId);
+    db.prepare("UPDATE applications SET apply_mode = ? WHERE job_id = ?").run(override, jobId);
+  }
+
+  it("batch pick skips referral-mode jobs even when they outrank direct ones", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const ref = seedJob(db, { company: "Google", score: 95 });
+    const direct = seedJob(db, { company: "Acme", score: 70 });
+    setFit(db, ref, 1);
+    const t = takeNextApplication(db, testProfile()) as ApplyTask;
+    expect(t.jobId).toBe(direct);
+    expect(takeNextApplication(db, testProfile())).toEqual({ done: true });
+  });
+
+  it("a user override to 'direct' puts a referral-suggested job back in the batch pool", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const ref = seedJob(db, { company: "Google", score: 95 });
+    setFit(db, ref, 1, "direct");
+    expect((takeNextApplication(db, testProfile()) as ApplyTask).jobId).toBe(ref);
+  });
+
+  it("jobIds-targeted pick accepts referral_ready and ignores mode; other ids are not touched", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const ready = seedJob(db, { company: "Google", score: 95, status: "referral_ready" });
+    const other = seedJob(db, { company: "Acme", score: 99 });
+    setFit(db, ready, 1);
+    db.prepare("UPDATE applications SET referral_info = ? WHERE job_id = ?").run(
+      JSON.stringify({ source: "wechat", link: "https://g.example/ref/abc", at: "2026-09-03T00:00:00Z" }),
+      ready
+    );
+    const t = takeNextApplication(db, testProfile(), { jobIds: [ready] }) as ApplyTask;
+    expect(t.jobId).toBe(ready);
+    expect(t.answerPack.referral?.link).toBe("https://g.example/ref/abc");
+    expect(t.answerPack.referral?.source).toBe("wechat");
+    expect(getApplication(db, ready).status).toBe("prepared");
+    expect(getApplication(db, other).status).toBe("matched");
+    expect(takeNextApplication(db, testProfile(), { jobIds: [ready] })).toEqual({ done: true });
+  });
+
+  it("queueByDirection reports referral/direct suggested counts", () => {
+    const db = openDb(":memory:");
+    setFit(db, seedJob(db, { direction: "ai_infra" }), 1);
+    setFit(db, seedJob(db, { direction: "ai_infra" }), 0);
+    seedJob(db, { direction: "ai_infra" }); // unclassified → direct
+    const g = queueByDirection(db).find((x) => x.direction === "ai_infra")!;
+    expect(g.matched).toBe(3);
+    expect(g.referralSuggested).toBe(1);
+    expect(g.directSuggested).toBe(2);
   });
 });

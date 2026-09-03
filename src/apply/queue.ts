@@ -1,6 +1,7 @@
 import { DB } from "@/lib/db";
 import { Profile } from "@/lib/profile";
-import { buildAnswerPack, AnswerPack } from "@/apply/answers";
+import { buildAnswerPack, AnswerPack, AnswerPackReferral } from "@/apply/answers";
+import { EFFECTIVE_MODE_SQL, ApplyMode } from "@/apply/mode";
 import { selectResumeForJob } from "@/apply/resume-select";
 
 // The apply-executor protocol: the App is the "brain" (this file's pure DB logic) and a
@@ -30,6 +31,26 @@ interface CandidateRow {
   title: string;
   apply_url: string | null;
   ats: string | null;
+  referral_info: string | null;
+  referral_person_name: string | null;
+}
+
+// applications.referral_info is JSON written by referralDecide('won'); tolerate a corrupt value
+// (undefined → no referral section) rather than failing the whole pick.
+export function parseReferral(json: string | null, personName: string | null): AnswerPackReferral | undefined {
+  if (!json) return undefined;
+  try {
+    const o = JSON.parse(json) as { source?: string; link?: string; code?: string; note?: string };
+    return {
+      source: o.source ?? "other",
+      person_name: personName ?? "",
+      link: o.link ?? "",
+      code: o.code ?? "",
+      note: o.note ?? "",
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 // Picks the single highest-priority open application and prepares it for the executor:
@@ -40,7 +61,7 @@ interface CandidateRow {
 export function takeNextApplication(
   db: DB,
   profile: Profile,
-  opts: { direction?: string } = {}
+  opts: { direction?: string; jobIds?: number[] } = {}
 ): ApplyTask | { done: true } {
   // Reclaim jobs stranded at 'prepared' by an executor that died mid-fill (crashed session,
   // killed process, network partition — anything that took a task and never reported back).
@@ -52,37 +73,33 @@ export function takeNextApplication(
   ).run();
 
   for (;;) {
-    // opts.direction scopes the picker to a single direction (used by the per-direction apply
-    // quota plan — see buildApplyPrompt's `plan` mode) — every other semantic (priority order,
-    // parking, stale-prepared reclaim, no-URL park) is identical to the undirected picker.
+    // Two ways in. Batch mode (opts.direction optional): the classic picker, now restricted to
+    // jobs whose *effective* apply mode is 'direct' — a job Claude tagged 建议内推 (or the user
+    // flipped to 找内推) is the referral pipeline's business (src/apply/referral.ts) and must never
+    // be filled blind by a direct batch. Targeted mode (opts.jobIds): the 内推进行中 board's
+    // 直接投 / 有内推 buttons enqueue a run for specific jobs; those may be 'referral_ready' (a
+    // referral was obtained) and their mode is irrelevant — the user explicitly asked.
     // a.pinned DESC leads every ORDER BY here: a row the user starred on /queue ("置顶/优先")
     // must be the very next thing the executor takes, ahead of tier/score/freshness.
-    const row = (
-      opts.direction
-        ? db
-            .prepare(
-              `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats
-               FROM applications a
-               JOIN jobs j ON j.id = a.job_id
-               JOIN matches m ON m.job_id = j.id
-               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
-                 AND m.direction = ?
-               ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
-               LIMIT 1`
-            )
-            .get(opts.direction)
-        : db
-            .prepare(
-              `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats
-               FROM applications a
-               JOIN jobs j ON j.id = a.job_id
-               JOIN matches m ON m.job_id = j.id
-               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
-               ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
-               LIMIT 1`
-            )
-            .get()
-    ) as CandidateRow | undefined;
+    const targeted = !!(opts.jobIds && opts.jobIds.length > 0);
+    const where = targeted
+      ? `a.status IN ('matched','referral_ready') AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+         AND a.job_id IN (${opts.jobIds!.map(() => "?").join(",")})`
+      : `a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+         AND ${EFFECTIVE_MODE_SQL} = 'direct'${opts.direction ? " AND m.direction = ?" : ""}`;
+    const params: unknown[] = targeted ? [...opts.jobIds!] : opts.direction ? [opts.direction] : [];
+    const row = db
+      .prepare(
+        `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats, a.referral_info, p.name as referral_person_name
+         FROM applications a
+         JOIN jobs j ON j.id = a.job_id
+         JOIN matches m ON m.job_id = j.id
+         LEFT JOIN people p ON p.id = a.referral_person_id
+         WHERE ${where}
+         ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+         LIMIT 1`
+      )
+      .get(...params) as CandidateRow | undefined;
 
     if (!row) return { done: true };
 
@@ -104,7 +121,8 @@ export function takeNextApplication(
     const answerPack = buildAnswerPack(
       profile,
       { company: row.company, title: row.title, apply_url: row.apply_url },
-      { version_name: selection.versionName, pdf_path: selection.pdfPath }
+      { version_name: selection.versionName, pdf_path: selection.pdfPath },
+      parseReferral(row.referral_info, row.referral_person_name)
     );
 
     // confirm_decision reset to NULL defensively: a previous cycle through this same job_id could
@@ -115,7 +133,7 @@ export function takeNextApplication(
     // a task nobody actually locked.
     const claim = db
       .prepare(
-        "UPDATE applications SET status = 'prepared', answer_pack = ?, confirm_decision = NULL WHERE job_id = ? AND status = 'matched'"
+        "UPDATE applications SET status = 'prepared', answer_pack = ?, confirm_decision = NULL WHERE job_id = ? AND status IN ('matched','referral_ready')"
       )
       .run(JSON.stringify(answerPack), row.job_id);
     if (claim.changes === 0) continue;
@@ -429,6 +447,10 @@ export interface DirectionQueueGroup {
   direction: string;
   tier: number | null;
   matched: number;
+  // Split of `matched` by effective apply mode (EFFECTIVE_MODE_SQL) — the /apply quota table's
+  // 找内推 / 海投 columns draw from these two pools.
+  referralSuggested: number;
+  directSuggested: number;
   top: DirectionQueueRow[];
 }
 
@@ -436,6 +458,8 @@ interface DirectionGroupRawRow {
   direction: string | null;
   tier: number | null;
   matched: number;
+  referral_suggested: number;
+  direct_suggested: number;
 }
 
 interface TopRawRow {
@@ -453,7 +477,9 @@ interface TopRawRow {
 export function queueByDirection(db: DB): DirectionQueueGroup[] {
   const groups = db
     .prepare(
-      `SELECT m.direction as direction, MIN(m.tier) as tier, COUNT(*) as matched
+      `SELECT m.direction as direction, MIN(m.tier) as tier, COUNT(*) as matched,
+              SUM(CASE WHEN ${EFFECTIVE_MODE_SQL} = 'referral' THEN 1 ELSE 0 END) as referral_suggested,
+              SUM(CASE WHEN ${EFFECTIVE_MODE_SQL} = 'direct' THEN 1 ELSE 0 END) as direct_suggested
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
@@ -499,6 +525,8 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
     direction: g.direction ?? UNCLASSIFIED_DIRECTION,
     tier: g.tier,
     matched: g.matched,
+    referralSuggested: g.referral_suggested,
+    directSuggested: g.direct_suggested,
     top: topByDirection.get(g.direction) ?? [],
   }));
 }
@@ -550,6 +578,8 @@ export interface PagedQueueOpts {
   page: number;
   pageSize: number;
   sort: QueueSort;
+  // /queue's 全部/建议内推/海投 filter — by *effective* mode (override, else suggestion).
+  mode?: ApplyMode;
 }
 
 export interface PagedQueueRow {
@@ -564,6 +594,10 @@ export interface PagedQueueRow {
   reason: string | null;
   posted_at: string | null;
   pinned: number;
+  referral_fit: number | null;      // Claude's suggestion (NULL = not classified yet)
+  apply_mode: string | null;        // user override, if any
+  effective_mode: "referral" | "direct";
+  referral_reason: string | null;
 }
 
 export interface PagedQueueResult {
@@ -581,7 +615,9 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
   // queueByDirection) — it never appears as an actual column value, so the filter below must
   // become "IS NULL" rather than a literal string match, or the 未分类 tab would always be empty.
   const directionFilter = opts.direction === UNCLASSIFIED_DIRECTION ? "m.direction IS NULL" : "m.direction = ?";
-  const directionParams = opts.direction === UNCLASSIFIED_DIRECTION ? [] : [opts.direction];
+  const directionParams: unknown[] = opts.direction === UNCLASSIFIED_DIRECTION ? [] : [opts.direction];
+  const modeFilter = opts.mode ? ` AND ${EFFECTIVE_MODE_SQL} = ?` : "";
+  if (opts.mode) directionParams.push(opts.mode);
 
   const total = (
     db
@@ -591,7 +627,7 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
          JOIN jobs j ON j.id = a.job_id
          JOIN matches m ON m.job_id = j.id
          WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
-           AND ${directionFilter}`
+           AND ${directionFilter}${modeFilter}`
       )
       .get(...directionParams) as { n: number }
   ).n;
@@ -610,12 +646,13 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
   const rows = db
     .prepare(
       `SELECT j.id, j.company, j.title, j.location, j.apply_url, m.direction, m.score, m.tier, m.reason,
-              j.posted_at, a.pinned
+              j.posted_at, a.pinned,
+              m.referral_fit, a.apply_mode, ${EFFECTIVE_MODE_SQL} AS effective_mode, m.referral_reason
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
        WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
-         AND ${directionFilter}
+         AND ${directionFilter}${modeFilter}
        ORDER BY a.pinned DESC, ${secondarySort}
        LIMIT ? OFFSET ?`
     )
@@ -668,6 +705,7 @@ export function pagedAllJobs(db: DB, opts: Omit<PagedQueueOpts, "direction">): P
       `SELECT j.id, j.company, j.title, j.location, j.apply_url, j.source, j.created_at,
               m.direction, m.score, m.tier, m.reason, j.posted_at,
               COALESCE(a.pinned, 0) AS pinned,
+              m.referral_fit, a.apply_mode, ${EFFECTIVE_MODE_SQL} AS effective_mode, m.referral_reason,
               CASE WHEN a.status = 'matched' AND a.needs_manual_reason IS NULL THEN 1 ELSE 0 END AS in_queue
        FROM jobs j
        LEFT JOIN matches m ON m.job_id = j.id
