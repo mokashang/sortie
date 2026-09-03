@@ -9,11 +9,16 @@ export async function GET(req: Request) {
   const personId = url.searchParams.get("personId");
   const jobId = url.searchParams.get("jobId");
   const status = url.searchParams.get("status") ?? undefined;
+  // ?jobLinked=false — /network's view: coffee-chat / hidden-opportunity only; referral (job-
+  // linked) outreach lives on /apply's 内推进行中 board.
+  const jobLinkedParam = url.searchParams.get("jobLinked");
+  const jobLinked = jobLinkedParam === "false" ? false : jobLinkedParam === "true" ? true : undefined;
   try {
     const outreach = listOutreach(getDb(), {
       personId: personId ? Number(personId) : undefined,
       jobId: jobId ? Number(jobId) : undefined,
       status,
+      jobLinked,
     });
     return NextResponse.json({ outreach });
   } catch (e) {
