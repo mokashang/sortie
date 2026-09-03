@@ -10,7 +10,8 @@
     "scan": "tsx scripts/scan.ts",
     "match": "tsx scripts/match.ts",
     "backfill-locations": "tsx scripts/backfill-locations.ts",
-    "backfill-jd": "tsx scripts/backfill-jd.ts"
+    "backfill-jd": "tsx scripts/backfill-jd.ts",
+    "consolidate": "tsx scripts/consolidate.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
