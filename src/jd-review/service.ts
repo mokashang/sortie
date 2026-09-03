@@ -36,6 +36,35 @@ export interface JdReviewOutcome { jdStatus: string; archived: boolean; skipReas
 const STATUSES: JdReviewStatus[] = ["reviewed", "login_wall", "unreachable", "closed"];
 const MAX_JD = 20_000;
 
+// The jd_review executor posts as application/x-www-form-urlencoded via `curl --data-urlencode`
+// rather than JSON: hand-escaping a ~20k-char JD string into a JSON body from a shell script is
+// fragile (quotes, newlines, control chars), while --data-urlencode handles that for free. This
+// maps that form body into the same JdReviewReport shape reportJdReview expects. Types are kept
+// loose at the boundary (status isn't validated here) — reportJdReview itself rejects an unknown
+// status.
+export function reportFromFormData(form: FormData): JdReviewReport {
+  const get = (k: string): string | undefined => {
+    const v = form.get(k);
+    return typeof v === "string" && v !== "" ? v : undefined;
+  };
+  // Only set keys that are actually present (and non-empty) in the form — an absent/empty field
+  // must be an *absent* key on the result, not a key holding `undefined`, so reportJdReview's own
+  // `?? "unknown"`-style defaulting and its `jdText` presence check behave the same as they do
+  // for a JSON body that simply omits the field.
+  const out: JdReviewReport = { jobId: Number(get("jobId")), status: get("status") as JdReviewStatus };
+  const jdText = get("jdText");
+  if (jdText !== undefined) out.jdText = jdText;
+  const sponsorship = get("sponsorship");
+  if (sponsorship !== undefined) out.sponsorship = sponsorship as Sponsorship;
+  const degree = get("degree");
+  if (degree !== undefined) out.degree = degree as DegreeReq;
+  const role = get("role");
+  if (role !== undefined) out.role = role as RoleKind;
+  const evidence = get("evidence");
+  if (evidence !== undefined) out.evidence = evidence;
+  return out;
+}
+
 export function reportJdReview(db: DB, input: JdReviewReport): JdReviewOutcome {
   if (!STATUSES.includes(input.status)) throw new Error(`reportJdReview: invalid status '${input.status}'`);
   const job = db.prepare("SELECT id FROM jobs WHERE id = ?").get(input.jobId);

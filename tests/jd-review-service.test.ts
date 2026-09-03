@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
-import { nextJdReviewBatch, pendingJdReviewCount, reportJdReview } from "@/jd-review/service";
+import { nextJdReviewBatch, pendingJdReviewCount, reportJdReview, reportFromFormData } from "@/jd-review/service";
 
 function seed(db: DB, fp: string, o: { jdStatus?: string | null; status?: string; score?: number; tier?: number; pinned?: number; parked?: string | null; url?: string | null } = {}) {
   const info = db.prepare("INSERT INTO jobs (fingerprint, company, title, source, jd_text, jd_status, apply_url, dedup_key) VALUES (?,?,?,?,?,?,?,?)")
@@ -72,5 +72,68 @@ describe("reportJdReview", () => {
     const id = seed(db, "a");
     expect(() => reportJdReview(db, { jobId: id, status: "reviewed" })).toThrow(/jdText/);
     expect(() => reportJdReview(db, { jobId: id, status: "bogus" as any })).toThrow(/status/);
+  });
+});
+
+describe("reportFromFormData", () => {
+  it("maps urlencoded fields", async () => {
+    const jdText = 'Line one.\nLine two says "quoted" text.\nLine three.';
+    const params = new URLSearchParams({
+      jobId: "12",
+      status: "reviewed",
+      jdText,
+      sponsorship: "no",
+      evidence: "We cannot sponsor",
+    });
+    const req = new Request("http://x", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    const form = await req.formData();
+    const out = reportFromFormData(form);
+    expect(out).toEqual({
+      jobId: 12,
+      status: "reviewed",
+      jdText,
+      sponsorship: "no",
+      evidence: "We cannot sponsor",
+    });
+    expect(out).not.toHaveProperty("degree");
+    expect(out).not.toHaveProperty("role");
+  });
+
+  it("drops empty strings", async () => {
+    const params = new URLSearchParams({
+      jobId: "abc",
+      status: "closed",
+      evidence: "",
+      degree: "",
+    });
+    const req = new Request("http://x", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    const out = reportFromFormData(await req.formData());
+    expect(out).not.toHaveProperty("evidence");
+    expect(out).not.toHaveProperty("degree");
+    expect(Number.isNaN(out.jobId)).toBe(true);
+  });
+
+  it("end-to-end: form report archives via reportJdReview", async () => {
+    const db = openDb(":memory:");
+    const id = seed(db, "a");
+    const params = new URLSearchParams({ jobId: String(id), status: "closed" });
+    const req = new Request("http://x", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    const out = reportJdReview(db, reportFromFormData(await req.formData()));
+    expect(out).toMatchObject({ jdStatus: "closed", archived: true, skipReason: "posting closed" });
+    const j = db.prepare("SELECT jd_status FROM jobs WHERE id=?").get(id) as any;
+    expect(j.jd_status).toBe("closed");
+    expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(id) as any).status).toBe("archived");
   });
 });

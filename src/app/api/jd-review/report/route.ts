@@ -1,28 +1,10 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { reportJdReview, JdReviewReport } from "@/jd-review/service";
+import { reportJdReview, reportFromFormData, JdReviewReport } from "@/jd-review/service";
 
-// The jd_review executor posts as application/x-www-form-urlencoded via `curl --data-urlencode`
-// rather than JSON: hand-escaping a ~20k-char JD string into a JSON body from a shell script is
-// fragile (quotes, newlines, control chars), while --data-urlencode handles that for free. So this
-// route accepts either encoding and normalizes both into the same JdReviewReport shape.
-function reportFromFormData(form: FormData): JdReviewReport {
-  const get = (k: string): string | undefined => {
-    const v = form.get(k);
-    return typeof v === "string" && v !== "" ? v : undefined;
-  };
-  const jobIdRaw = get("jobId");
-  return {
-    jobId: Number(jobIdRaw),
-    status: get("status") as JdReviewReport["status"],
-    jdText: get("jdText"),
-    sponsorship: get("sponsorship") as JdReviewReport["sponsorship"],
-    degree: get("degree") as JdReviewReport["degree"],
-    role: get("role") as JdReviewReport["role"],
-    evidence: get("evidence"),
-  };
-}
-
+// The jd_review executor posts as application/x-www-form-urlencoded (see reportFromFormData in
+// src/jd-review/service.ts for why); this route accepts either that or JSON, normalizing both
+// into the same JdReviewReport shape before calling reportJdReview.
 export async function POST(req: Request) {
   try {
     const contentType = req.headers.get("content-type") ?? "";
