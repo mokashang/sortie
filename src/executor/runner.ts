@@ -160,11 +160,16 @@ export function hasLiveRun(db: DB, kind: ExecutorKind): boolean {
 // attended session to claim it — no pid to check liveness on, but it's still "spoken for" and a
 // second auto-start would be a duplicate). Used by decideAndMaybeAutoStart's auto-start-on-approve
 // check instead of hasLiveRun, since a queued attended run must also block a second auto-start.
+//
+// A *running* user_chrome row also counts: it has no pid (the attended session is what's alive),
+// and while it's marked running that session is the one polling /api/apply/pending for the
+// approval — auto-starting a second run alongside it just produces a duplicate 'resume' row (as
+// happened with run #8 on 2026-09-03). Only reapStaleRuns's log-mtime check may retire it.
 export function hasLiveOrQueuedRun(db: DB, kind: ExecutorKind): boolean {
   const rows = db
-    .prepare("SELECT pid, status FROM executor_runs WHERE kind=? AND status IN ('running','queued')")
-    .all(kind) as { pid: number | null; status: string }[];
-  return rows.some((row) => row.status === "queued" || isAlive(row.pid));
+    .prepare("SELECT pid, status, channel FROM executor_runs WHERE kind=? AND status IN ('running','queued')")
+    .all(kind) as { pid: number | null; status: string; channel: string }[];
+  return rows.some((row) => row.status === "queued" || row.channel === "user_chrome" || isAlive(row.pid));
 }
 
 // The channel of the most recent run of `kind` (any status), or null if there has never been one.

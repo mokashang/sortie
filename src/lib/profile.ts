@@ -49,3 +49,24 @@ export function loadProfile(file?: string): Profile {
   const target = file ?? path.join(process.cwd(), "profile", "profile.yaml");
   return parseProfile(fs.readFileSync(target, "utf8"));
 }
+
+// The /profile page's 标准答案 editor writes here (PUT /api/profile/standard-answers). Replaces
+// the whole standard_answers map — the editor always sends the full table — and leaves every
+// other key untouched. Goes through YAML's document API (not parse → stringify) so the user's
+// hand-written comments in profile.yaml survive the round trip. Validates the result with the
+// same schema loadProfile uses before writing, so a bad edit can never leave the file unloadable.
+export function saveStandardAnswers(answers: Record<string, string>, file?: string): void {
+  const target = file ?? path.join(process.cwd(), "profile", "profile.yaml");
+  const cleaned: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(answers ?? {})) {
+    const key = rawKey.trim();
+    if (!key) continue;
+    if (typeof rawValue !== "string") throw new Error(`saveStandardAnswers: value for '${key}' must be a string`);
+    cleaned[key] = rawValue.trim();
+  }
+  const doc = YAML.parseDocument(fs.readFileSync(target, "utf8"));
+  doc.set("standard_answers", cleaned);
+  const text = doc.toString();
+  parseProfile(text); // throws if the edit would break the schema
+  fs.writeFileSync(target, text);
+}

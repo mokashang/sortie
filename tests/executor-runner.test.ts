@@ -505,6 +505,15 @@ describe("executor/runner", () => {
     it("is false when there's nothing queued or running", () => {
       expect(hasLiveOrQueuedRun(db, "apply")).toBe(false);
     });
+
+    it("is true for a claimed (running) user_chrome run even though it has no pid", () => {
+      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      const claimed = claimNextRun(db, "user_chrome");
+      expect(claimed).not.toBeNull();
+      expect(hasLiveOrQueuedRun(db, "apply")).toBe(true);
+      finishRun(db, claimed!.id, "done");
+      expect(hasLiveOrQueuedRun(db, "apply")).toBe(false);
+    });
   });
 
   describe("lastRunChannel", () => {

@@ -26,6 +26,11 @@ anything: poll `GET /api/executor/claim-next?channel=user_chrome` to claim it, w
 call `POST /api/executor/log` as you go and `POST /api/executor/finish` when done (or check
 `GET /api/executor/run?id=` to see if the user hit 停止).
 
+**Never ask the user for missing answers in the Claude session** (AskUserQuestion or chat) — the
+user wants every interaction in the App. A required question with no answer-pack value is a
+`needs_manual` report whose reason names the question, its options and the suggested
+`standard_answers` key; the user fills it on /profile (标准答案) and hits 重试.
+
 **The authoritative, up-to-date attended-session protocol is CLAUDE.md §3** (count = number of
 fills reported awaiting_confirm, not attempts; `archive:true` for hard ineligibility found on the
 live page; log every single step via `/api/executor/log`; keep filled tabs open; the two
