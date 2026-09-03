@@ -93,19 +93,29 @@ export async function runConsolidate(db: DB, opts: ConsolidateOptions): Promise<
         const valid = new Set(g.rows.map((r) => r.id));
         const seen = new Set<number>();
         summary.groups++;
+        // 一行的"锚点":自己已有 duplicate_of → 指向的主行;或库里(不限本组)已有别的行
+        // 把它当主行(duplicate_of = 它的 id)→ 锚点是它自己;否则未锚定(anchor=null)。
+        // 查询覆盖整张表而非仅本组,因为 duplicate_of 引用理论上不受当前分组限制。
+        const anchorOf = (id: number): number | null => {
+          const row = g.rows.find((r) => r.id === id)!;
+          if (row.duplicate_of != null) return row.duplicate_of;
+          const referenced = db.prepare("SELECT 1 FROM jobs WHERE duplicate_of = ? LIMIT 1").get(id);
+          return referenced ? id : null;
+        };
         for (const raw of clusters) {
           const ids = raw.filter((id) => valid.has(id) && !seen.has(id));
           ids.forEach((id) => seen.add(id));
           if (ids.length === 0) continue;
           summary.clusters++;
-          // 已有 duplicate_of 的行保持原主行:模型无法拆散已判簇(spec §4 "只加不拆、不解归档")。
-          const anchored = ids.map((id) => g.rows.find((r) => r.id === id)!.duplicate_of).find((d) => d != null) ?? null;
-          const canonical = anchored ?? pickCanonical(db, ids);
+          // 已锚定的行(自己有 duplicate_of,或已是别的行的主行)绝不改动、绝不解归档
+          // (spec §4 "只加不拆、不解归档");模型不能拆散或合并已判定的簇。
+          const anchors = [...new Set(ids.map(anchorOf).filter((a): a is number => a != null))];
+          const canonical =
+            anchors.length === 0 ? pickCanonical(db, ids) : anchors.length === 1 ? anchors[0] : Math.min(...anchors);
           for (const id of ids) {
             stamp.run(id);
             if (id === canonical) continue;
-            const row = g.rows.find((r) => r.id === id)!;
-            if (row.duplicate_of != null) continue; // already linked elsewhere — leave it
+            if (anchorOf(id) != null) continue; // already anchored (own duplicate_of, or itself a canonical) — leave it
             setDup.run(canonical, id);
             setSkip.run(`duplicate of #${canonical}`, id);
             if (archive.run(id).changes > 0) summary.archived++;

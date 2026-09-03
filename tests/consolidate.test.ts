@@ -110,6 +110,48 @@ describe("runConsolidate", () => {
     expect(s.errors).toHaveLength(1);
     expect(pendingGroupKeys(db)).toEqual(["acme|swe intern"]);
   });
+
+  it("does not demote an established canonical", async () => {
+    const db = openDb(":memory:");
+    const p = seed(db, "p", { location: "Austin, TX" });
+    const q = seed(db, "q");
+    db.prepare("UPDATE jobs SET duplicate_of=?, dedup_judged_at='2026-01-01' WHERE id=?").run(p, q);
+    db.prepare("UPDATE jobs SET dedup_judged_at='2026-01-01' WHERE id=?").run(p);
+    db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(q);
+    const s = seed(db, "s", { location: "Los Angeles, CA" });
+    // model puts the established canonical P together with a new row S — S should join P,
+    // but P must not be demoted even though pickCanonical([p,s]) would otherwise prefer S (LA).
+    await runConsolidate(db, { backend: clustersBackend(() => [[p, s], [q]]) });
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(p) as any).duplicate_of).toBeNull();
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(s) as any).duplicate_of).toBe(p);
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(q) as any).duplicate_of).toBe(p);
+    expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(s) as any).status).toBe("archived");
+    expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(p) as any).status).toBe("matched");
+  });
+
+  it("never merges two established clusters", async () => {
+    const db = openDb(":memory:");
+    const p1 = seed(db, "p1");
+    const d1 = seed(db, "d1");
+    db.prepare("UPDATE jobs SET duplicate_of=?, dedup_judged_at='2026-01-01' WHERE id=?").run(p1, d1);
+    db.prepare("UPDATE jobs SET dedup_judged_at='2026-01-01' WHERE id=?").run(p1);
+    db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(d1);
+    const p2 = seed(db, "p2");
+    const d2 = seed(db, "d2");
+    db.prepare("UPDATE jobs SET duplicate_of=?, dedup_judged_at='2026-01-01' WHERE id=?").run(p2, d2);
+    db.prepare("UPDATE jobs SET dedup_judged_at='2026-01-01' WHERE id=?").run(p2);
+    db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(d2);
+    const n = seed(db, "n");
+    // model (wrongly) merges the two established canonicals with a new row, and splits their
+    // duplicates into their own cluster — neither established cluster may be merged/split.
+    await runConsolidate(db, { backend: clustersBackend(() => [[p1, p2, n], [d1, d2]]) });
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(p1) as any).duplicate_of).toBeNull();
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(p2) as any).duplicate_of).toBeNull();
+    const min = Math.min(p1, p2);
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(n) as any).duplicate_of).toBe(min);
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(d1) as any).duplicate_of).toBe(p1);
+    expect((db.prepare("SELECT duplicate_of FROM jobs WHERE id=?").get(d2) as any).duplicate_of).toBe(p2);
+  });
 });
 
 describe("consolidate prompt", () => {
@@ -120,5 +162,11 @@ describe("consolidate prompt", () => {
     expect(req.prompt).not.toContain("<b>hi</b>");
     expect(req.tier).toBe("fast");
     expect(parseConsolidateResults('[{"key":"k","clusters":[[1,2],[3]]}]')).toEqual([{ key: "k", clusters: [[1, 2], [3]] }]);
+  });
+
+  it("escapes scraped fields", () => {
+    const req = buildConsolidatePrompt([{ key: "k", rows: [{ id: 1, location: "<x>", posted_at: null, source: "greenhouse", ats: null, url_tail: "u", jd_len: 0, jd_excerpt: "", cluster: null }] }]);
+    expect(req.prompt).toContain("&lt;x&gt;");
+    expect(req.prompt).not.toContain("<x>");
   });
 });

@@ -19,7 +19,7 @@ export function buildConsolidatePrompt(groups: GroupInput[]): LlmRequest {
       const rows = g.rows
         .map(
           (r) =>
-            `- id=${r.id} | location: ${r.location ?? "n/a"} | posted: ${r.posted_at ?? "n/a"} | source: ${r.source}${r.ats ? "/" + r.ats : ""}` +
+            `- id=${r.id} | location: ${esc(r.location ?? "n/a")} | posted: ${esc(r.posted_at ?? "n/a")} | source: ${esc(r.source)}${r.ats ? "/" + esc(r.ats) : ""}` +
             ` | url: ${esc(r.url_tail)} | jd_len: ${r.jd_len}${r.cluster != null ? ` | existing_cluster: ${r.cluster}` : ""}\n  jd: ${esc(r.jd_excerpt) || "(no JD)"}`
         )
         .join("\n");
