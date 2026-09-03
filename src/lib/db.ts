@@ -1,6 +1,8 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { dedupKey } from "@/scanner/fingerprint";
+import { jdStatusFor } from "@/scanner/jd-status";
 
 export type DB = Database.Database;
 
@@ -17,7 +19,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -69,7 +71,33 @@ export function openDb(file?: string): DB {
     if (!runCols.includes("channel"))
       db.exec("ALTER TABLE executor_runs ADD COLUMN channel TEXT NOT NULL DEFAULT 'headless'");
     if (!runCols.includes("claimed_at")) db.exec("ALTER TABLE executor_runs ADD COLUMN claimed_at TEXT");
+    // v7 -> v8: jobs gained the dedup/eligibility/jd_status columns (spec 2026-09-03 §3).
+    const jobCols8 = (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name);
+    for (const [col, type] of [
+      ["dedup_key", "TEXT"],
+      ["duplicate_of", "INTEGER REFERENCES jobs(id)"],
+      ["dedup_judged_at", "TEXT"],
+      ["sponsorship", "TEXT"],
+      ["degree_req", "TEXT"],
+      ["role_kind", "TEXT"],
+      ["elig_source", "TEXT"],
+      ["jd_status", "TEXT"],
+    ] as const) {
+      if (!jobCols8.includes(col)) db.exec(`ALTER TABLE jobs ADD COLUMN ${col} ${type}`);
+    }
+    // Backfill in JS: norm() lives in TS, not SQL. Only rows never keyed — re-runnable.
+    const pending = db.prepare("SELECT id, company, title, jd_text FROM jobs WHERE dedup_key IS NULL").all() as
+      { id: number; company: string; title: string; jd_text: string | null }[];
+    const upd = db.prepare("UPDATE jobs SET dedup_key = ?, jd_status = ? WHERE id = ?");
+    const tx = db.transaction(() => {
+      for (const r of pending) upd.run(dedupKey(r.company, r.title), jdStatusFor(r.jd_text), r.id);
+    });
+    tx();
   }
+  // New DBs (found === 0) skip the migration block above but still need the index — it can't
+  // live in schema.sql's CREATE INDEX IF NOT EXISTS because that runs via db.exec(readSchema())
+  // before old DBs have gained the dedup_key column, so it's created here unconditionally instead.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs(dedup_key)");
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 
   return db;

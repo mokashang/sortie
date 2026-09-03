@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { fingerprint } from "@/scanner/fingerprint";
+import { fingerprint, dedupKey } from "@/scanner/fingerprint";
+import { jdStatusFor } from "@/scanner/jd-status";
 
 describe("fingerprint", () => {
   it("is stable across case/spacing/punctuation", () => {
@@ -24,5 +25,21 @@ describe("fingerprint", () => {
     expect(fingerprint("日本電気株式会社", "エンジニア", "東京")).not.toBe(
       fingerprint("株式会社日立製作所", "エンジニア", "東京")
     );
+  });
+});
+
+describe("dedupKey", () => {
+  it("normalizes company and title, ignores location, strips corp suffixes", () => {
+    expect(dedupKey("Acme, Inc.", "Software Engineer Intern")).toBe("acme|software engineer intern");
+    expect(dedupKey("ACME", "  Software   Engineer Intern ")).toBe("acme|software engineer intern");
+  });
+});
+
+describe("jdStatusFor", () => {
+  it("is 'missing' for empty or listing-metadata-only text, null for rich text", () => {
+    expect(jdStatusFor("")).toBe("missing");
+    expect(jdStatusFor(null)).toBe("missing");
+    expect(jdStatusFor("[listing metadata] no visa sponsorship")).toBe("missing");
+    expect(jdStatusFor("We are hiring a backend engineer.")).toBeNull();
   });
 });

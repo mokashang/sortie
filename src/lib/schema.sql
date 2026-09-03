@@ -12,6 +12,14 @@ CREATE TABLE IF NOT EXISTS jobs (
   job_kind TEXT NOT NULL DEFAULT 'newgrad',  -- newgrad | intern
   visa_flag TEXT,                  -- NULL | no_sponsor | citizen_only | clearance
   loc_flag TEXT,                   -- NULL | non_us
+  dedup_key TEXT,                  -- norm(company)|norm(title),同岗多 base 共享;consolidate 分组键
+  duplicate_of INTEGER REFERENCES jobs(id),  -- 非主行指向主行
+  dedup_judged_at TEXT,            -- consolidate 判过的时间;组内任一行为空 ⇒ 待判
+  sponsorship TEXT,                -- NULL | yes | no | unknown
+  degree_req TEXT,                 -- NULL | ms_ok | phd_only
+  role_kind TEXT,                  -- NULL | eng | non_tech
+  elig_source TEXT,                -- NULL | match_llm | jd_review | executor_live
+  jd_status TEXT,                  -- NULL(ATS 自带正文) | missing | reviewed | login_wall | unreachable | closed
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

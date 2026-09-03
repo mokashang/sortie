@@ -61,7 +61,7 @@ describe("db", () => {
 
   it("sets user_version as a migration hook for future plans", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(8);
   });
 
   it("reads user_version before stamping it (read-then-stamp, not a blind unconditional write)", () => {
@@ -70,7 +70,7 @@ describe("db", () => {
       openDb(":memory:");
       const calls = spy.mock.calls.map((c) => c[0]);
       const readIdx = calls.indexOf("user_version");
-      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*7$/.test(c));
+      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*8$/.test(c));
       expect(readIdx).toBeGreaterThanOrEqual(0);
       expect(writeIdx).toBeGreaterThan(readIdx);
     } finally {
@@ -107,6 +107,40 @@ describe("db", () => {
       .prepare("SELECT updated_at FROM applications WHERE job_id = ?")
       .get(jobId) as { updated_at: string };
     expect(row.updated_at).not.toBe("2000-01-01 00:00:00");
+  });
+
+  it("migrates a v7 db to v8: adds columns, backfills dedup_key and jd_status, creates index", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jsdb-"));
+    const file = path.join(dir, "v7.db");
+    const raw = new Database(file);
+    raw.exec(`CREATE TABLE jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fingerprint TEXT NOT NULL UNIQUE,
+      company TEXT NOT NULL, title TEXT NOT NULL, location TEXT, jd_text TEXT, apply_url TEXT,
+      source TEXT NOT NULL, ats TEXT, posted_at TEXT,
+      job_kind TEXT NOT NULL DEFAULT 'newgrad', visa_flag TEXT, loc_flag TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+    raw.prepare("INSERT INTO jobs (fingerprint, company, title, jd_text, source) VALUES (?,?,?,?,?)")
+      .run("a", "Acme Inc", "SWE Intern", "", "github_list");
+    raw.prepare("INSERT INTO jobs (fingerprint, company, title, jd_text, source) VALUES (?,?,?,?,?)")
+      .run("b", "Acme", "SWE Intern", "Real JD text here", "greenhouse");
+    raw.pragma("user_version = 7");
+    raw.close();
+
+    const db = openDb(file);
+    const cols = (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name);
+    for (const c of ["dedup_key", "duplicate_of", "dedup_judged_at", "sponsorship", "degree_req", "role_kind", "elig_source", "jd_status"]) {
+      expect(cols).toContain(c);
+    }
+    const rows = db.prepare("SELECT fingerprint, dedup_key, jd_status FROM jobs ORDER BY id").all() as any[];
+    expect(rows[0]).toMatchObject({ fingerprint: "a", dedup_key: "acme|swe intern", jd_status: "missing" });
+    expect(rows[1]).toMatchObject({ fingerprint: "b", dedup_key: "acme|swe intern", jd_status: null });
+    const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_jobs_dedup_key'").get();
+    expect(idx).toBeTruthy();
+    expect(db.pragma("user_version", { simple: true })).toBe(8);
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   describe("getDb singleton", () => {
