@@ -309,6 +309,18 @@ describe("pagedQueue", () => {
     expect(result.total).toBe(1);
     expect(result.rows[0].id).toBe(noDir);
   });
+
+  it("pagedQueue rows carry dup_count and jd_status", () => {
+    const db = openDb(":memory:");
+    const main = seedJob(db, { fingerprint: "m", title: "SWE" });
+    const d1 = seedJob(db, { fingerprint: "d1", title: "SWE" });
+    const d2 = seedJob(db, { fingerprint: "d2", title: "SWE" });
+    db.prepare("UPDATE jobs SET duplicate_of=? WHERE id IN (?,?)").run(main, d1, d2);
+    db.prepare("UPDATE jobs SET jd_status='missing' WHERE id=?").run(main);
+    const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0]).toMatchObject({ id: main, dup_count: 2, jd_status: "missing" });
+  });
 });
 
 describe("QUEUE_ELIGIBLE_SQL", () => {

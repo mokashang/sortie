@@ -575,6 +575,8 @@ export interface PagedQueueRow {
   reason: string | null;
   posted_at: string | null;
   pinned: number;
+  dup_count: number;
+  jd_status: string | null;
 }
 
 export interface PagedQueueResult {
@@ -621,7 +623,9 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
   const rows = db
     .prepare(
       `SELECT j.id, j.company, j.title, j.location, j.apply_url, m.direction, m.score, m.tier, m.reason,
-              j.posted_at, a.pinned
+              j.posted_at, a.pinned,
+              j.jd_status,
+              (SELECT COUNT(*) FROM jobs d WHERE d.duplicate_of = j.id) AS dup_count
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id

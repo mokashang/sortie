@@ -76,7 +76,12 @@ export default function ApplyPage() {
         申请退回队列。
       </p>
 
-      <ExecutorPanel kinds={[{ kind: "apply", label: "开始投递", quotaTable: true }]} />
+      <ExecutorPanel
+        kinds={[
+          { kind: "apply", label: "开始投递", quotaTable: true },
+          { kind: "jd_review", label: "补正文(Claude 逐页读)", withLimit: true, defaultLimit: 40, headlessOnly: true, pendingCountUrl: "/api/jd-review/pending-count" },
+        ]}
+      />
 
       <div style={{ display: "flex", gap: 24, margin: "16px 0 20px", fontSize: 14 }}>
         <span>
