@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { startExecutor, ExecutorKind, ExecutorChannel } from "@/executor/runner";
 
-const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find"];
+const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review"];
 const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 
 // POST {kind: 'apply'|'network_send'|'network_find', options?, channel?: 'headless'|'user_chrome'}

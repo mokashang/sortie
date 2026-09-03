@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApplyQuotaTable } from "@/app/apply/quota-table";
 
-export type ExecutorKind = "apply" | "network_send" | "network_find";
+export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review";
 
 export interface ExecutorKindConfig {
   kind: ExecutorKind;
