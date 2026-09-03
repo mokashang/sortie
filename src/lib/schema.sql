@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS matches (
   resume_id INTEGER REFERENCES resumes(id),
   reason TEXT,
   skip_reason TEXT,
+  referral_fit INTEGER,            -- NULL=unclassified | 1=suggest referral | 0=suggest direct (Claude, src/matcher/referral-fit.ts)
+  referral_reason TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS applications (
   job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id),
   status TEXT NOT NULL DEFAULT 'discovered',
   -- discovered|matched|prepared|awaiting_confirm|submitted|oa|interview|offer|rejected|stale|archived
+  -- |referral_seeking (taken by a referral batch, waiting on outreach) |referral_ready (referral obtained, to apply)
   submitted_at TEXT,
   resume_id INTEGER REFERENCES resumes(id),
   form_screenshot TEXT,
@@ -43,6 +46,9 @@ CREATE TABLE IF NOT EXISTS applications (
   confirm_decision TEXT,           -- NULL | approved | rejected
   needs_manual_reason TEXT,
   pinned INTEGER NOT NULL DEFAULT 0,  -- user-priority flag from /queue; sorts first everywhere
+  apply_mode TEXT,                 -- NULL (follow suggestion) | referral | direct — user override from /queue
+  referral_info TEXT,              -- JSON {source, link?, code?, note?, at} once a referral is obtained
+  referral_reached_at TEXT,        -- when the first referral request was actually sent (UTC)
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -71,6 +77,13 @@ CREATE TABLE IF NOT EXISTS outreach (
   outcome TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS outreach_jobs (
+  outreach_id INTEGER NOT NULL REFERENCES outreach(id),
+  job_id INTEGER NOT NULL REFERENCES jobs(id),
+  PRIMARY KEY (outreach_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_outreach_jobs_job ON outreach_jobs(job_id);
 
 CREATE TABLE IF NOT EXISTS companies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

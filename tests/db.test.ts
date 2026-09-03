@@ -61,7 +61,7 @@ describe("db", () => {
 
   it("sets user_version as a migration hook for future plans", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(8);
   });
 
   it("reads user_version before stamping it (read-then-stamp, not a blind unconditional write)", () => {
@@ -70,7 +70,7 @@ describe("db", () => {
       openDb(":memory:");
       const calls = spy.mock.calls.map((c) => c[0]);
       const readIdx = calls.indexOf("user_version");
-      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*7$/.test(c));
+      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*8$/.test(c));
       expect(readIdx).toBeGreaterThanOrEqual(0);
       expect(writeIdx).toBeGreaterThan(readIdx);
     } finally {
@@ -119,5 +119,37 @@ describe("db", () => {
       (globalThis as { __jsdb?: unknown }).__jsdb = fakeDb;
       expect(getDb()).toBe(fakeDb);
     });
+  });
+});
+
+describe("db v8 migration", () => {
+  it("v8: adds referral columns and outreach_jobs, and migrates a v7 db idempotently", () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "jsdb-v8-")), "t.db");
+    // Simulate a v7 database: hand-built tables without the v8 columns, user_version=7, so the
+    // migration path (ALTER TABLE ADD COLUMN) is exercised; the second open must be a no-op.
+    const raw = new Database(file);
+    raw.exec(`
+      CREATE TABLE jobs (id INTEGER PRIMARY KEY, fingerprint TEXT UNIQUE, company TEXT, title TEXT, source TEXT, created_at TEXT);
+      CREATE TABLE matches (id INTEGER PRIMARY KEY, job_id INTEGER UNIQUE, direction TEXT, score INTEGER, tier INTEGER, resume_id INTEGER, reason TEXT, skip_reason TEXT, created_at TEXT);
+      CREATE TABLE applications (id INTEGER PRIMARY KEY, job_id INTEGER UNIQUE, status TEXT NOT NULL DEFAULT 'discovered', submitted_at TEXT, resume_id INTEGER, form_screenshot TEXT, confirm_screenshot TEXT, referral_person_id INTEGER, origin_outreach_id INTEGER, answer_pack TEXT, filled_fields TEXT, confirm_decision TEXT, needs_manual_reason TEXT, pinned INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+      CREATE TABLE executor_runs (id INTEGER PRIMARY KEY, kind TEXT, status TEXT, channel TEXT, pid INTEGER, log_path TEXT, options TEXT, summary TEXT, started_at TEXT, claimed_at TEXT, ended_at TEXT);
+      PRAGMA user_version = 7;
+    `);
+    raw.close();
+
+    for (let i = 0; i < 2; i++) {
+      const db = openDb(file);
+      const mCols = (db.prepare("PRAGMA table_info(matches)").all() as { name: string }[]).map((c) => c.name);
+      expect(mCols).toContain("referral_fit");
+      expect(mCols).toContain("referral_reason");
+      const aCols = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map((c) => c.name);
+      expect(aCols).toContain("apply_mode");
+      expect(aCols).toContain("referral_info");
+      expect(aCols).toContain("referral_reached_at");
+      const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((t) => t.name);
+      expect(tables).toContain("outreach_jobs");
+      expect(db.pragma("user_version", { simple: true })).toBe(8);
+      db.close();
+    }
   });
 });

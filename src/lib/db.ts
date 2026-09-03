@@ -17,7 +17,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -69,6 +69,17 @@ export function openDb(file?: string): DB {
     if (!runCols.includes("channel"))
       db.exec("ALTER TABLE executor_runs ADD COLUMN channel TEXT NOT NULL DEFAULT 'headless'");
     if (!runCols.includes("claimed_at")) db.exec("ALTER TABLE executor_runs ADD COLUMN claimed_at TEXT");
+    // v7 -> v8: referral-in-apply. matches gained referral_fit/referral_reason (Claude's
+    // "worth seeking a referral?" classification); applications gained apply_mode (user
+    // override), referral_info (JSON, once a referral is obtained) and referral_reached_at.
+    // outreach_jobs is a new table — CREATE TABLE IF NOT EXISTS above already created it.
+    const matchCols = (db.prepare("PRAGMA table_info(matches)").all() as { name: string }[]).map((c) => c.name);
+    if (!matchCols.includes("referral_fit")) db.exec("ALTER TABLE matches ADD COLUMN referral_fit INTEGER");
+    if (!matchCols.includes("referral_reason")) db.exec("ALTER TABLE matches ADD COLUMN referral_reason TEXT");
+    const appCols8 = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map((c) => c.name);
+    for (const col of ["apply_mode", "referral_info", "referral_reached_at"] as const) {
+      if (!appCols8.includes(col)) db.exec(`ALTER TABLE applications ADD COLUMN ${col} TEXT`);
+    }
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 
