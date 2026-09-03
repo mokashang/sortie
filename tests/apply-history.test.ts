@@ -207,3 +207,24 @@ describe("reportFill with archive (live-page hard ineligibility)", () => {
     expect(app(db, target).needs_manual_reason).toBe("captcha");
   });
 });
+
+describe("apply mode in history", () => {
+  it("history rows carry applyMode + referralPersonName", () => {
+    const db = openDb(":memory:");
+    const ref = seedJob(db, { company: "Google", status: "submitted", submittedAt: "2026-09-03 10:00:00" });
+    const pid = db.prepare("INSERT INTO people (name, company) VALUES ('Jane','Google')").run().lastInsertRowid as number;
+    db.prepare("UPDATE applications SET referral_person_id = ?, referral_info = ? WHERE job_id = ?").run(
+      pid,
+      JSON.stringify({ source: "linkedin", at: "x" }),
+      ref
+    );
+    const direct = seedJob(db, { company: "Acme", status: "submitted", submittedAt: "2026-09-03 11:00:00" });
+    const rows = applicationHistory(db);
+    const r = rows.find((x) => x.jobId === ref)!;
+    expect(r.applyMode).toBe("referral");
+    expect(r.referralPersonName).toBe("Jane");
+    expect(rows.find((x) => x.jobId === direct)!.applyMode).toBe("direct");
+    db.prepare("UPDATE applications SET submitted_at = datetime('now') WHERE job_id = ?").run(ref);
+    expect(todaySubmitted(db).find((x) => x.jobId === ref)!.applyMode).toBe("referral");
+  });
+});

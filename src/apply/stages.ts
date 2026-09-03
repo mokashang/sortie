@@ -28,4 +28,7 @@ export interface HistoryRow {
   updatedAt: string; // local "YYYY-MM-DD HH:MM"
   resumeVersion: string | null;
   lastNote: string | null;
+  // 内推 (a referral was recorded for this application) vs 海投 — the /history 方式 column.
+  applyMode: "referral" | "direct";
+  referralPersonName: string | null;
 }

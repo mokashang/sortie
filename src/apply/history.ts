@@ -51,9 +51,16 @@ interface HistoryRawRow {
   updated_at: string;
   answer_pack: string | null;
   last_note: string | null;
+  apply_mode: "referral" | "direct";
+  referral_person_name: string | null;
 }
 
 const STAGE_IN = `(${POST_SUBMIT_STAGES.map((s) => `'${s}'`).join(",")})`;
+
+// How the application was submitted: with a referral (referralDecide 'won' wrote referral_info,
+// or network/gate's recordOutcome stamped referral_person_id) or cold.
+const APPLY_MODE_SQL =
+  "CASE WHEN a.referral_info IS NOT NULL OR a.referral_person_id IS NOT NULL THEN 'referral' ELSE 'direct' END";
 
 // /history's data source: every application that has been submitted, newest submission first.
 // The page groups these client-side by direction tab and by submittedDay.
@@ -65,6 +72,7 @@ export function applicationHistory(db: DB): HistoryRow[] {
               strftime('%Y-%m-%d', a.submitted_at, 'localtime') as submitted_day,
               strftime('%Y-%m-%d %H:%M', a.updated_at, 'localtime') as updated_at,
               a.answer_pack,
+              ${APPLY_MODE_SQL} as apply_mode, p.name as referral_person_name,
               (SELECT json_extract(e.payload, '$.note') FROM events e
                  WHERE e.kind = 'application_stage' AND e.entity_id = a.job_id
                    AND json_extract(e.payload, '$.note') IS NOT NULL
@@ -72,6 +80,7 @@ export function applicationHistory(db: DB): HistoryRow[] {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        LEFT JOIN matches m ON m.job_id = j.id
+       LEFT JOIN people p ON p.id = a.referral_person_id
        WHERE a.status IN ${STAGE_IN} AND a.submitted_at IS NOT NULL
        ORDER BY a.submitted_at DESC, a.job_id DESC`
     )
@@ -96,6 +105,8 @@ export function applicationHistory(db: DB): HistoryRow[] {
       updatedAt: r.updated_at,
       resumeVersion,
       lastNote: r.last_note,
+      applyMode: r.apply_mode,
+      referralPersonName: r.referral_person_name,
     };
   });
 }
@@ -106,6 +117,8 @@ export interface TodaySubmittedRow {
   title: string;
   direction: string | null;
   submittedAt: string; // local "HH:MM"
+  applyMode: "referral" | "direct";
+  referralPersonName: string | null;
 }
 
 // /apply's "今日已提交" strip. "Today" is the server's local calendar day (resets at local
@@ -115,22 +128,34 @@ export function todaySubmitted(db: DB): TodaySubmittedRow[] {
   const rows = db
     .prepare(
       `SELECT a.job_id, j.company, j.title, m.direction,
-              strftime('%H:%M', a.submitted_at, 'localtime') as submitted_at
+              strftime('%H:%M', a.submitted_at, 'localtime') as submitted_at,
+              ${APPLY_MODE_SQL} as apply_mode, p.name as referral_person_name
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        LEFT JOIN matches m ON m.job_id = j.id
+       LEFT JOIN people p ON p.id = a.referral_person_id
        WHERE a.status IN ${STAGE_IN}
          AND a.submitted_at IS NOT NULL
          AND date(a.submitted_at, 'localtime') = date('now', 'localtime')
        ORDER BY a.submitted_at DESC`
     )
-    .all() as { job_id: number; company: string; title: string; direction: string | null; submitted_at: string }[];
+    .all() as {
+    job_id: number;
+    company: string;
+    title: string;
+    direction: string | null;
+    submitted_at: string;
+    apply_mode: "referral" | "direct";
+    referral_person_name: string | null;
+  }[];
   return rows.map((r) => ({
     jobId: r.job_id,
     company: r.company,
     title: r.title,
     direction: r.direction,
     submittedAt: r.submitted_at,
+    applyMode: r.apply_mode,
+    referralPersonName: r.referral_person_name,
   }));
 }
 

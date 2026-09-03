@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { directionLabel } from "@/matcher/directions";
 import { POST_SUBMIT_STAGES, STAGE_LABELS, HistoryRow, PostSubmitStage } from "@/apply/stages";
+import { ModeFilter, ModeFilterValue } from "@/app/components/mode-filter";
 
 const ALL = "__all__";
 
@@ -22,6 +23,7 @@ function stageClass(stage: PostSubmitStage): string {
 
 export function HistoryBoard({ rows }: { rows: HistoryRow[] }) {
   const [direction, setDirection] = useState<string>(ALL);
+  const [modeFilter, setModeFilter] = useState<ModeFilterValue>("all");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState("");
 
@@ -36,7 +38,14 @@ export function HistoryBoard({ rows }: { rows: HistoryRow[] }) {
     });
   }, [rows]);
 
-  const visible = direction === ALL ? rows : rows.filter((r) => (r.direction ?? "") === direction);
+  const visible = (direction === ALL ? rows : rows.filter((r) => (r.direction ?? "") === direction)).filter(
+    (r) => modeFilter === "all" || r.applyMode === modeFilter
+  );
+  const modeCounts = {
+    all: rows.length,
+    referral: rows.filter((r) => r.applyMode === "referral").length,
+    direct: rows.filter((r) => r.applyMode === "direct").length,
+  };
 
   const stageCounts = useMemo(() => {
     const m = new Map<PostSubmitStage, number>();
@@ -98,6 +107,10 @@ export function HistoryBoard({ rows }: { rows: HistoryRow[] }) {
         })}
       </div>
 
+      <div style={{ margin: "10px 0 0" }}>
+        <ModeFilter value={modeFilter} onChange={setModeFilter} labels={{ referral: "内推", direct: "海投" }} counts={modeCounts} />
+      </div>
+
       <div style={{ display: "flex", gap: 18, margin: "12px 0 16px", fontSize: 13, flexWrap: "wrap" }}>
         {POST_SUBMIT_STAGES.map((s) => (
           <span key={s} className={stageClass(s)}>
@@ -118,6 +131,7 @@ export function HistoryBoard({ rows }: { rows: HistoryRow[] }) {
               <tr>
                 <th>时间</th>
                 <th>方向</th>
+                <th>方式</th>
                 <th>公司</th>
                 <th>标题</th>
                 <th>简历</th>
@@ -132,6 +146,13 @@ export function HistoryBoard({ rows }: { rows: HistoryRow[] }) {
                   <td className="mono text-sub" style={{ whiteSpace: "nowrap" }}>{r.submittedAt.slice(11)}</td>
                   <td>
                     <span className="chip">{r.direction ? directionLabel(r.direction) : "未分类"}</span>
+                  </td>
+                  <td style={{ fontSize: 13 }}>
+                    {r.applyMode === "referral" ? (
+                      <span className="text-good">内推{r.referralPersonName ? ` · ${r.referralPersonName}` : ""}</span>
+                    ) : (
+                      <span className="text-sub">海投</span>
+                    )}
                   </td>
                   <td className="company">{r.company}</td>
                   <td>
