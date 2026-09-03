@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { ConfirmPanel } from "./confirm-panel";
+import { InfoPanel } from "./info-panel";
 import { ManualList, ManualRow } from "./manual-list";
 import { ExecutorPanel } from "@/app/components/executor-panel";
 import { directionLabel } from "@/matcher/directions";
@@ -63,6 +64,8 @@ export default function ApplyPage() {
         <span>待确认 <strong className="mono">{pendingCount}</strong></span>
         <span>需人工 <strong className="mono">{manualRows.length}</strong></span>
       </div>
+
+      <InfoPanel />
 
       <section className="panel">
         <div className="panel-title">待确认</div>

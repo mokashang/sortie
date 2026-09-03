@@ -574,14 +574,14 @@ describe("confirmStatus", () => {
     const jobId = seedJob(db, { status: "awaiting_confirm" });
     decide(db, jobId, "approve");
 
-    expect(confirmStatus(db, jobId)).toEqual({ decision: "approved", status: "awaiting_confirm" });
+    expect(confirmStatus(db, jobId)).toEqual({ decision: "approved", status: "awaiting_confirm", infoAnswers: null });
   });
 
   it("returns a null decision before any decide() call", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
-    expect(confirmStatus(db, jobId)).toEqual({ decision: null, status: "prepared" });
+    expect(confirmStatus(db, jobId)).toEqual({ decision: null, status: "prepared", infoAnswers: null });
   });
 });
 

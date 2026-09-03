@@ -17,7 +17,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -69,6 +69,12 @@ export function openDb(file?: string): DB {
     if (!runCols.includes("channel"))
       db.exec("ALTER TABLE executor_runs ADD COLUMN channel TEXT NOT NULL DEFAULT 'headless'");
     if (!runCols.includes("claimed_at")) db.exec("ALTER TABLE executor_runs ADD COLUMN claimed_at TEXT");
+    // v7 -> v8: applications gained pending_questions / info_answers (the in-App "待补信息" flow:
+    // executor asks, App notifies, user answers on /apply, executor continues). New status value
+    // 'needs_info' needs no column change.
+    const appCols8 = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map((c) => c.name);
+    if (!appCols8.includes("pending_questions")) db.exec("ALTER TABLE applications ADD COLUMN pending_questions TEXT");
+    if (!appCols8.includes("info_answers")) db.exec("ALTER TABLE applications ADD COLUMN info_answers TEXT");
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 

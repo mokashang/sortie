@@ -28,8 +28,10 @@ call `POST /api/executor/log` as you go and `POST /api/executor/finish` when don
 
 **Never ask the user for missing answers in the Claude session** (AskUserQuestion or chat) — the
 user wants every interaction in the App. A required question with no answer-pack value is a
-`needs_manual` report whose reason names the question, its options and the suggested
-`standard_answers` key; the user fills it on /profile (标准答案) and hits 重试.
+`needs_info` report (`{jobId, status:'needs_info', questions:[{key,label,hint?,options?}]}`): the
+App notifies the user, they answer on /apply's 待补信息 card, and you keep the tab open and poll
+`GET /api/apply/pending?jobId=` until status is back to `prepared` with `infoAnswers`, then
+continue the fill. See CLAUDE.md §3.4 for the timeout rule.
 
 **The authoritative, up-to-date attended-session protocol is CLAUDE.md §3** (count = number of
 fills reported awaiting_confirm, not attempts; `archive:true` for hard ineligibility found on the

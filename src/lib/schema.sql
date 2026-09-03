@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS applications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id),
   status TEXT NOT NULL DEFAULT 'discovered',
-  -- discovered|matched|prepared|awaiting_confirm|submitted|oa|interview|offer|rejected|stale|archived
+  -- discovered|matched|prepared|needs_info|awaiting_confirm|submitted|oa|interview|offer|rejected|stale|archived
   submitted_at TEXT,
   resume_id INTEGER REFERENCES resumes(id),
   form_screenshot TEXT,
@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS applications (
   confirm_decision TEXT,           -- NULL | approved | rejected
   needs_manual_reason TEXT,
   pinned INTEGER NOT NULL DEFAULT 0,  -- user-priority flag from /queue; sorts first everywhere
+  pending_questions TEXT,          -- JSON: [{key,label,hint?,options?}] the executor needs answered (status needs_info)
+  info_answers TEXT,               -- JSON: {key: value} answers the user gave in-App for this application (merged into answerPack.custom)
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
