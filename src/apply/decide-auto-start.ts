@@ -1,6 +1,6 @@
 import { DB } from "@/lib/db";
 import { decide } from "@/apply/queue";
-import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel } from "@/executor/runner";
+import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
 // named export on route.ts) because Next's typed-routes checker only tolerates the recognized
@@ -35,6 +35,26 @@ export interface DecideAutoStartResult {
 // Inject hasLiveOrQueuedRun/lastRunChannel/startExecutor to avoid touching a real DB/process in
 // tests. A failure here must never break the approve itself, hence the try/catch: the approval
 // already succeeded by the time we get here.
+// Enqueue/spawn an 'apply' run with `options` unless one is already live or queued. Shared by
+// the apply confirm (resume:true), the network approve for job-linked outreach (resume:true) and
+// the referral board's 直接投/有内推/换人 buttons ({jobIds, mode}). Never throws: a failure here
+// must never break the caller's own state change, which already succeeded.
+export function maybeAutoStartApply(db: DB, options: StartOptions, deps: DecideAutoStartDeps = {}): DecideAutoStartResult {
+  const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
+  const getLastChannel = deps.lastRunChannel ?? lastRunChannel;
+  const start = deps.startExecutor ?? startExecutor;
+  try {
+    if (!checkLiveOrQueued(db, "apply")) {
+      const channel: ExecutorChannel = getLastChannel(db, "apply") === "headless" ? "headless" : "user_chrome";
+      const result = start(db, "apply", options, {}, channel);
+      return { autoStarted: true, runId: result.id, channel };
+    }
+  } catch {
+    // The user still sees "已批准" and can retry from the App's own 开始投递 button.
+  }
+  return { autoStarted: false };
+}
+
 export function decideAndMaybeAutoStart(
   db: DB,
   jobId: number,
@@ -43,23 +63,6 @@ export function decideAndMaybeAutoStart(
   deps: DecideAutoStartDeps = {}
 ): DecideAutoStartResult {
   decide(db, jobId, decision, reason);
-
-  if (decision !== "approve") {
-    return { autoStarted: false };
-  }
-
-  const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
-  const getLastChannel = deps.lastRunChannel ?? lastRunChannel;
-  const start = deps.startExecutor ?? startExecutor;
-  try {
-    if (!checkLiveOrQueued(db, "apply")) {
-      const channel: ExecutorChannel = getLastChannel(db, "apply") === "headless" ? "headless" : "user_chrome";
-      const result = start(db, "apply", { resume: true }, {}, channel);
-      return { autoStarted: true, runId: result.id, channel };
-    }
-  } catch {
-    // Spawn/enqueue failure must never break the approve itself — the approval already succeeded
-    // above. The user still sees "已批准" and can retry from the App's own 开始投递 button.
-  }
-  return { autoStarted: false };
+  if (decision !== "approve") return { autoStarted: false };
+  return maybeAutoStartApply(db, { resume: true }, deps);
 }
