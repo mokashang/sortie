@@ -11,9 +11,17 @@ import { DB, logEvent } from "@/lib/db";
 // no marker. Every query here converts with sqlite's 'localtime' modifier so "today" and the
 // day-grouping headers follow the server's wall clock (the user's own day), not the UTC day.
 
-import { POST_SUBMIT_STAGES, PostSubmitStage, isPostSubmitStage, HistoryRow } from "@/apply/stages";
+import {
+  POST_SUBMIT_STAGES,
+  PostSubmitStage,
+  PeakStage,
+  isPostSubmitStage,
+  peakOf,
+  isRung,
+  HistoryRow,
+} from "@/apply/stages";
 export { POST_SUBMIT_STAGES, STAGE_LABELS } from "@/apply/stages";
-export type { PostSubmitStage, HistoryRow } from "@/apply/stages";
+export type { PostSubmitStage, PeakStage, HistoryRow } from "@/apply/stages";
 
 // User -> App from /history's per-row status selector. Any post-submit stage may move to any
 // other post-submit stage (including backwards — a mis-click must be undoable without a special
@@ -51,6 +59,7 @@ interface HistoryRawRow {
   updated_at: string;
   answer_pack: string | null;
   last_note: string | null;
+  stage_path: string | null; // JSON array of every 'to' in this row's application_stage events
   apply_mode: "referral" | "direct";
   referral_person_name: string | null;
 }
@@ -76,7 +85,11 @@ export function applicationHistory(db: DB): HistoryRow[] {
               (SELECT json_extract(e.payload, '$.note') FROM events e
                  WHERE e.kind = 'application_stage' AND e.entity_id = a.job_id
                    AND json_extract(e.payload, '$.note') IS NOT NULL
-                 ORDER BY e.id DESC LIMIT 1) as last_note
+                 ORDER BY e.id DESC LIMIT 1) as last_note,
+              (SELECT json_group_array(t) FROM (
+                 SELECT json_extract(e.payload, '$.to') AS t FROM events e
+                 WHERE e.kind = 'application_stage' AND e.entity_id = a.job_id
+                 ORDER BY e.id)) as stage_path
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        LEFT JOIN matches m ON m.job_id = j.id
@@ -93,13 +106,33 @@ export function applicationHistory(db: DB): HistoryRow[] {
     } catch {
       resumeVersion = null;
     }
+    // Peak = the last rung the row stood on, walking the timeline [submitted, ...every 'to'].
+    // If the current status is a rung, that's simply the current status — so a backwards move
+    // (oa -> submitted) is a correction and the chart follows it. If the current status is an
+    // outcome (rejected / stale), the peak is the last rung before it — so "rejected after
+    // interview" branches off the interview node. Rows that predate stage events fall back to
+    // the current status alone.
+    const status = r.status as PostSubmitStage;
+    let peak: PeakStage = peakOf(status);
+    if (!isRung(status)) {
+      try {
+        const path: unknown[] = r.stage_path ? JSON.parse(r.stage_path) : [];
+        const timeline: PostSubmitStage[] = ["submitted"];
+        for (const to of path) if (typeof to === "string" && isPostSubmitStage(to)) timeline.push(to);
+        const lastRung = [...timeline].reverse().find(isRung);
+        if (lastRung) peak = peakOf(lastRung);
+      } catch {
+        /* malformed payload: keep the status-derived peak */
+      }
+    }
     return {
       jobId: r.job_id,
       company: r.company,
       title: r.title,
       applyUrl: r.apply_url,
       direction: r.direction,
-      status: r.status as PostSubmitStage,
+      status,
+      peak,
       submittedAt: r.submitted_at,
       submittedDay: r.submitted_day,
       updatedAt: r.updated_at,

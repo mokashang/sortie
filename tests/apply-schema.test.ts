@@ -14,7 +14,7 @@ describe("apply executor schema (v3)", () => {
     for (const col of ["answer_pack", "filled_fields", "confirm_decision", "needs_manual_reason"]) {
       expect(cols).toContain(col);
     }
-    expect(db.pragma("user_version", { simple: true })).toBe(8);
+    expect(db.pragma("user_version", { simple: true })).toBe(9);
   });
 
   it("inserts and reads back the new columns", () => {
@@ -92,7 +92,7 @@ describe("apply executor schema (v3)", () => {
       for (const col of ["answer_pack", "filled_fields", "confirm_decision", "needs_manual_reason"]) {
         expect(cols).toContain(col);
       }
-      expect(db.pragma("user_version", { simple: true })).toBe(8);
+      expect(db.pragma("user_version", { simple: true })).toBe(9);
 
       // Pre-existing data survives the migration.
       const row = db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as {
@@ -103,7 +103,7 @@ describe("apply executor schema (v3)", () => {
 
       // Idempotent: opening the now-current-version db again must not throw (columns already present).
       const db2 = openDb(tmpFile);
-      expect(db2.pragma("user_version", { simple: true })).toBe(8);
+      expect(db2.pragma("user_version", { simple: true })).toBe(9);
       db2.close();
     });
   });

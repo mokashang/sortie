@@ -124,6 +124,19 @@ export function takeNextApplication(
       { version_name: selection.versionName, pdf_path: selection.pdfPath },
       parseReferral(row.referral_info, row.referral_person_name)
     );
+    // Answers the user gave in-App for THIS job earlier (the 待补信息 flow, "仅本次" ones in
+    // particular — remembered ones already live in profile.standard_answers) ride along in
+    // custom, so a re-take after a timeout/reclaim doesn't ask the same questions again.
+    const prior = db.prepare("SELECT info_answers FROM applications WHERE job_id = ?").get(row.job_id) as
+      | { info_answers: string | null }
+      | undefined;
+    if (prior?.info_answers) {
+      try {
+        Object.assign(answerPack.custom, JSON.parse(prior.info_answers));
+      } catch {
+        // corrupt JSON — ignore, the profile answers alone are still a valid pack
+      }
+    }
 
     // confirm_decision reset to NULL defensively: a previous cycle through this same job_id could
     // in principle have left a stale 'rejected'/'approved' behind it; a freshly prepared task must
@@ -149,9 +162,21 @@ export function takeNextApplication(
   }
 }
 
+export interface InfoQuestion {
+  key: string; // standard_answers key the answer is stored under (e.g. "high_school")
+  label: string; // the question as the form words it
+  hint?: string; // anything that helps the user answer (e.g. "表单定义 Summer = April–July")
+  options?: string[]; // exact option texts when the form is a select
+  optional?: boolean; // the form doesn't require it (e.g. an optional essay) — the user may leave it blank to skip
+}
+
 export interface ReportFillInput {
   jobId: number;
-  status: "awaiting_confirm" | "needs_manual" | "error";
+  status: "awaiting_confirm" | "needs_manual" | "needs_info" | "error";
+  // needs_info only: what the executor needs from the user before it can finish this form. The
+  // App stores them, notifies the user, and the executor polls /api/apply/pending?jobId= until
+  // the user has answered on /apply (status back to 'prepared', answers in infoAnswers).
+  questions?: InfoQuestion[];
   // Typed as Record<string, string> for the happy path, but this arrives over HTTP as
   // unvalidated JSON — see coerceFieldValue below for why the runtime doesn't trust the type.
   filledFields?: Record<string, string>;
@@ -184,8 +209,18 @@ export function reportFill(db: DB, input: ReportFillInput): void {
     | { status: string }
     | undefined;
   if (!row) throw new Error(`reportFill: no application for job ${input.jobId}`);
-  if (row.status !== "prepared" && row.status !== "awaiting_confirm") {
-    throw new Error(`reportFill: cannot report from status '${row.status}' (must be 'prepared' or 'awaiting_confirm')`);
+  if (row.status !== "prepared" && row.status !== "awaiting_confirm" && row.status !== "needs_info") {
+    throw new Error(`reportFill: cannot report from status '${row.status}' (must be 'prepared', 'needs_info' or 'awaiting_confirm')`);
+  }
+
+  if (input.status === "needs_info") {
+    const questions = (input.questions ?? []).filter((q) => q && typeof q.key === "string" && q.key.trim() && typeof q.label === "string");
+    if (questions.length === 0) throw new Error("reportFill: needs_info requires at least one question with key+label");
+    db.prepare("UPDATE applications SET status = 'needs_info', pending_questions = ? WHERE job_id = ?").run(
+      JSON.stringify(questions),
+      input.jobId
+    );
+    return;
   }
 
   if (input.status === "awaiting_confirm") {
@@ -409,12 +444,26 @@ export function getApplyTask(db: DB, jobId: number): ApplyTask | { error: string
   };
 }
 
-export function confirmStatus(db: DB, jobId: number): { decision: string | null; status: string } {
-  const row = db.prepare("SELECT status, confirm_decision FROM applications WHERE job_id = ?").get(jobId) as
-    | { status: string; confirm_decision: string | null }
+// The executor's per-job poll. Besides the approval decision it carries infoAnswers — the
+// answers the user gave on /apply for this job (待补信息 flow) — so an executor waiting at
+// 'needs_info' sees status flip back to 'prepared' and gets the answers in the same response.
+export function confirmStatus(
+  db: DB,
+  jobId: number
+): { decision: string | null; status: string; infoAnswers: Record<string, string> | null } {
+  const row = db.prepare("SELECT status, confirm_decision, info_answers FROM applications WHERE job_id = ?").get(jobId) as
+    | { status: string; confirm_decision: string | null; info_answers: string | null }
     | undefined;
   if (!row) throw new Error(`confirmStatus: no application for job ${jobId}`);
-  return { decision: row.confirm_decision, status: row.status };
+  let infoAnswers: Record<string, string> | null = null;
+  if (row.info_answers) {
+    try {
+      infoAnswers = JSON.parse(row.info_answers);
+    } catch {
+      infoAnswers = null;
+    }
+  }
+  return { decision: row.confirm_decision, status: row.status, infoAnswers };
 }
 
 // Clears a parked application's needs_manual_reason so it re-enters takeNextApplication's pool —

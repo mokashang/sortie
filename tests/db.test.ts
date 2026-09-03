@@ -61,7 +61,7 @@ describe("db", () => {
 
   it("sets user_version as a migration hook for future plans", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(8);
+    expect(db.pragma("user_version", { simple: true })).toBe(9);
   });
 
   it("reads user_version before stamping it (read-then-stamp, not a blind unconditional write)", () => {
@@ -70,7 +70,7 @@ describe("db", () => {
       openDb(":memory:");
       const calls = spy.mock.calls.map((c) => c[0]);
       const readIdx = calls.indexOf("user_version");
-      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*8$/.test(c));
+      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*9$/.test(c));
       expect(readIdx).toBeGreaterThanOrEqual(0);
       expect(writeIdx).toBeGreaterThan(readIdx);
     } finally {
@@ -123,7 +123,7 @@ describe("db", () => {
 });
 
 describe("db v8 migration", () => {
-  it("v8: adds referral columns and outreach_jobs, and migrates a v7 db idempotently", () => {
+  it("v9: adds referral columns and outreach_jobs, and migrates a v7 db idempotently", () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "jsdb-v8-")), "t.db");
     // Simulate a v7 database: hand-built tables without the v8 columns, user_version=7, so the
     // migration path (ALTER TABLE ADD COLUMN) is exercised; the second open must be a no-op.
@@ -148,7 +148,7 @@ describe("db v8 migration", () => {
       expect(aCols).toContain("referral_reached_at");
       const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((t) => t.name);
       expect(tables).toContain("outreach_jobs");
-      expect(db.pragma("user_version", { simple: true })).toBe(8);
+      expect(db.pragma("user_version", { simple: true })).toBe(9);
       db.close();
     }
   });

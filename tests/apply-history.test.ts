@@ -90,7 +90,26 @@ describe("setStage (manual status tracking on /history)", () => {
   });
 
   it("exposes the stage list in pipeline order", () => {
-    expect(POST_SUBMIT_STAGES).toEqual(["submitted", "oa", "interview", "offer", "rejected", "stale"]);
+    expect(POST_SUBMIT_STAGES).toEqual([
+      "submitted",
+      "oa",
+      "interview",
+      "offer",
+      "offer_accepted",
+      "offer_declined",
+      "rejected",
+      "stale",
+    ]);
+  });
+
+  it("moves an offer to accepted / declined", () => {
+    const db = openDb(":memory:");
+    const a = seedJob(db, { status: "offer", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, a, "offer_accepted");
+    expect(app(db, a).status).toBe("offer_accepted");
+    const b = seedJob(db, { status: "offer", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, b, "offer_declined");
+    expect(app(db, b).status).toBe("offer_declined");
   });
 });
 
@@ -120,6 +139,70 @@ describe("applicationHistory", () => {
     expect(applicationHistory(db)[0].lastNote).toBeNull();
     setStage(db, jobId, "interview", "onsite 9/20");
     expect(applicationHistory(db)[0].lastNote).toBe("onsite 9/20");
+  });
+});
+
+describe("applicationHistory peak (furthest stage ever reached)", () => {
+  it("derives peak from the current status when there are no stage events (pre-existing rows)", () => {
+    const db = openDb(":memory:");
+    const submitted = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    const interview = seedJob(db, { status: "interview", submittedAt: "2026-09-01 10:00:00" });
+    const stale = seedJob(db, { status: "stale", submittedAt: "2026-09-01 10:00:00" });
+    const declined = seedJob(db, { status: "offer_declined", submittedAt: "2026-09-01 10:00:00" });
+    const peaks = new Map(applicationHistory(db).map((r) => [r.jobId, r.peak]));
+    expect(peaks.get(submitted)).toBe("submitted");
+    expect(peaks.get(interview)).toBe("interview");
+    expect(peaks.get(stale)).toBe("submitted");
+    expect(peaks.get(declined)).toBe("offer");
+  });
+
+  it("takes the last rung reached before a rejection / no-reply from the event timeline", () => {
+    const db = openDb(":memory:");
+    const afterInterview = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, afterInterview, "oa");
+    setStage(db, afterInterview, "interview");
+    setStage(db, afterInterview, "rejected");
+
+    const afterOa = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, afterOa, "oa");
+    setStage(db, afterOa, "stale");
+
+    const rejectedThenStale = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, rejectedThenStale, "interview");
+    setStage(db, rejectedThenStale, "rejected");
+    setStage(db, rejectedThenStale, "stale");
+
+    const peaks = new Map(applicationHistory(db).map((r) => [r.jobId, r.peak]));
+    expect(peaks.get(afterInterview)).toBe("interview");
+    expect(peaks.get(afterOa)).toBe("oa");
+    expect(peaks.get(rejectedThenStale)).toBe("interview");
+  });
+
+  it("treats a backwards move as a correction: the chart follows the corrected stage", () => {
+    const db = openDb(":memory:");
+    const backToSubmitted = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, backToSubmitted, "oa");
+    setStage(db, backToSubmitted, "submitted");
+
+    const offerMisclick = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, offerMisclick, "offer");
+    setStage(db, offerMisclick, "oa");
+
+    const unreject = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, unreject, "interview");
+    setStage(db, unreject, "rejected");
+    setStage(db, unreject, "oa"); // the rejection was a mistake; it's actually at OA
+
+    const correctedThenRejected = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
+    setStage(db, correctedThenRejected, "interview");
+    setStage(db, correctedThenRejected, "oa"); // corrected down
+    setStage(db, correctedThenRejected, "rejected");
+
+    const peaks = new Map(applicationHistory(db).map((r) => [r.jobId, r.peak]));
+    expect(peaks.get(backToSubmitted)).toBe("submitted");
+    expect(peaks.get(offerMisclick)).toBe("oa");
+    expect(peaks.get(unreject)).toBe("oa");
+    expect(peaks.get(correctedThenRejected)).toBe("oa");
   });
 });
 

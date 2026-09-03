@@ -40,10 +40,14 @@ export function funnel(db: DB): Funnel {
   const counts = new Map(rows.map((r) => [r.status, r.n]));
   const result = {} as Funnel;
   for (const key of FUNNEL_STATUSES) result[key] = counts.get(key) ?? 0;
+  // An accepted or declined offer is still an offer that was received.
+  result.offer += (counts.get("offer_accepted") ?? 0) + (counts.get("offer_declined") ?? 0);
   return result;
 }
 
 // ---- byDirection --------------------------------------------------------------------------
+
+const INTERVIEW_OR_BEYOND = "('interview','offer','offer_accepted','offer_declined')";
 
 export interface DirectionRow {
   direction: string | null;
@@ -58,14 +62,15 @@ export interface DirectionRow {
 // - submitted: application.submitted_at IS NOT NULL — "ever submitted" rather than
 //   "status literally = submitted", so a job that has since advanced to oa/interview/offer/
 //   rejected still counts (submitted_at is a one-way marker, unlike status which moves on).
-// - interviews: status IN ('interview','offer') — reached interview stage or beyond.
+// - interviews: status IN (INTERVIEW_OR_BEYOND) — reached interview stage or beyond, including
+//   offers that were since accepted or declined.
 export function byDirection(db: DB): DirectionRow[] {
   const rows = db
     .prepare(
       `SELECT m.direction as direction, m.tier as tier,
               COUNT(*) as total,
               SUM(CASE WHEN a.submitted_at IS NOT NULL THEN 1 ELSE 0 END) as submitted,
-              SUM(CASE WHEN a.status IN ('interview','offer') THEN 1 ELSE 0 END) as interviews
+              SUM(CASE WHEN a.status IN ${INTERVIEW_OR_BEYOND} THEN 1 ELSE 0 END) as interviews
        FROM matches m
        JOIN applications a ON a.job_id = m.job_id
        GROUP BY m.direction, m.tier
@@ -135,7 +140,7 @@ function crossBucket(db: DB, hasReferral: boolean): CrossBucket {
     .prepare(
       `SELECT
          SUM(CASE WHEN submitted_at IS NOT NULL THEN 1 ELSE 0 END) as submitted,
-         SUM(CASE WHEN status IN ('interview','offer') THEN 1 ELSE 0 END) as interviews
+         SUM(CASE WHEN status IN ${INTERVIEW_OR_BEYOND} THEN 1 ELSE 0 END) as interviews
        FROM applications
        WHERE referral_person_id IS ${hasReferral ? "NOT NULL" : "NULL"}`
     )
