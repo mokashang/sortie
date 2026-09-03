@@ -22,12 +22,14 @@ export default function ApplyPage() {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        LEFT JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NOT NULL
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NOT NULL AND a.pending_questions IS NULL
        ORDER BY a.updated_at DESC
        LIMIT 200`
     )
     .all() as ManualRow[];
 
+  // Parked rows that still carry pending_questions are shown on the 待补信息 panel instead (they
+  // are answerable in-App), so they're excluded from the needs-manual list above.
   // Local calendar day (resets at local midnight) — see todaySubmitted.
   const submittedRows = todaySubmitted(db);
 
