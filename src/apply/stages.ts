@@ -28,10 +28,11 @@ export function isPostSubmitStage(s: string): s is PostSubmitStage {
 }
 
 // The "ladder" an application climbs: every row reached at least 'submitted'; the peak is the
-// furthest rung it ever touched. rejected/stale are outcomes, not rungs — a rejection after an
-// interview still has peak 'interview'. offer_accepted/offer_declined are outcomes of the 'offer'
-// rung. This is what lets the /history funnel chart draw "rejected after interview" as a branch
-// off the interview node rather than lumping every rejection at the root.
+// rung it last stood on (see applicationHistory for how the timeline is read). rejected/stale
+// are outcomes, not rungs — a rejection after an interview has peak 'interview'.
+// offer_accepted/offer_declined are outcomes of the 'offer' rung. This is what lets the /history
+// funnel chart draw "rejected after interview" as a branch off the interview node rather than
+// lumping every rejection at the root.
 export const PEAK_STAGES = ["submitted", "oa", "interview", "offer"] as const;
 export type PeakStage = (typeof PEAK_STAGES)[number];
 
@@ -49,8 +50,10 @@ export function peakOf(status: PostSubmitStage): PeakStage {
   }
 }
 
-export function maxPeak(a: PeakStage, b: PeakStage): PeakStage {
-  return PEAK_STAGES.indexOf(a) >= PEAK_STAGES.indexOf(b) ? a : b;
+// A rung is a status that maps to its own place on the ladder (offer_accepted/offer_declined
+// count as standing on 'offer'); rejected/stale are outcomes, not rungs.
+export function isRung(s: PostSubmitStage): boolean {
+  return s !== "rejected" && s !== "stale";
 }
 
 export interface HistoryRow {
@@ -60,7 +63,7 @@ export interface HistoryRow {
   applyUrl: string | null;
   direction: string | null;
   status: PostSubmitStage;
-  peak: PeakStage; // furthest rung ever reached (from the stage-event timeline + current status)
+  peak: PeakStage; // the rung last stood on (current status, or the one before a rejection)
   submittedAt: string; // local "YYYY-MM-DD HH:MM"
   submittedDay: string; // local "YYYY-MM-DD" — the /history day-group key
   updatedAt: string; // local "YYYY-MM-DD HH:MM"
