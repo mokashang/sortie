@@ -248,13 +248,23 @@ describe("executor prompts", () => {
       expect(p).toContain('"http://127.0.0.1:3000/api/jd-review/batch?limit=40"');
       expect(p).toContain("http://127.0.0.1:3000/api/jd-review/report");
       expect(p).toContain("http://127.0.0.1:3000/api/executor/finish");
-      for (const s of ['"reviewed"', '"login_wall"', '"unreachable"', '"closed"']) expect(p).toContain(s);
+      // runId must be looked up (GET /api/executor/status) before the batch is fetched, so the
+      // empty-batch path still has a runId to report finish with.
+      expect(p.indexOf("http://127.0.0.1:3000/api/executor/status")).toBeLessThan(
+        p.indexOf('"http://127.0.0.1:3000/api/jd-review/batch?limit=40"')
+      );
+      expect(p).toContain('"status=reviewed"');
+      for (const s of ['"login_wall"', '"unreachable"', '"closed"']) expect(p).toContain(s);
       expect(p).toContain("mcp__playwright__browser_navigate");
       expect(p).toContain("mcp__playwright__browser_evaluate");
       expect(p).toMatch(/不要登录|绝不登录/);
       expect(p).toMatch(/不填表|绝不填/);
-      expect(p).toContain('"sponsorship"');
+      expect(p).toContain('"sponsorship=');
       expect(p).toContain("currently pursuing");
+      // The report call is form-urlencoded, not JSON — the JD text is piped in raw via a heredoc
+      // rather than JSON-escaped, since only Bash(curl:*) is allowed (no jq/python).
+      expect(p).toContain('--data-urlencode "jdText@-"');
+      expect(p).toContain("JDTEXT_END_7f3a");
     });
     it("defaults limit to 40", () => {
       expect(buildJdReviewPrompt()).toContain("batch?limit=40");

@@ -280,7 +280,8 @@ export function buildJdReviewPrompt(options: { limit?: number } = {}): string {
 本会话最多处理 **${limit}** 个岗位。你只**读**页面:绝不登录、绝不填表、绝不点任何 Apply/Submit、绝不解验证码。
 
 ## 1. 取批次
-\`curl -s "${APP_BASE}/api/jd-review/batch?limit=${limit}"\` → \`{"jobs":[{"jobId":..,"company":..,"title":..,"applyUrl":..}, ...]}\`。空数组 → 直接跳到 §4 收尾。记下本次 run 的 id:\`curl -s ${APP_BASE}/api/executor/status\` 里 kind 为 jd_review、status 为 running 的那一行的 \`id\`。
+先记下本次 run 的 id(后面所有回报、包括批次为空时的收尾都要用它):\`curl -s ${APP_BASE}/api/executor/status\` 里找 kind 为 jd_review、status 为 running 的那一行,记下它的 \`id\` 作为 runId。
+再取批次:\`curl -s "${APP_BASE}/api/jd-review/batch?limit=${limit}"\` → \`{"jobs":[{"jobId":..,"company":..,"title":..,"applyUrl":..}, ...]}\`。空数组 → 直接跳到 §4,用已经记下的 runId 按 §4 的方式回报 finish,summary 写 "no pending jobs"。
 
 ## 2. 逐个处理(顺序处理,不并行)
 对每个 job:
@@ -296,11 +297,16 @@ export function buildJdReviewPrompt(options: { limit?: number } = {}): string {
    - \`degree\`:明文 PhD required 且不接受 Master's、实习岗写 currently pursuing / enrolled in a PhD、标题带 "(PhD)" → \`"phd_only"\`;"MS or PhD"、"PhD preferred"、Research Scientist 标题 → \`"ms_ok"\`。
    - \`role\`:销售、客户成功、现场服务、装机、数据标注、招聘、行政等非工程岗 → \`"non_tech"\`;工程/研究/数据 → \`"eng"\`。
    把证明该判断的原句放进 \`evidence\`(没有就写 "none")。
-5. 回报:\`curl -s -X POST ${APP_BASE}/api/jd-review/report -H 'content-type: application/json' --data-binary @- <<'JSON'
-{"jobId": <jobId>, "status": "reviewed", "jdText": "<完整正文,JSON 转义>", "sponsorship": "yes|no|unknown", "degree": "ms_ok|phd_only", "role": "eng|non_tech", "evidence": "<原句>"}
-JSON\`
-   非正常页面只发 \`{"jobId": <jobId>, "status": "login_wall"|"closed"|"unreachable", "evidence": "<一句话说明>"}\`。
-6. \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab。\`curl -s -X POST ${APP_BASE}/api/executor/log -H 'content-type: application/json' -d '{"runId": <runId>, "line": "<company> — <title>: <status>[, <failReason>]"}'\`。
+5. 回报——这个接口收 **form-urlencoded**,不是 JSON:不要手工拼 JSON 或对 JD 正文做任何转义,正文原样贴在两行分隔符之间,分隔符那一行必须独占一行、前后不能有多余字符。
+   正常 JD:
+   \`curl -s -X POST ${APP_BASE}/api/jd-review/report \\
+     --data-urlencode "jobId=<jobId>" --data-urlencode "status=reviewed" \\
+     --data-urlencode "sponsorship=<yes|no|unknown>" --data-urlencode "degree=<ms_ok|phd_only>" --data-urlencode "role=<eng|non_tech>" \\
+     --data-urlencode "evidence=<原句>" --data-urlencode "jdText@-" <<'JDTEXT_END_7f3a'
+<完整正文,原样粘贴,不做任何转义>
+JDTEXT_END_7f3a\`
+   非正常页面(login_wall/closed/unreachable)只发:\`curl -s -X POST ${APP_BASE}/api/jd-review/report --data-urlencode "jobId=<jobId>" --data-urlencode "status=<login_wall|closed|unreachable>" --data-urlencode "evidence=<一句话说明>"\`。
+6. \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab。\`curl -s -X POST ${APP_BASE}/api/executor/log -H 'content-type: application/json' -d '{"runId": <runId>, "line": "<company> — <title>: <status>[, <failReason>]"}'\`(这一步是 JSON——line 里不要出现双引号,以免破坏 JSON)。
 7. 等 3–5 秒再处理下一个。每处理 5 个,\`curl -s "${APP_BASE}/api/executor/run?id=<runId>"\`:status 是 stopped → 立即停止,跳到 §4。
 
 ## 3. 红线
@@ -310,5 +316,5 @@ JSON\`
 - 连续 5 个 unreachable → 停止(可能是网络/反爬问题),跳到 §4。
 
 ## 4. 收尾
-\`curl -s -X POST ${APP_BASE}/api/executor/finish -H 'content-type: application/json' -d '{"runId": <runId>, "status": "done", "summary": "<一句话:reviewed N,login_wall N,closed N,unreachable N;资格不合格归档 N(原因摘要)>"}'\`。然后打印同一段总结并结束。`;
+\`curl -s -X POST ${APP_BASE}/api/executor/finish -H 'content-type: application/json' -d '{"runId": <runId>, "status": "done", "summary": "<一句话:reviewed N,login_wall N,closed N,unreachable N;资格不合格归档 N(原因摘要)>"}'\`(这一步也是 JSON——summary 里不要出现双引号)。然后打印同一段总结并结束。`;
 }
