@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { reportSent, reportReply } from "@/network/gate";
+import { reportReply } from "@/network/gate";
+import { reportSentAndMarkReached } from "@/apply/referral-glue";
 
 // POST {outreachId, event: 'sent'|'reply', text?} — executor -> App status reports.
 // For event='sent', `text` is optional and, when present, is the *actual* text that went out
@@ -11,7 +12,8 @@ export async function POST(req: Request) {
     const body = await req.json();
     const outreachId = Number(body.outreachId);
     if (body.event === "sent") {
-      reportSent(getDb(), outreachId, body.text != null ? String(body.text) : undefined);
+      // reportSent is the red-line gate; markReached then stamps any linked referral jobs.
+      reportSentAndMarkReached(getDb(), outreachId, body.text != null ? String(body.text) : undefined);
     } else if (body.event === "reply") {
       reportReply(getDb(), outreachId, String(body.text ?? ""));
     } else {
