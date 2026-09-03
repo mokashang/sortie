@@ -103,7 +103,7 @@ describe("executor prompts", () => {
       it("shapes the /api/apply/next POST body with a direction field", () => {
         const p = buildApplyPrompt({ plan });
         expect(p).toContain(`${"http://127.0.0.1:3000/api/apply/next"}`);
-        expect(p).toContain('{"direction": "<direction>"}');
+        expect(p).toContain('{"direction": "<direction>", "mode": "direct"}');
         expect(p).toContain('{"direction": "swe_backend"}');
       });
 
@@ -240,5 +240,14 @@ describe("executor prompts", () => {
       const p = buildNetworkFindPrompt();
       expect(p).toMatch(/每公司最多 5 人,每会话最多 3 个公司/);
     });
+  });
+});
+
+describe("buildApplyPrompt direct-only plan", () => {
+  it("headless apply prompt with a mixed plan lists entries and takes tasks with mode direct", () => {
+    const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2, mode: "direct" }, { direction: "mle", count: 1 }] });
+    expect(p).toContain("`swe_general` × **2**");
+    expect(p).toContain("`mle` × **1**");
+    expect(p).toContain('"mode": "direct"');
   });
 });

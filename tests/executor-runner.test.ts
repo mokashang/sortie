@@ -529,3 +529,29 @@ describe("executor/runner", () => {
     });
   });
 });
+
+describe("executor/runner referral mode", () => {
+  it("headless refuses referral-mode plans/options; user_chrome accepts them", () => {
+    const db = openDb(":memory:");
+    const tmpLogDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobseeker-executor-logs-"));
+    const { spawnFn } = makeFakeSpawn(4242);
+    expect(() =>
+      startExecutor(
+        db,
+        "apply",
+        { plan: [{ direction: "swe_general", count: 1, mode: "referral" }] },
+        { spawn: spawnFn, logDir: tmpLogDir },
+        "headless"
+      )
+    ).toThrow(/值守会话/);
+    expect(() => startExecutor(db, "apply", { jobIds: [1], mode: "referral" }, { spawn: spawnFn, logDir: tmpLogDir }, "headless")).toThrow(
+      /值守会话/
+    );
+    expect(spawnFn).not.toHaveBeenCalled();
+    const r = startExecutor(db, "apply", { jobIds: [1, 2], mode: "referral" }, { logDir: tmpLogDir }, "user_chrome");
+    const row = db.prepare("SELECT options, status FROM executor_runs WHERE id = ?").get(r.id) as { options: string; status: string };
+    expect(row.status).toBe("queued");
+    expect(JSON.parse(row.options)).toEqual({ jobIds: [1, 2], mode: "referral" });
+    fs.rmSync(tmpLogDir, { recursive: true, force: true });
+  });
+});

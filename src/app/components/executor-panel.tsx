@@ -45,11 +45,21 @@ const CHANNEL_LABELS: Record<string, string> = {
 // "swe_general ×2 · mle ×1" / "恢复模式" / "前 5 个" — a one-line description of what a run was
 // asked to do, from its stored options.
 function describeOptions(options: unknown): string {
-  const o = (options ?? {}) as { plan?: { direction: string; count: number }[]; limit?: number; resume?: boolean; companies?: string[] };
+  const o = (options ?? {}) as {
+    plan?: { direction: string; count: number; mode?: string }[];
+    limit?: number;
+    resume?: boolean;
+    companies?: string[];
+    jobIds?: number[];
+    mode?: string;
+  };
   const parts: string[] = [];
-  if (o.resume) parts.push("恢复模式(补提交已批准)");
-  if (Array.isArray(o.plan) && o.plan.length > 0) parts.push(o.plan.map((p) => `${p.direction} ×${p.count}`).join(" · "));
+  if (o.resume) parts.push("恢复模式(补提交已批准/补发已批准内推消息)");
+  if (Array.isArray(o.plan) && o.plan.length > 0)
+    parts.push(o.plan.map((p) => `${p.direction}${p.mode === "referral" ? "·内推" : ""} ×${p.count}`).join(" · "));
   else if (o.limit != null) parts.push(`前 ${o.limit} 个`);
+  if (Array.isArray(o.jobIds) && o.jobIds.length > 0)
+    parts.push(`${o.mode === "referral" ? "找内推" : "直投"} 岗位 #${o.jobIds.join(",#")}`);
   if (Array.isArray(o.companies) && o.companies.length > 0) parts.push(o.companies.join(", "));
   return parts.join(" · ");
 }

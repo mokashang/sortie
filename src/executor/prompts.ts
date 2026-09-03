@@ -30,6 +30,9 @@ You have exactly ONE MCP server: \`playwright\` (mcp__playwright__browser_naviga
 export interface ApplyPlanEntry {
   direction: string;
   count: number;
+  // 'referral' entries are only ever worked by the attended session (CLAUDE.md §3.10); the
+  // headless runner refuses them (src/executor/runner.ts). Default 'direct'.
+  mode?: "referral" | "direct";
 }
 
 // Hard-won from a live walkthrough of a real Greenhouse form — see fix #4 in the task this
@@ -101,11 +104,13 @@ ${plan.map((p) => `- \`${p.direction}\` × **${p.count}**`).join("\n")}
 
 每个方向最多投递其配额个数;若某方向配额还没用完,但对该方向调用 /api/apply/next 已经返回 \`{"done": true}\`,立即放弃该方向剩余配额、换下一个方向——这不算失败,不计入 §5 的 needs_manual/error 熔断计数。全部方向处理完(或撞到下面的硬性上限/熔断)后跳到 §6 收尾。
 
-本会话总硬性上限 **${capCount}** 个申请(以上各方向配额之和),达到后停止循环并总结,即使某个方向仍有未用完的配额。`
+本会话总硬性上限 **${capCount}** 个申请(以上各方向配额之和),达到后停止循环并总结,即使某个方向仍有未用完的配额。
+
+本无人值守会话只做海投(mode direct);内推模式的条目由值守会话处理,这里不会出现。`
     : `本会话最多投递 **${limit}** 个申请(硬性上限,达到后停止循环并总结,即使 /api/apply/next 还有更多任务)。`;
 
   const takeTaskStep = plan
-    ? `1. **按当前方向取任务**:依次处理上面列出的每个方向。对当前方向(把 \`<direction>\` 换成实际方向 slug,例如第一个方向请求体是 \`{"direction": "swe_backend"}\`):\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{"direction": "<direction>"}'\`
+    ? `1. **按当前方向取任务**:依次处理上面列出的每个方向。对当前方向(把 \`<direction>\` 换成实际方向 slug,例如第一个方向请求体是 \`{"direction": "swe_backend"}\`):\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{"direction": "<direction>", "mode": "direct"}'\`
    - \`{"done": true}\` → 当前方向没有更多待投递岗位了,放弃该方向剩余配额,换下一个方向;如果这已经是最后一个方向,跳到 §6 收尾。
    - 否则拿到 \`ApplyTask\`:\`{jobId, company, title, applyUrl, ats, answerPack}\`。answerPack 里有 contact/education/work_auth/eeo/resume/custom/job 几组字段,把它拍平成一份"字段: 值"列表——只用 answerPack 里实际存在的字段,绝不编造。这个方向的已投递计数 +1;达到该方向配额后,换下一个方向。`
     : `1. **取任务**:\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{}'\`

@@ -32,6 +32,11 @@ export interface StartOptions {
   // before it could submit. See buildApplyPrompt's resume section and the /api/apply/decide
   // route's auto-start-on-approve path, which is what actually sets this.
   resume?: boolean;
+  // apply kind only — a run scoped to specific jobs (the 内推进行中 board's 直接投 / 有内推 /
+  // 换人再问 buttons enqueue these). `mode` says whether to fill them (direct) or seek a
+  // referral for them (referral). Referral mode is attended-session only.
+  jobIds?: number[];
+  mode?: "referral" | "direct";
 }
 
 // A structural subset of child_process.ChildProcess — deliberately loose so tests can inject a
@@ -205,6 +210,10 @@ export function startExecutor(
   deps: RunnerDeps = {},
   channel: ExecutorChannel = "headless"
 ): StartResult {
+  const wantsReferral = options.mode === "referral" || (options.plan ?? []).some((p) => p.mode === "referral");
+  if (channel === "headless" && wantsReferral) {
+    throw new Error("内推模式仅支持值守会话(user_chrome)——无人值守通道只做海投");
+  }
   const existing = db
     .prepare("SELECT id, pid, status FROM executor_runs WHERE kind=? AND channel=? AND status IN ('running','queued')")
     .all(kind, channel) as { id: number; pid: number | null; status: string }[];
