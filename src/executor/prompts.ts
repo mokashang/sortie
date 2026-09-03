@@ -133,7 +133,7 @@ ${takeTaskStep}
    \`mcp__playwright__browser_navigate\` 打开 \`<task.applyUrl>\`,然后 \`mcp__playwright__browser_snapshot\` 拿到无障碍树(每个可交互元素都带一个 \`ref\`)。**BEFORE filling anything**, read the job description on this live page yourself from the snapshot and check three disqualifiers: (1) it explicitly states a PhD is required and a Master's is not accepted, (2) it explicitly states no visa sponsorship is provided/available, (3) it explicitly states US citizenship is required. If ANY of these is explicitly true, do NOT fill the form — go straight to the "资格性未通过" branch below, quoting the relevant sentence. 这条检查只看**明确写出**的文字——"PhD preferred"、"MS or PhD"、模糊的经验年限要求都不触发,只有招聘页面上明确写出的 PhD-only/无签证赞助/仅限美国公民才触发。
    如果这次快照显示的是登录/注册墙而不是招聘表单本身(这个 Playwright 浏览器是专属持久化档案,可能还没在这个站点登录过),go to the "登录墙" branch below——不要试图自己登录,没有可用凭据。
    否则,用 \`mcp__playwright__browser_type\` / \`mcp__playwright__browser_click\` / \`mcp__playwright__browser_select_option\` / \`mcp__playwright__browser_fill_form\`(按快照给出的 \`ref\`)把下面这份字段值列表逐一填进表单,一字不差:<field: value list from answerPack, one per line>。用 \`mcp__playwright__browser_file_upload\` 把简历文件 \`<answerPack.resume.pdf_path>\` 上传到简历上传控件上。**Do NOT click the final Submit button.** 填完后再做一次 \`mcp__playwright__browser_snapshot\`(必要时配合 \`mcp__playwright__browser_take_screenshot\`),读出表单里的**实际**值,准备第 3 步回报——不是你打算填的值。
-   - **资格性未通过**:不要填表,直接回报 \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_manual", "reason": "<which disqualifier(s), quoting the JD sentence>", "eligibility": {"sponsorship": "yes|no|unknown", "degree": "ms_ok|phd_only", "role": "eng|non_tech", "evidence": "<原句>"}}'\`。三个字段的口径:sponsorship 只有明文不 sponsor / 要求公民或绿卡 / not considering applicants who require sponsorship 才是 "no",表单问句不是证据;degree 明文 PhD required 且不收 MS、实习岗 "currently pursuing a PhD"、标题 "(PhD)" 才是 "phd_only";role 非工程岗才是 "non_tech"。App 会据此直接归档该岗及其同簇重复项,不再进需人工清单。然后 \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab,继续下一轮(不计入本方向 count)。
+   - **资格性未通过**:不要填表。**这条 curl 命令的 \`-d\` 参数是单引号 shell 字符串——\`reason\` 和 \`eligibility.evidence\` 必须是纯 ASCII 改写(paraphrase):只能用英文字母、数字、空格和基本标点 \`. , ; : ( ) -\`,绝不逐字粘贴页面原句,绝不能包含引号 \`'\` 或 \`"\`、反引号、\`$\`、反斜杠或换行——原句里的撇号或引号会提前结束这个单引号字符串,造成 shell 命令注入。** 直接回报 \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_manual", "reason": "<which disqualifier(s), a short plain-ASCII paraphrase of the JD sentence>", "eligibility": {"sponsorship": "yes|no|unknown", "degree": "ms_ok|phd_only", "role": "eng|non_tech", "evidence": "<纯 ASCII 改写,不要逐字引用原句>"}}'\`。三个字段的口径:sponsorship 只有明文不 sponsor / 要求公民或绿卡 / not considering applicants who require sponsorship 才是 "no",表单问句不是证据;degree 明文 PhD required 且不收 MS、实习岗 "currently pursuing a PhD"、标题 "(PhD)" 才是 "phd_only";role 非工程岗才是 "non_tech"。App 会据此直接归档该岗及其同簇重复项,不再进需人工清单。然后 \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab,继续下一轮(不计入本方向 count)。
    - **登录墙**:回报 \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_manual", "reason": "${LOGIN_WALL_REASON}"}'\`,关掉 tab,继续下一轮。
 
 3. **回报填表结果**(用 §2 第 2 步快照读回的**实际**字段值,不是你打算填的值):
@@ -302,16 +302,16 @@ export function buildJdReviewPrompt(options: { limit?: number } = {}): string {
    - \`degree\`:明文 PhD required 且不接受 Master's、实习岗写 currently pursuing / enrolled in a PhD、标题带 "(PhD)" → \`"phd_only"\`;"MS or PhD"、"PhD preferred"、Research Scientist 标题 → \`"ms_ok"\`。
    - \`role\`:销售、客户成功、现场服务、装机、数据标注、招聘、行政等非工程岗 → \`"non_tech"\`;工程/研究/数据 → \`"eng"\`。
    把证明该判断的原句放进 \`evidence\`(没有就写 "none")。
-5. 回报——这个接口收 **form-urlencoded**,不是 JSON:不要手工拼 JSON 或对 JD 正文做任何转义,正文原样贴在两行分隔符之间,分隔符那一行必须独占一行、前后不能有多余字符。
+5. 回报——这个接口收 **form-urlencoded**,不是 JSON:不要手工拼 JSON 或对 JD 正文做任何转义,正文原样贴在两行分隔符之间,分隔符那一行必须独占一行、前后不能有多余字符。**这条规则只对 \`jdText\`(下面 heredoc 里的正文)成立——heredoc 是原样传递,允许任意字符。除 jdText 以外,这条 curl 命令里所有 \`--data-urlencode "field=..."\` 参数(包括 \`evidence\`)都是普通双引号 shell 参数:\`evidence\` 必须是纯 ASCII 改写(paraphrase)——只能用英文字母、数字、空格和基本标点 \`. , ; : ( ) -\`,绝不逐字粘贴页面原句,绝不能包含引号 \`'\` 或 \`"\`、反引号、\`$\`、反斜杠或换行,原句里的这些字符会在双引号字符串里提前结束参数或触发变量展开,造成 shell 命令注入。原句本身只能出现在下面 jdText 的 heredoc 正文里。**
    正常 JD:
    \`curl -s -X POST ${APP_BASE}/api/jd-review/report \\
      --data-urlencode "jobId=<jobId>" --data-urlencode "status=reviewed" \\
      --data-urlencode "sponsorship=<yes|no|unknown>" --data-urlencode "degree=<ms_ok|phd_only>" --data-urlencode "role=<eng|non_tech>" \\
-     --data-urlencode "evidence=<原句>" --data-urlencode "jdText@-" <<'JDTEXT_END_7f3a'
+     --data-urlencode "evidence=<纯 ASCII 改写,不要逐字引用原句>" --data-urlencode "jdText@-" <<'JDTEXT_END_7f3a'
 <完整正文,原样粘贴,不做任何转义>
 JDTEXT_END_7f3a\`
-   非正常页面(login_wall/closed/unreachable)只发:\`curl -s -X POST ${APP_BASE}/api/jd-review/report --data-urlencode "jobId=<jobId>" --data-urlencode "status=<login_wall|closed|unreachable>" --data-urlencode "evidence=<一句话说明>"\`。
-6. \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab。\`curl -s -X POST ${APP_BASE}/api/executor/log -H 'content-type: application/json' -d '{"runId": <runId>, "line": "<company> — <title>: <status>[, <failReason>]"}'\`(这一步是 JSON——line 里不要出现双引号,以免破坏 JSON)。
+   非正常页面(login_wall/closed/unreachable)只发:\`curl -s -X POST ${APP_BASE}/api/jd-review/report --data-urlencode "jobId=<jobId>" --data-urlencode "status=<login_wall|closed|unreachable>" --data-urlencode "evidence=<一句话说明,纯 ASCII 改写>"\`。
+6. \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab。\`curl -s -X POST ${APP_BASE}/api/executor/log -H 'content-type: application/json' -d '{"runId": <runId>, "line": "<company> — <title>: <status>[, <failReason>]"}'\`(这一步是 JSON——\`line\` 同样必须是纯 ASCII 改写:不出现双引号 \`"\`、反斜杠或换行,以免破坏 JSON)。
 7. 等 3–5 秒再处理下一个。每处理 5 个,\`curl -s "${APP_BASE}/api/executor/run?id=<runId>"\`:status 是 stopped → 立即停止,跳到 §4。
 
 ## 3. 红线
@@ -321,5 +321,5 @@ JDTEXT_END_7f3a\`
 - 连续 5 个 unreachable → 停止(可能是网络/反爬问题),跳到 §4。
 
 ## 4. 收尾
-\`curl -s -X POST ${APP_BASE}/api/executor/finish -H 'content-type: application/json' -d '{"runId": <runId>, "status": "done", "summary": "<一句话:reviewed N,login_wall N,closed N,unreachable N;资格不合格归档 N(原因摘要)>"}'\`(这一步也是 JSON——summary 里不要出现双引号)。然后打印同一段总结并结束。`;
+\`curl -s -X POST ${APP_BASE}/api/executor/finish -H 'content-type: application/json' -d '{"runId": <runId>, "status": "done", "summary": "<一句话:reviewed N,login_wall N,closed N,unreachable N;资格不合格归档 N(原因摘要)>"}'\`(这一步也是 JSON——\`summary\` 同样必须是纯 ASCII 改写:不出现双引号 \`"\`、反斜杠或换行)。然后打印同一段总结并结束。`;
 }

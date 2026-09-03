@@ -83,6 +83,12 @@ describe("executor prompts", () => {
       expect(p).toMatch(/currently pursuing/);
     });
 
+    it("requires reason/evidence to be a quote-free plain-ASCII paraphrase, never verbatim page text", () => {
+      const p = buildApplyPrompt();
+      expect(p).toContain("纯 ASCII 改写");
+      expect(p).toMatch(/绝不逐字粘贴页面原句/);
+    });
+
     it("plan count means filled-and-awaiting-confirm, with a 3x take cap per direction", () => {
       const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2 }, { direction: "mle", count: 1 }] });
       expect(p).toContain("填好并回报 awaiting_confirm");
@@ -288,6 +294,12 @@ describe("executor prompts", () => {
     });
     it("defaults limit to 40", () => {
       expect(buildJdReviewPrompt()).toContain("batch?limit=40");
+    });
+
+    it("requires evidence/line/summary to be a quote-free plain-ASCII paraphrase, never verbatim page text", () => {
+      const p = buildJdReviewPrompt();
+      expect(p).toContain("纯 ASCII 改写");
+      expect(p).toMatch(/绝不逐字粘贴页面原句/);
     });
   });
 });
