@@ -7,6 +7,7 @@ interface Question {
   label: string;
   hint?: string;
   options?: string[];
+  optional?: boolean;
 }
 interface InfoRow {
   jobId: number;
@@ -126,7 +127,9 @@ export function InfoPanel() {
               return (
                 <div key={q.key}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>
-                    {q.label} <span className="text-sub mono" style={{ fontWeight: 400, fontSize: 11 }}>({q.key})</span>
+                    {q.label}{" "}
+                    {q.optional && <span className="text-sub" style={{ fontWeight: 400 }}>(可选,留空即跳过)</span>}{" "}
+                    <span className="text-sub mono" style={{ fontWeight: 400, fontSize: 11 }}>({q.key})</span>
                   </div>
                   {q.hint && <div className="text-sub" style={{ fontSize: 12 }}>{q.hint}</div>}
                   <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 4 }}>

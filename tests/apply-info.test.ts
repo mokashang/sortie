@@ -133,6 +133,19 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
     });
   });
 
+  it("optional questions may be left blank and are then simply not stored", () => {
+    const db = openDb(":memory:");
+    const jobId = seed(db);
+    reportFill(db, {
+      jobId,
+      status: "needs_info",
+      questions: [{ key: "high_school", label: "High School" }, { key: "essay_numbers", label: "Three numbers", optional: true }],
+    });
+    const r = answerInfo(db, jobId, { high_school: { value: "X" }, essay_numbers: { value: "  " } }, () => {});
+    expect(r.status).toBe("prepared");
+    expect(confirmStatus(db, jobId).infoAnswers).toEqual({ high_school: "X" });
+  });
+
   it("needsInfoNotification names the company, count and where to go", () => {
     const n = needsInfoNotification("Palantir", "FDSE New Grad", QUESTIONS);
     expect(n.title).toContain("Palantir");

@@ -115,7 +115,10 @@ export function answerInfo(
   for (const q of questions) {
     const a = answers[q.key];
     const value = typeof a?.value === "string" ? a.value.trim() : "";
-    if (!value) throw new Error(`answerInfo: missing answer for '${q.key}'`);
+    if (!value) {
+      if (q.optional) continue; // left blank on purpose — the executor skips this field
+      throw new Error(`answerInfo: missing answer for '${q.key}'`);
+    }
     if (q.options && q.options.length > 0 && !q.options.includes(value)) {
       throw new Error(`answerInfo: '${value}' is not one of the options for '${q.key}'`);
     }

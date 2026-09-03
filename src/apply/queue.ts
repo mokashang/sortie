@@ -149,6 +149,7 @@ export interface InfoQuestion {
   label: string; // the question as the form words it
   hint?: string; // anything that helps the user answer (e.g. "表单定义 Summer = April–July")
   options?: string[]; // exact option texts when the form is a select
+  optional?: boolean; // the form doesn't require it (e.g. an optional essay) — the user may leave it blank to skip
 }
 
 export interface ReportFillInput {
