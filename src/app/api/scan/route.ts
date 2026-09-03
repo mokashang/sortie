@@ -57,6 +57,9 @@ export async function POST(req: Request) {
           limit: 200,
           concurrency: 6,
         });
+        // Second pass: classify the newly matched jobs as 建议内推 / 海投 (matches.referral_fit).
+        const { runReferralFit } = await import("@/matcher/referral-fit");
+        await runReferralFit(db, { backend: getBackend(), batchSize: 40, limit: 400, concurrency: 4 });
       } catch (e) {
         console.error("[scan→match]", e);
       } finally {
