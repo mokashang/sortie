@@ -17,7 +17,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -54,6 +54,11 @@ export function openDb(file?: string): DB {
       (c) => c.name
     );
     if (!jobCols.includes("loc_flag")) db.exec("ALTER TABLE jobs ADD COLUMN loc_flag TEXT");
+    // v5 -> v6: applications gained pinned (interactive /queue's "置顶" priority flag).
+    const appCols = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map(
+      (c) => c.name
+    );
+    if (!appCols.includes("pinned")) db.exec("ALTER TABLE applications ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 

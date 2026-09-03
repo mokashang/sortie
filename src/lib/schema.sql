@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS applications (
   filled_fields TEXT,              -- JSON: field->value list reported back by the executor
   confirm_decision TEXT,           -- NULL | approved | rejected
   needs_manual_reason TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0,  -- user-priority flag from /queue; sorts first everywhere
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

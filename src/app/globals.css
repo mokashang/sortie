@@ -345,3 +345,107 @@ pre {
   font-family: var(--font-mono);
   font-size: 11px;
 }
+
+/* ---- Direction tab strip (/queue) ---- */
+
+.tabbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 14px;
+}
+
+.tab {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  color: var(--sub);
+  cursor: pointer;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.tab:hover { color: var(--ink); }
+
+.tab.active {
+  color: var(--ink);
+  font-weight: 700;
+  border-bottom-color: var(--accent);
+}
+
+.tab .tab-count {
+  font-family: var(--font-mono);
+  color: var(--sub);
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+/* ---- Pagination + sort control (/queue) ---- */
+
+.queue-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--sub);
+}
+
+.pagination .mono { color: var(--ink); }
+
+/* ---- Queue row actions + JD drawer ---- */
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.row-actions .btn-ghost, .row-actions .btn {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.pin-chip {
+  border-color: var(--warn);
+  color: var(--warn);
+  margin-right: 4px;
+}
+
+.jd-drawer {
+  background: var(--chip-bg);
+  border-top: 1px solid var(--line);
+  padding: 12px;
+}
+
+.jd-drawer pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.undo-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--sub);
+  padding: 6px 0;
+}

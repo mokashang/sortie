@@ -55,6 +55,8 @@ export function takeNextApplication(
     // opts.direction scopes the picker to a single direction (used by the per-direction apply
     // quota plan — see buildApplyPrompt's `plan` mode) — every other semantic (priority order,
     // parking, stale-prepared reclaim, no-URL park) is identical to the undirected picker.
+    // a.pinned DESC leads every ORDER BY here: a row the user starred on /queue ("置顶/优先")
+    // must be the very next thing the executor takes, ahead of tier/score/freshness.
     const row = (
       opts.direction
         ? db
@@ -65,7 +67,7 @@ export function takeNextApplication(
                JOIN matches m ON m.job_id = j.id
                WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
                  AND m.direction = ?
-               ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+               ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
                LIMIT 1`
             )
             .get(opts.direction)
@@ -76,7 +78,7 @@ export function takeNextApplication(
                JOIN jobs j ON j.id = a.job_id
                JOIN matches m ON m.job_id = j.id
                WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
-               ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+               ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
                LIMIT 1`
             )
             .get()
@@ -381,6 +383,11 @@ export function unpark(db: DB, jobId: number): void {
   db.prepare("UPDATE applications SET needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
 }
 
+// Sentinel used wherever a NULL matches.direction needs a display/routing string — the
+// queueByDirection summary and the /queue tab strip it feeds, and pagedQueue's own direction
+// filter below (which maps this string back to "IS NULL" rather than a literal match).
+export const UNCLASSIFIED_DIRECTION = "未分类";
+
 export interface DirectionQueueRow {
   score: number;
   company: string;
@@ -458,9 +465,130 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
   });
 
   return ordered.map((g) => ({
-    direction: g.direction ?? "未分类",
+    direction: g.direction ?? UNCLASSIFIED_DIRECTION,
     tier: g.tier,
     matched: g.matched,
     top: topByDirection.get(g.direction) ?? [],
   }));
+}
+
+// User -> App from the interactive /queue page's row-level "跳过/归档" action. Only valid from
+// 'matched' (the same set the picker draws from) — parks the row at status='archived' with a
+// fixed, greppable reason so it's obviously a manual skip rather than an executor failure. The
+// row simply disappears from every 'matched'-filtered query (queue lists, the picker, quota
+// counts) without deleting any data — unarchive() below is the exact inverse.
+export function archiveFromQueue(db: DB, jobId: number): void {
+  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as
+    | { status: string }
+    | undefined;
+  if (!row) throw new Error(`archiveFromQueue: no application for job ${jobId}`);
+  if (row.status !== "matched") {
+    throw new Error(`archiveFromQueue: cannot archive from status '${row.status}' (must be 'matched')`);
+  }
+  db.prepare("UPDATE applications SET status = 'archived', needs_manual_reason = ? WHERE job_id = ?").run(
+    "user skipped from queue",
+    jobId
+  );
+}
+
+// The "撤销" (undo) side of archiveFromQueue — only valid from 'archived', restores 'matched'
+// and clears the reason so the row re-enters the picker's pool exactly as it was before.
+export function unarchive(db: DB, jobId: number): void {
+  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as
+    | { status: string }
+    | undefined;
+  if (!row) throw new Error(`unarchive: no application for job ${jobId}`);
+  if (row.status !== "archived") {
+    throw new Error(`unarchive: cannot unarchive from status '${row.status}' (must be 'archived')`);
+  }
+  db.prepare("UPDATE applications SET status = 'matched', needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
+}
+
+// User -> App from /queue's ★ "置顶/优先" toggle. Not restricted to any particular status — a
+// user may star a row before or after it moves through the pipeline — it just flips the flag
+// that takeNextApplication and pagedQueue both sort on first.
+export function setPinned(db: DB, jobId: number, pinned: boolean): void {
+  const result = db.prepare("UPDATE applications SET pinned = ? WHERE job_id = ?").run(pinned ? 1 : 0, jobId);
+  if (result.changes === 0) throw new Error(`setPinned: no application for job ${jobId}`);
+}
+
+export type QueueSort = "score" | "fresh" | "company";
+
+export interface PagedQueueOpts {
+  direction: string;
+  page: number;
+  pageSize: number;
+  sort: QueueSort;
+}
+
+export interface PagedQueueRow {
+  id: number;
+  company: string;
+  title: string;
+  location: string | null;
+  apply_url: string | null;
+  direction: string | null;
+  score: number | null;
+  tier: number | null;
+  reason: string | null;
+  posted_at: string | null;
+  pinned: number;
+}
+
+export interface PagedQueueResult {
+  rows: PagedQueueRow[];
+  total: number;
+  pages: number;
+}
+
+// The interactive /queue page's data source for a single direction tab: same eligibility filter
+// as queueByDirection/takeNextApplication's undirected picker (status='matched', not parked, not
+// loc-flagged), scoped to one direction, with pinned rows always first (see takeNextApplication's
+// a.pinned DESC comment above) and then the user's chosen secondary sort.
+export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
+  // UNCLASSIFIED_DIRECTION is a display sentinel for a NULL matches.direction (see
+  // queueByDirection) — it never appears as an actual column value, so the filter below must
+  // become "IS NULL" rather than a literal string match, or the 未分类 tab would always be empty.
+  const directionFilter = opts.direction === UNCLASSIFIED_DIRECTION ? "m.direction IS NULL" : "m.direction = ?";
+  const directionParams = opts.direction === UNCLASSIFIED_DIRECTION ? [] : [opts.direction];
+
+  const total = (
+    db
+      .prepare(
+        `SELECT COUNT(*) n
+         FROM applications a
+         JOIN jobs j ON j.id = a.job_id
+         JOIN matches m ON m.job_id = j.id
+         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+           AND ${directionFilter}`
+      )
+      .get(...directionParams) as { n: number }
+  ).n;
+
+  const pages = total === 0 ? 1 : Math.max(1, Math.ceil(total / opts.pageSize));
+  const page = Math.min(Math.max(1, opts.page), pages);
+  const offset = (page - 1) * opts.pageSize;
+
+  const secondarySort =
+    opts.sort === "company"
+      ? "j.company COLLATE NOCASE ASC, j.title ASC"
+      : opts.sort === "fresh"
+      ? "(j.posted_at IS NULL) ASC, j.posted_at DESC, j.created_at DESC"
+      : "COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC";
+
+  const rows = db
+    .prepare(
+      `SELECT j.id, j.company, j.title, j.location, j.apply_url, m.direction, m.score, m.tier, m.reason,
+              j.posted_at, a.pinned
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN matches m ON m.job_id = j.id
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+         AND ${directionFilter}
+       ORDER BY a.pinned DESC, ${secondarySort}
+       LIMIT ? OFFSET ?`
+    )
+    .all(...directionParams, opts.pageSize, offset) as PagedQueueRow[];
+
+  return { rows, total, pages };
 }
