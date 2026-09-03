@@ -8,6 +8,7 @@ import {
   reportSubmitted,
   pendingConfirmations,
   confirmStatus,
+  getApplyTask,
   unpark,
   queueByDirection,
   ApplyTask,
@@ -581,6 +582,58 @@ describe("confirmStatus", () => {
     const jobId = seedJob(db, { status: "prepared" });
 
     expect(confirmStatus(db, jobId)).toEqual({ decision: null, status: "prepared" });
+  });
+});
+
+describe("getApplyTask", () => {
+  it("returns the stored answer pack + applyUrl for a prepared application, unchanged from takeNextApplication and without mutating status", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"], "/data/r/ai_infra-v1.pdf");
+    seedJob(db, {
+      company: "Stripe",
+      title: "SWE New Grad",
+      applyUrl: "https://job-boards.greenhouse.io/stripe/jobs/1",
+      ats: "greenhouse",
+    });
+
+    const taken = takeNextApplication(db, testProfile()) as ApplyTask;
+    const task = getApplyTask(db, taken.jobId) as ApplyTask;
+
+    expect(task).toEqual(taken);
+    expect(getApplication(db, taken.jobId).status).toBe("prepared");
+  });
+
+  it("also works from status='awaiting_confirm' (the resume-mode case: re-fetching a task that already reported a fill)", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    seedJob(db, { company: "Acme" });
+    const taken = takeNextApplication(db, testProfile()) as ApplyTask;
+    reportFill(db, { jobId: taken.jobId, status: "awaiting_confirm", filledFields: { name: "Mengjia" } });
+
+    const task = getApplyTask(db, taken.jobId) as ApplyTask;
+
+    expect(task.jobId).toBe(taken.jobId);
+    expect(task.answerPack).toEqual(taken.answerPack);
+  });
+
+  it("returns an error for an unknown jobId", () => {
+    const db = openDb(":memory:");
+    const result = getApplyTask(db, 999) as { error: string };
+    expect(result.error).toMatch(/no application/);
+  });
+
+  it("returns an error when the application is not prepared/awaiting_confirm (e.g. still 'matched')", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "matched" });
+    const result = getApplyTask(db, jobId) as { error: string };
+    expect(result.error).toMatch(/not prepared\/awaiting_confirm/);
+  });
+
+  it("returns an error when there is no stored answer_pack", () => {
+    const db = openDb(":memory:");
+    const jobId = seedJob(db, { status: "prepared" });
+    const result = getApplyTask(db, jobId) as { error: string };
+    expect(result.error).toMatch(/no stored answer_pack/);
   });
 });
 

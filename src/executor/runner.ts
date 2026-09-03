@@ -18,6 +18,11 @@ export interface StartOptions {
   companies?: string[];
   // apply kind only — per-direction quota plan, processed in order. See buildApplyPrompt.
   plan?: ApplyPlanEntry[];
+  // apply kind only — resume mode: the session's first phase re-fills and re-submits any
+  // application left sitting at approved+awaiting_confirm by a prior executor process that died
+  // before it could submit. See buildApplyPrompt's resume section and the /api/apply/decide
+  // route's auto-start-on-approve path, which is what actually sets this.
+  resume?: boolean;
 }
 
 // A structural subset of child_process.ChildProcess — deliberately loose so tests can inject a
@@ -65,7 +70,7 @@ function isAlive(pid: number | null | undefined): boolean {
 function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
   switch (kind) {
     case "apply":
-      return buildApplyPrompt({ limit: options.limit, plan: options.plan });
+      return buildApplyPrompt({ limit: options.limit, plan: options.plan, resume: options.resume });
     case "network_send":
       return buildNetworkSendPrompt();
     case "network_find":
@@ -91,6 +96,18 @@ export function reapStaleRuns(db: DB): void {
       ).run("process gone", row.id);
     }
   }
+}
+
+// True if there is currently a 'running' executor_runs row of the given kind whose pid is
+// genuinely alive (same liveness check as reapStaleRuns/startExecutor's duplicate-kind guard,
+// factored out for callers that only need a yes/no answer — e.g. the /api/apply/decide route's
+// auto-start-on-approve check: does NOT reap stale rows itself, since a caller that only wants
+// the liveness answer shouldn't have the side effect of mutating run rows as a side channel).
+export function hasLiveRun(db: DB, kind: ExecutorKind): boolean {
+  const rows = db.prepare("SELECT pid FROM executor_runs WHERE kind=? AND status='running'").all(kind) as {
+    pid: number | null;
+  }[];
+  return rows.some((row) => isAlive(row.pid));
 }
 
 export interface StartResult {

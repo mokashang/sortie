@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { openDb, DB } from "@/lib/db";
-import { startExecutor, stopExecutor, executorStatus, reapStaleRuns, SpawnedChild, SpawnFn } from "@/executor/runner";
+import { startExecutor, stopExecutor, executorStatus, reapStaleRuns, hasLiveRun, SpawnedChild, SpawnFn } from "@/executor/runner";
 
 // A fake child process that never actually spawns `claude` — the fake spawn function below
 // tracks calls and returns one of these so tests can drive/inspect it without touching the
@@ -204,6 +204,40 @@ describe("executor/runner", () => {
       reapStaleRuns(db);
       const row = db.prepare("SELECT status FROM executor_runs WHERE kind='apply'").get() as { status: string };
       expect(row.status).toBe("done");
+    });
+  });
+
+  describe("hasLiveRun", () => {
+    it("is false when there is no running row of that kind", () => {
+      expect(hasLiveRun(db, "apply")).toBe(false);
+    });
+
+    it("is true when a running row of that kind has a live pid", () => {
+      db.prepare(
+        "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('apply','running', ?, '/tmp/x.log')"
+      ).run(process.pid);
+      expect(hasLiveRun(db, "apply")).toBe(true);
+    });
+
+    it("is false when the only running row of that kind has a dead pid", () => {
+      db.prepare(
+        "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('apply','running', 999999, '/tmp/x.log')"
+      ).run();
+      expect(hasLiveRun(db, "apply")).toBe(false);
+    });
+
+    it("does not count a running row of a different kind", () => {
+      db.prepare(
+        "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('network_send','running', ?, '/tmp/x.log')"
+      ).run(process.pid);
+      expect(hasLiveRun(db, "apply")).toBe(false);
+    });
+
+    it("does not count a done/failed/stopped row even with a live-looking pid", () => {
+      db.prepare(
+        "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('apply','done', ?, '/tmp/x.log')"
+      ).run(process.pid);
+      expect(hasLiveRun(db, "apply")).toBe(false);
     });
   });
 

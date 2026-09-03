@@ -122,6 +122,78 @@ describe("executor prompts", () => {
         expect(p).toMatch(/连续 3 个 needs_manual 或连续 2 个 error/);
       });
     });
+
+    describe("Greenhouse fill heuristics", () => {
+      it("are present in the default (non-resume) prompt", () => {
+        const p = buildApplyPrompt();
+        expect(p).toMatch(/react-select/);
+        expect(p).toMatch(/EXACT visible text|完全一致的可见文字/);
+        expect(p).toMatch(/Vanguard University of Southern California/);
+        expect(p).toMatch(/checkbox/);
+        expect(p).toMatch(/标签文字/);
+        expect(p).toMatch(/Country/);
+        expect(p).toMatch(/Electrical Engineering/);
+        expect(p).toMatch(/Computer Science/);
+        expect(p).toMatch(/Simplify/);
+        expect(p).toMatch(/Autofill/);
+        expect(p).toMatch(/read-back|读回/);
+      });
+
+      it("are also present with a plan", () => {
+        const p = buildApplyPrompt({ plan: [{ direction: "swe_backend", count: 2 }] });
+        expect(p).toMatch(/react-select/);
+        expect(p).toMatch(/Simplify/);
+      });
+    });
+
+    describe("resume mode", () => {
+      it("without resume, the prompt has no §0 resume phase", () => {
+        const p = buildApplyPrompt();
+        expect(p).not.toMatch(/恢复模式/);
+        expect(p).not.toContain("/api/apply/task");
+      });
+
+      it("resume with no plan/limit produces a resume-only prompt: fetches pending, filters approved, re-fills via /api/apply/task, and does not enter the normal /api/apply/next loop", () => {
+        const p = buildApplyPrompt({ resume: true });
+        expect(p).toMatch(/恢复模式/);
+        expect(p).toContain("http://127.0.0.1:3000/api/apply/pending");
+        expect(p).toContain('decision === "approved"');
+        expect(p).toContain("http://127.0.0.1:3000/api/apply/task?jobId=");
+        expect(p).not.toContain("http://127.0.0.1:3000/api/apply/next");
+        expect(p).toMatch(/不要调用 \/api\/apply\/next/);
+      });
+
+      it("resume with no plan/limit still carries the submit red line and the awaiting_confirm reset explanation", () => {
+        const p = buildApplyPrompt({ resume: true });
+        expect(p).toMatch(/"approved"` → 进入第 6 步/);
+        expect(p).toMatch(/重置为 null/);
+        expect(p).toMatch(/这是故意的/);
+      });
+
+      it("resume with no plan/limit still carries the Greenhouse heuristics", () => {
+        const p = buildApplyPrompt({ resume: true });
+        expect(p).toMatch(/react-select/);
+        expect(p).toMatch(/Simplify/);
+      });
+
+      it("resume + plan does both: the resume phase AND the normal plan-mode main loop", () => {
+        const p = buildApplyPrompt({ resume: true, plan: [{ direction: "swe_backend", count: 3 }] });
+        expect(p).toMatch(/恢复模式/);
+        expect(p).toContain("http://127.0.0.1:3000/api/apply/task?jobId=");
+        // Falls through into the normal main loop content, unlike the resume-only case.
+        expect(p).toContain("http://127.0.0.1:3000/api/apply/next");
+        expect(p).toMatch(/继续进入下面 §1 的 Preflight 和常规循环/);
+        expect(p).toMatch(/swe_backend.*\*\*3\*\*/);
+      });
+
+      it("resume + explicit limit (no plan) also falls through into the normal main loop", () => {
+        const p = buildApplyPrompt({ resume: true, limit: 7 });
+        expect(p).toMatch(/恢复模式/);
+        expect(p).toContain("http://127.0.0.1:3000/api/apply/next");
+        expect(p).toMatch(/继续进入下面 §1 的 Preflight 和常规循环/);
+        expect(p).toMatch(/最多投递 \*\*7\*\* 个申请/);
+      });
+    });
   });
 
   describe("buildNetworkSendPrompt", () => {

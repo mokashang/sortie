@@ -32,13 +32,67 @@ export interface ApplyPlanEntry {
   count: number;
 }
 
-export function buildApplyPrompt(options: { limit?: number; plan?: ApplyPlanEntry[] } = {}): string {
-  const { plan } = options;
+// Hard-won from a live walkthrough of a real Greenhouse form — see fix #4 in the task this
+// implements. Included in both the resume phase (it fills a form too) and the main loop's §2
+// fill step, since both are filling the same kind of ATS forms.
+const GREENHOUSE_HEURISTICS = `## Greenhouse(Tier-A ATS)填表要点(一次真实走查踩过的坑,照做能省很多返工)
+- **文字输入框(text input)**:如果直接用 \`browser_type\` 打字被 React 吞掉(输入框看起来没反应,或者读回的内容和你打的不一致),改用 form-fill 类工具(\`mcp__playwright__browser_fill_form\`)直接设值,而不是逐字符敲键盘;设完之后一定要重新 \`browser_snapshot\` 读回实际值确认生效。
+- **react-select 下拉搜索框**(常见于 School/University、Discipline 等字段):先输入搜索关键词,再从下拉候选里按**完全一致的可见文字(exact visible text)**选择——绝不选"看起来最像的第一个候选项"。模糊匹配把"University of Southern California"选成了"Vanguard University of Southern California"这种事真实发生过。选完后从渲染出来的"已选中值"文字再核对一遍,不要只信自己点了哪一项。
+- **checkbox 组**:按 checkbox 旁边的**标签文字**选择,绝不按 DOM 里的 id 顺序猜。
+- **Phone 字段旁边的 "Country" 下拉**是电话区号选择器,不是一道独立的国籍/居住地问题——不要当成另一道题去猜答案。
+- **必填 select 里没有精确匹配项**(比如 Discipline 列表里没有 "Electrical Engineering"):选一个最接近的合理选项(ECE 选 Computer Science 之类),并把这次替代选择记进 filledFields(比如 \`"Discipline": "Computer Science (substituted for Electrical Engineering — no exact match)"\`),让人工审核能看到这里做了替代。
+- **页面上如果弹出 Simplify 之类的自动填表浏览器插件面板**,忽略它——绝不点它的 Autofill 按钮,一切填值都走你自己的 answerPack。
+- **每次填完(以及正式提交前)对每一个必填字段做一次最终 read-back**:重新 \`browser_snapshot\`,逐个核对必填字段的当前实际值确实是你想要的值,不要凭"刚刚填过了"就假设它还在。`;
+
+export function buildApplyPrompt(options: { limit?: number; plan?: ApplyPlanEntry[]; resume?: boolean } = {}): string {
+  const { plan, resume } = options;
+  const hasExplicitLimit = typeof options.limit === "number";
   const limit = options.limit ?? 5;
   // With a plan, the session's hard cap is the sum of per-direction quotas rather than the bare
   // `limit` — every other §2/§5/§6 reference to "the cap" reuses this so plan and non-plan modes
   // share identical wording (only §2 step 1's task-taking differs).
   const capCount = plan ? plan.reduce((sum, p) => sum + p.count, 0) : limit;
+
+  // Resume mode's first phase: re-fill and re-submit anything a prior executor process left
+  // approved+awaiting_confirm but never got to submit (e.g. it died between approval and click).
+  // Included whenever `resume` is set, regardless of whether this session also has a plan/limit
+  // to work through afterward — see resumeOnly below for the "nothing else to do" case.
+  const resumeSection = resume
+    ? `## 0. 恢复模式(resume:执行器刚(重新)启动,先补完遗留的已批准申请)
+上一个执行器进程可能在批准之后、提交之前就退出了(进程被杀、崩溃、服务重启等)——在做任何别的事之前,先处理这些遗留状态:
+
+1. \`curl -s ${APP_BASE}/api/apply/pending\` → \`{"pending":[...]}\`。筛出其中 \`decision === "approved"\`(而不是 \`null\` 或 \`"rejected"\`)的每一行——这些是已经批准、只是还没被提交的申请。
+2. 对每一个这样的 jobId:\`curl -s "${APP_BASE}/api/apply/task?jobId=<jobId>"\` 取回 \`{jobId, company, title, applyUrl, ats, answerPack}\`(answerPack 结构和 §2 第 1 步拿到的 ApplyTask 完全一样,含 resume.pdf_path)。
+3. \`mcp__playwright__browser_navigate\` 打开 \`<applyUrl>\`,\`mcp__playwright__browser_snapshot\` 读无障碍树,把 answerPack 拍平成字段值列表,重新填一遍整份表单(同 §2 第 2 步的方式,遵守下面的 Greenhouse 填表要点),\`mcp__playwright__browser_file_upload\` 重新上传简历。填完再做一次 \`mcp__playwright__browser_snapshot\` 读出**实际**值。
+4. \`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {...实际值...}}'\`。**这一步会正确地把 App 侧的批准重置为 null——这是故意的**:这是一次全新的填表,旧的批准不再对新值有效,必须让用户重新看一遍再批一次,绝不能凭旧的批准直接提交。
+5. 像 §2 第 4 步一样轮询(每 5 秒一次,最多 30 分钟)\`curl -s "${APP_BASE}/api/apply/pending?jobId=<jobId>"\`:\`"approved"\` → 进入第 6 步;\`"rejected"\` → \`mcp__playwright__browser_tabs\`(action: close)关掉 tab,跳过这个 jobId;超时仍是 \`null\` → 回报 \`{"jobId": <jobId>, "status": "needs_manual", "reason": "confirmation timed out after 30 minutes"}\`,关掉 tab,跳过。
+6. 批准后,同 §2 第 5 步的漂移检查:重新 \`mcp__playwright__browser_snapshot\` 核对表单值没有漂移,点真正的最终 Submit/Apply 按钮,确认提交成功页,\`curl -s -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "submitted"}'\`,\`mcp__playwright__browser_tabs\`(action: close)关掉 tab。
+
+${
+  plan || hasExplicitLimit
+    ? "恢复阶段处理完全部遗留的已批准申请后,继续进入下面 §1 的 Preflight 和常规循环。"
+    : "本次启动没有带任何 plan 或数量上限——恢复阶段处理完全部遗留的已批准申请后,直接跳到 §6 收尾,不要调用 /api/apply/next 取任何新任务。"
+}
+`
+    : "";
+
+  // Pure resume, nothing else to do: a self-contained prompt that skips the main loop entirely
+  // rather than falling through to the default `limit ?? 5` main loop (which would silently turn
+  // a "just finish what's pending" auto-start into "also go pick up 5 more applications").
+  const resumeOnly = !!resume && !plan && !hasExplicitLimit;
+  if (resumeOnly) {
+    return `${COMMON_PREAMBLE}
+
+# 任务:投递执行(apply,resume 模式)
+
+本次启动没有带任何投递计划(没有 plan,也没有数量上限)——只做恢复,不取新任务。
+
+${resumeSection}
+
+${GREENHOUSE_HEURISTICS}
+
+恢复阶段结束后(全部遗留的已批准申请都处理完,或没有任何一条 \`decision === "approved"\` 的遗留),直接进入收尾:打印**一段话**总结——这次恢复处理了几个、其中重新填表后又提交成功的有几个、被拒绝/超时/needs_manual 的有几个及原因。**不要调用 /api/apply/next 取任何新任务。**`;
+  }
 
   const introSection = plan
     ? `本会话按以下方向配额投递,**按方向顺序依次处理**(不并行、不打乱顺序):
@@ -62,7 +116,7 @@ ${plan.map((p) => `- \`${p.direction}\` × **${p.count}**`).join("\n")}
 
 # 任务:投递执行(apply)
 
-${introSection}
+${resumeSection}${introSection}
 
 ## 1. Preflight
 \`curl -s ${APP_BASE}/api/apply/pending\` — 期望 200,body 形如 \`{"pending":[...]}\`。失败说明 App 没在跑,停止并说明。
@@ -92,6 +146,8 @@ ${takeTaskStep}
    - **有字段漂移**(变空了、被重置成默认值、或内容和批准时不一样)→ **不要提交**。用 answerPack 重新填一遍漂移的字段,重新 \`curl -s -X POST ${APP_BASE}/api/apply/report ... {"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {...}}'\`(这会把 App 侧的 confirm_decision 重置回 null——旧的批准不再对新值有效),回到第 4 步重新等一次批准,批准前绝不再尝试提交。
 
 6. **节流**:每完成一轮(报告已发、tab 已关闭)到取下一个任务之间等 5-10 秒。
+
+${GREENHOUSE_HEURISTICS}
 
 ## 3. needs_manual 触发条件(遇到就报 needs_manual,绝不硬闯)
 - **上线页面 JD 明确写出的资格性硬伤**(填表前检查,见 §2 第 2 步):PhD is required and a Master's is not accepted / no visa sponsorship / US citizenship is required——只认明确文字,不臆测

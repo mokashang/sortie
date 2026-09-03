@@ -312,6 +312,52 @@ export function pendingConfirmations(db: DB): PendingRow[] {
   });
 }
 
+// Re-fetches a prepared/awaiting_confirm application's task shape (same shape takeNextApplication
+// returns) from its already-stored answer_pack, WITHOUT taking a new job off the queue or
+// mutating status. Used by the executor's resume mode (buildApplyPrompt's resume section, via
+// GET /api/apply/task?jobId=) to re-open and re-fill an application that a prior executor
+// process left approved+awaiting_confirm but never got to submit — the task data (applyUrl,
+// answerPack with the resume pdf_path, ats) is identical to what the original takeNextApplication
+// call handed out; only the fresh confirm_decision (reset by reportFill) differs.
+export function getApplyTask(db: DB, jobId: number): ApplyTask | { error: string } {
+  const row = db
+    .prepare(
+      `SELECT j.company, j.title, j.apply_url, j.ats, a.answer_pack, a.status
+       FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       WHERE a.job_id = ?`
+    )
+    .get(jobId) as
+    | { company: string; title: string; apply_url: string | null; ats: string | null; answer_pack: string | null; status: string }
+    | undefined;
+
+  if (!row) return { error: `getApplyTask: no application for job ${jobId}` };
+  if (row.status !== "prepared" && row.status !== "awaiting_confirm") {
+    return {
+      error: `getApplyTask: job ${jobId} is not prepared/awaiting_confirm (status='${row.status}')`,
+    };
+  }
+  if (!row.answer_pack) {
+    return { error: `getApplyTask: job ${jobId} has no stored answer_pack` };
+  }
+
+  let answerPack: AnswerPack;
+  try {
+    answerPack = JSON.parse(row.answer_pack);
+  } catch {
+    return { error: `getApplyTask: job ${jobId} has a corrupt stored answer_pack` };
+  }
+
+  return {
+    jobId,
+    company: row.company,
+    title: row.title,
+    applyUrl: row.apply_url ?? "",
+    ats: row.ats,
+    answerPack,
+  };
+}
+
 export function confirmStatus(db: DB, jobId: number): { decision: string | null; status: string } {
   const row = db.prepare("SELECT status, confirm_decision FROM applications WHERE job_id = ?").get(jobId) as
     | { status: string; confirm_decision: string | null }
