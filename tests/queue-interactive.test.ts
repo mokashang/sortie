@@ -7,6 +7,7 @@ import {
   unarchive,
   setPinned,
   pagedQueue,
+  queueByDirection,
   UNCLASSIFIED_DIRECTION,
   ApplyTask,
 } from "@/apply/queue";
@@ -307,5 +308,24 @@ describe("pagedQueue", () => {
 
     expect(result.total).toBe(1);
     expect(result.rows[0].id).toBe(noDir);
+  });
+});
+
+describe("QUEUE_ELIGIBLE_SQL", () => {
+  it("hides duplicate, no-sponsor, phd-only and non-tech jobs from pagedQueue and takeNextApplication", () => {
+    const db = openDb(":memory:");
+    const ok = seedJob(db, { fingerprint: "ok", title: "SWE A" });
+    const dup = seedJob(db, { fingerprint: "dup", title: "SWE B" });
+    const nos = seedJob(db, { fingerprint: "nos", title: "SWE C" });
+    const phd = seedJob(db, { fingerprint: "phd", title: "SWE D" });
+    const sales = seedJob(db, { fingerprint: "sales", title: "SWE E" });
+    db.prepare("UPDATE jobs SET duplicate_of=? WHERE id=?").run(ok, dup);
+    db.prepare("UPDATE jobs SET sponsorship='no' WHERE id=?").run(nos);
+    db.prepare("UPDATE jobs SET degree_req='phd_only' WHERE id=?").run(phd);
+    db.prepare("UPDATE jobs SET role_kind='non_tech' WHERE id=?").run(sales);
+    const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    expect(page.rows.map((r) => r.id)).toEqual([ok]);
+    const groups = queueByDirection(db);
+    expect(groups[0].matched).toBe(1);
   });
 });

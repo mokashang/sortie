@@ -1,5 +1,5 @@
 import { getDb } from "@/lib/db";
-import { queueByDirection, pagedQueue, QueueSort } from "@/apply/queue";
+import { queueByDirection, pagedQueue, QueueSort, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { QueueBoard } from "./queue-board";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ export default async function QueuePage({
     db
       .prepare(
         `SELECT COUNT(*) n FROM applications a JOIN jobs j ON j.id = a.job_id
-         WHERE a.status='matched' AND j.loc_flag IS NULL`
+         WHERE a.status='matched' AND ${QUEUE_ELIGIBLE_SQL}`
       )
       .get() as { n: number }
   ).n;

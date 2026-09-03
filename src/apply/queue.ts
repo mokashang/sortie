@@ -3,6 +3,14 @@ import { Profile } from "@/lib/profile";
 import { buildAnswerPack, AnswerPack } from "@/apply/answers";
 import { selectResumeForJob } from "@/apply/resume-select";
 
+// 队列/取数的统一资格过滤(spec 2026-09-03 §3)。以 `j` 为 jobs 别名。所有"用户会看到 / 执行器会取到"
+// 的查询都必须带上它,否则重复行或被判不合格的岗会从某个入口漏回来。
+export const QUEUE_ELIGIBLE_SQL =
+  "j.loc_flag IS NULL AND j.visa_flag IS NULL AND j.duplicate_of IS NULL" +
+  " AND COALESCE(j.sponsorship,'') <> 'no'" +
+  " AND COALESCE(j.degree_req,'') <> 'phd_only'" +
+  " AND COALESCE(j.role_kind,'') <> 'non_tech'";
+
 // The apply-executor protocol: the App is the "brain" (this file's pure DB logic) and a
 // Claude-in-Chrome session is the "hands" (drives the user's real, logged-in Chrome per
 // .claude/skills/apply-executor). Both sides only ever talk through localhost API + SQLite.
@@ -65,7 +73,7 @@ export function takeNextApplication(
                FROM applications a
                JOIN jobs j ON j.id = a.job_id
                JOIN matches m ON m.job_id = j.id
-               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
                  AND m.direction = ?
                ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
                LIMIT 1`
@@ -77,7 +85,7 @@ export function takeNextApplication(
                FROM applications a
                JOIN jobs j ON j.id = a.job_id
                JOIN matches m ON m.job_id = j.id
-               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+               WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
                ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
                LIMIT 1`
             )
@@ -426,7 +434,7 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
        GROUP BY m.direction
        ORDER BY COALESCE(m.tier, 9) ASC, COUNT(*) DESC`
     )
@@ -440,7 +448,7 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
        ORDER BY m.score DESC, j.created_at DESC`
     )
     .all() as TopRawRow[];
@@ -559,7 +567,7 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
          FROM applications a
          JOIN jobs j ON j.id = a.job_id
          JOIN matches m ON m.job_id = j.id
-         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
            AND ${directionFilter}`
       )
       .get(...directionParams) as { n: number }
@@ -583,7 +591,7 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
          AND ${directionFilter}
        ORDER BY a.pinned DESC, ${secondarySort}
        LIMIT ? OFFSET ?`
