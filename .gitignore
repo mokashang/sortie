@@ -7,3 +7,5 @@ profile/*
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
+.playwright-mcp/
+.claude/launch.json
