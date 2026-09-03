@@ -48,7 +48,7 @@
 
 | 列 | 取值 | 写入者 |
 |---|---|---|
-| `dedup_key` | `norm(company)` + `"|"` + `norm(title)`,复用 `fingerprint.ts` 的 `norm` | 扫描插入;迁移时回填全库并建索引 `idx_jobs_dedup_key` |
+| `dedup_key` | `norm(company)` + 竖线 + `norm(title)`,复用 `fingerprint.ts` 的 `norm` | 扫描插入;迁移时回填全库并建索引 `idx_jobs_dedup_key` |
 | `duplicate_of` | 主行 job id | consolidate |
 | `dedup_judged_at` | ISO 时间 | consolidate;组内任一行为空 ⇒ 该组待判 |
 | `sponsorship` | `yes / no / unknown` | match_llm / jd_review / executor_live |
