@@ -138,6 +138,11 @@ export interface ReportFillInput {
   // unvalidated JSON — see coerceFieldValue below for why the runtime doesn't trust the type.
   filledFields?: Record<string, string>;
   reason?: string;
+  // needs_manual only. true = the live page proved the job is a hard no (explicit no-sponsorship,
+  // PhD-only, citizens-only, ...): archive it outright instead of parking it for a human, and
+  // archive every other still-queued application with the same company+title so a duplicated
+  // listing (the DB has 3 identical Google rows, for instance) isn't offered right back.
+  archive?: boolean;
 }
 
 // The confirm queue UI renders filledFields values directly as React children. An executor
@@ -184,10 +189,36 @@ export function reportFill(db: DB, input: ReportFillInput): void {
   // 'error' is distinguished only by an "error: " prefix so the confirmation UI/logs can tell
   // "executor gave up cleanly" apart from "something broke".
   const reason = input.status === "error" ? `error: ${input.reason ?? ""}` : input.reason ?? "";
+  if (input.status === "needs_manual" && input.archive) {
+    archiveWithDuplicates(db, input.jobId, reason);
+    return;
+  }
   db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'matched' WHERE job_id = ?").run(
     reason,
     input.jobId
   );
+}
+
+// reportFill's archive path (see ReportFillInput.archive). The duplicate sweep is scoped to
+// status='matched' only: a duplicate that is mid-flight (prepared/awaiting_confirm) or already
+// submitted is somebody else's business, and company/title matching is case-insensitive because
+// the same posting arrives through different sources with different casing.
+function archiveWithDuplicates(db: DB, jobId: number, reason: string): void {
+  const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as
+    | { company: string; title: string }
+    | undefined;
+  db.transaction(() => {
+    db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'archived' WHERE job_id = ?").run(
+      reason,
+      jobId
+    );
+    if (!job) return;
+    db.prepare(
+      `UPDATE applications SET status = 'archived', needs_manual_reason = ?
+       WHERE status = 'matched'
+         AND job_id IN (SELECT id FROM jobs WHERE id <> ? AND company = ? COLLATE NOCASE AND title = ? COLLATE NOCASE)`
+    ).run(`duplicate of job ${jobId}: ${reason}`, jobId, job.company, job.title);
+  })();
 }
 
 // User's decision from the in-app confirmation queue. approve leaves status at

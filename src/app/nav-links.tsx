@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/jobs", label: "职位" },
   { href: "/queue", label: "队列" },
   { href: "/apply", label: "投递" },
+  { href: "/history", label: "历史" },
   { href: "/network", label: "人脉" },
   { href: "/profile", label: "Profile" },
   { href: "/studio", label: "Studio" },

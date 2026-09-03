@@ -16,23 +16,31 @@ Mengjia Shang(USC M.S. ECE 2027/05,F-1)的 2026 秋招求职作战系统。本�
 
 ## 2. 架构地图
 - Next.js 15 + better-sqlite3(`data/jobseeker.db`,schema v7,`src/lib/schema.sql` + `src/lib/db.ts` 迁移)。UI 设计语言"制版间"(`src/app/globals.css`)。
-- 扫描 `src/scanner/`(GitHub 清单 + Greenhouse/Lever/Ashby API,每天 7:00/13:00,`src/instrumentation.ts` 零 import 定时器)→ 签证/地点硬过滤 → 匹配 `src/matcher/`(Claude 打分,`src/llm/` 适配层,订阅后端 = `claude -p`)→ 队列 `/queue`(方向 tab+分页+置顶/跳过/JD 抽屉)→ 投递 `/apply` → CRM `/network` → `/dashboard`。
+- 扫描 `src/scanner/`(GitHub 清单 + Greenhouse/Lever/Ashby API,每天 7:00/13:00,`src/instrumentation.ts` 零 import 定时器)→ 签证/地点硬过滤 → 匹配 `src/matcher/`(Claude 打分,`src/llm/` 适配层,订阅后端 = `claude -p`)→ 队列 `/queue`(方向 tab+分页+置顶/跳过/JD 抽屉)→ 投递 `/apply`(待确认/需人工/今日已提交)→ 历史 `/history`(已提交后的状态追踪,`src/apply/history.ts`)→ CRM `/network` → `/dashboard`。
 - 简历 `src/resume/`:Profile 经历(38 条,含 10 个用户授权的"构想中"项目)→ Jake's Resume 模板 → tectonic 编译 → 12 方向各一版(`data/resumes/<dir>_v1.pdf`),一页强制 + Overfull 溢出检测 + 自检。
 - 执行器 `src/executor/`:两个通道。**user_chrome(默认)**:App 只入队,交互会话接单;**headless**:spawn `claude -p --allowedTools "Bash(curl:*),mcp__playwright__*"` 驱动专属 Chrome 档案 `data/browser-profile`(需先用 /apply 的"打开浏览器档案"登录一次)。hanzi-browse 通道已废弃。
 - 改代码后部署:`npm run build && launchctl kickstart -k gui/$(id -u)/com.jobseeker.os`。dev 模式 `npm run dev` 也能用。测试 `npm test`。
 
 ## 3. 值守会话执行协议(新会话照此接单)
 前置:在 Claude 桌面 App 的 Code 标签(或 `claude --chrome` 交互会话)里,`mcp__claude-in-chrome__list_connected_browsers` 能看到用户浏览器。`claude -p` 无头会话**连不上**这个扩展(官方不支持),所以必须是交互会话。
-1. 监听:轮询 `GET /api/executor/status`,出现 `channel=user_chrome, status=queued` 的 run → `GET /api/executor/claim-next?channel=user_chrome` 接单(返回 `{run:{id,kind,options:{plan:[{direction,count}]},logPath}}`)。可用 Monitor 工具挂一个每 5s 轮询的持久监视(本会话用过,见 memory)。
-2. 进度:`POST /api/executor/log {runId,line}`(App 面板实时显示);停止检查 `GET /api/executor/run?id=`(status=stopped 则中止);结束 `POST /api/executor/finish {runId,status:'done'|'failed'|'stopped',summary}`。
-3. 每个方向:`POST /api/apply/next {"direction":slug}` → `{jobId,company,title,applyUrl,ats,answerPack}`(answerPack 含 contact/education/work_auth/eeo/resume.pdf_path/custom=profile standard_answers)。**建议语义**:count = 填好待确认的份数,被拦下的不计数,继续取下一个(设 3×count 取数上限)——尚未实现,本会话按字面取数。
-4. 在用户 Chrome(claude-in-chrome:tabs_context_mcp→navigate)打开 applyUrl,**先读活页面 JD 做资格核验**:明确不 sponsor / 仅公民 / PhD-only(MS 不收)/ 登录墙(需账号且用户未登录)/ 验证码 / 视频题 → `POST /api/apply/report {jobId,status:'needs_manual',reason}`,不填,取下一个。
+1. 监听:轮询 `GET /api/executor/status`,出现 `channel=user_chrome, status=queued` 的 run → `GET /api/executor/claim-next?channel=user_chrome` 接单(返回 `{run:{id,kind,options:{plan:[{direction,count}] | resume:true},logPath}}`)。用 Monitor 工具挂一个每 5s 轮询的持久监视(命令样例见 §3.9)。
+2. 进度:`POST /api/executor/log {runId,line}`。**每一步都记**(App 的「查看详情」会逐行显示):接单+计划 / 取到哪个 job / 打开页面 / 资格核验结论 / 每组字段填写(联系方式、教育、工作授权、EEO、自定义问题)/ 简历上传 / 回读核对 / 回报待确认 / 等待确认 / 批准→提交 / 成功页确认 / 跳过与原因。停止检查 `GET /api/executor/run?id=`(status=stopped 则中止);结束 `POST /api/executor/finish {runId,status:'done'|'failed'|'stopped',summary}`。
+3. **计数语义:count = 填好并回报 awaiting_confirm 的份数**。被拦下(needs_manual/归档)的不计数,继续取下一个;每个方向最多取 3×count 个仍凑不够就停,并在 summary 里说明。每个方向:`POST /api/apply/next {"direction":slug}` → `{jobId,company,title,applyUrl,ats,answerPack}`(answerPack 含 contact/education/work_auth/eeo/resume.pdf_path/custom=profile standard_answers)。
+4. 在用户 Chrome(claude-in-chrome:tabs_context_mcp→tabs_create_mcp→navigate)打开 applyUrl,**先读活页面 JD 做资格核验**:
+   - **硬性不合格**(明确不 sponsor / 仅公民 / 需 clearance / PhD-only)→ `POST /api/apply/report {jobId,status:'needs_manual',reason,archive:true}`:直接归档,并自动归档队列里同公司+同标题的重复清单(不进需人工清单)。
+   - **需要人来处理**(登录墙且用户未登录 / 验证码 / 视频题 / 已申请过 / 死链 / 必填题答案包没有)→ 同上但不带 archive,进需人工清单。
+   不填,取下一个。
 5. 填表(Greenhouse 实战教训):Greenhouse 嵌入表单在跨域 iframe,直接开 `job-boards.greenhouse.io/embed/job_app?for=<co>&token=<id>`;文本框用 `form_input`(键盘 type 常被 React 吞掉);react-select 下拉:点击→输入→**按选项精确文本用 JS 点击**,绝不取第一个(曾误选 "Vanguard University of Southern California");选完读 `.single-value` 文本核实;复选框按 **label 文本**定位(id 与标签错位曾勾错季度);"Country" 旁的是电话区号选择器;Discipline 列表无 EE/ECE 时选 Computer Science 并在清单里注明;简历上传用 `file_upload`(内置 Browser 面板不支持上传);无视 Simplify 扩展的 Autofill 面板;提交前逐项回读所有必填项。
-6. 回报:`POST /api/apply/report {jobId,status:'awaiting_confirm',filledFields:{字段:值...}}` → 用户在 /apply 看卡片点确认 → 轮询 `GET /api/apply/pending?jobId=` 直到 `decision:'approved'` → 重读表单核对未变 → 点 Submit → 看到成功页 → `POST /api/apply/report {jobId,status:'submitted'}`。重新回报会清空已有批准(必须重新确认)。
-7. 节流:申请间隔 5–10s;连续 3 个 needs_manual 或 2 个 error 停下汇报。用完关掉自己开的标签页。
+6. 回报:`POST /api/apply/report {jobId,status:'awaiting_confirm',filledFields:{字段:值...}}` → 用户在 /apply 看卡片点确认。**填好的标签页保持打开**,不要关。重新回报会清空已有批准(必须重新确认)。
+7. **确认→提交有两条路径,都要能走**:
+   - a) run 还在跑:填完本 run 的份数后**不要立刻 finish**,先轮询 `GET /api/apply/pending?jobId=` (每 5s,最长 30 分钟)等 `decision:'approved'` → 回到该标签页重读表单核对未变 → 点 Submit → 看到成功页 → `POST /api/apply/report {jobId,status:'submitted'}` → 关标签页。全部处理完(提交/拒绝/超时→needs_manual "confirmation timed out")再 finish。
+   - b) run 已 finish 后用户才点确认:App 的 decide 会自动入队一个 `options.resume=true` 的 user_chrome run。接单后 `GET /api/apply/pending` 取 `decision==='approved'` 的行;若对应标签页仍开着且表单值与 filledFields 一致 → 直接提交;否则 `GET /api/apply/task?jobId=` 重新打开、重填、重新回报(批准会被清空,用户需再确认一次),再等批准提交。
+8. 节流:申请间隔 5–10s;连续 3 个 needs_manual 或 2 个 error 停下汇报。提交完成后关掉自己开的标签页。
+9. Monitor 样例(每 5s 报一次 queued run 与新批准):
+   `while true; do curl -s http://127.0.0.1:3000/api/executor/status | jq -r '.runs[]|select(.channel=="user_chrome" and .status=="queued")|"QUEUED run \(.id) \(.options|tojson)"'; curl -s http://127.0.0.1:3000/api/apply/pending | jq -r '.pending[]|select(.decision=="approved")|"APPROVED job \(.jobId) \(.company)"'; sleep 5; done`(去重由会话自己记住已处理的 id)。
 
 ## 4. 已知待办(按优先级)
-1. 执行器语义改为"count = 填好待确认份数"(见 §3.3),并把活页面拦下的 不 sponsor / PhD-only 直接归档+按公司+标题去重(库里 Google 有 3 条重复清单会连续被取到)。
+1. (已做 2026-09-03)执行器语义 count=填好待确认份数;活页面硬拦下 `archive:true` 直接归档+同公司同标题去重;/history 投递历史页(分方向/分日期/手动改状态 OA→面试→Offer);/apply 今日已提交按本地 0 点;需人工清单可单条/批量移除(归档);执行器面板「查看详情」逐步日志 + 运行记录。
 2. 用户下一步:再点一次"开始投递"(SWE General 3)由值守会话跑;队列前排:ByteDance(自有)、Palantir(Lever,免登录)、Blue Origin(Workday)、Datadog、Ciena。
 3. 构想项目(gpu_cuda/quant/security/embedded/robotics 各 2 个)用户承诺去建,建成后按真实数据更新 Profile bullet;清单 `profile/gap-analysis-2026-08-31.md`。
 4. 部署迁移:先在 Mac 跑顺 → 整体搬到 **Windows 常开机**(后端 + 交互式 Claude 会话 + Chrome 都在那,Mac 经 Tailscale 只当 App 用户)。待办:launchd→任务计划/NSSM、osascript 通知改 ntfy-only(`.env` NTFY_TOPIC)、硬编码 `/Users/moka` 路径参数化(plist、claude mcp add 的 --user-data-dir)、安装 node/tectonic/poppler/Chrome/claude 并 `claude login`、服务器绑定 tailnet 地址(现绑 127.0.0.1,无鉴权,勿暴露公网)。

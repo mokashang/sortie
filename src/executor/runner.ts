@@ -402,6 +402,20 @@ export interface RunStatusRow {
   logTail?: string[];
 }
 
+// The App's "详情" view of one run (GET /api/executor/log?id=): the whole log, not a tail, for
+// running and finished runs alike — an attended session logs every step it takes (claim, open
+// page, eligibility check, each field group, upload, read-back, report, wait, submit), and the
+// user wants to be able to read all of it after the fact. Throws for an unknown run; a missing
+// log file (deleted out of band) reads as empty rather than an error.
+export function runLogLines(db: DB, runId: number): string[] {
+  const row = db.prepare("SELECT log_path FROM executor_runs WHERE id=?").get(runId) as
+    | { log_path: string | null }
+    | undefined;
+  if (!row) throw new Error(`runLogLines: no run #${runId}`);
+  if (!row.log_path) return [];
+  return tailLines(row.log_path, Number.MAX_SAFE_INTEGER);
+}
+
 function tailLines(filePath: string, n: number): string[] {
   try {
     const content = fs.readFileSync(filePath, "utf8");

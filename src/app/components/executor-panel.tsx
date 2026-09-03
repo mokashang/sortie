@@ -37,6 +37,77 @@ const STATUS_LABELS: Record<string, string> = {
   stopped: "已停止",
 };
 
+const CHANNEL_LABELS: Record<string, string> = {
+  user_chrome: "值守会话",
+  headless: "无人值守",
+};
+
+// "swe_general ×2 · mle ×1" / "恢复模式" / "前 5 个" — a one-line description of what a run was
+// asked to do, from its stored options.
+function describeOptions(options: unknown): string {
+  const o = (options ?? {}) as { plan?: { direction: string; count: number }[]; limit?: number; resume?: boolean; companies?: string[] };
+  const parts: string[] = [];
+  if (o.resume) parts.push("恢复模式(补提交已批准)");
+  if (Array.isArray(o.plan) && o.plan.length > 0) parts.push(o.plan.map((p) => `${p.direction} ×${p.count}`).join(" · "));
+  else if (o.limit != null) parts.push(`前 ${o.limit} 个`);
+  if (Array.isArray(o.companies) && o.companies.length > 0) parts.push(o.companies.join(", "));
+  return parts.join(" · ");
+}
+
+// sqlite datetime('now') is UTC without a marker; render in the browser's local time as MM-DD HH:MM.
+function localShort(ts: string | null): string {
+  if (!ts) return "—";
+  const d = new Date(`${ts.replace(" ", "T")}Z`);
+  if (Number.isNaN(d.getTime())) return ts;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// The full step-by-step log of one run (GET /api/executor/log?id=) — the "详情" view. Re-fetches
+// every 3s while the run is still in flight so the user can watch each step land; a finished
+// run is fetched once.
+function RunLogView({ runId, live }: { runId: number; live: boolean }) {
+  const [lines, setLines] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch(`/api/executor/log?id=${runId}`);
+        if (!r.ok) return;
+        const j = await r.json();
+        if (!cancelled) setLines(j.lines ?? []);
+      } catch {
+        // keep last known lines
+      }
+    }
+    load();
+    if (!live) return () => { cancelled = true; };
+    const id = setInterval(load, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [runId, live]);
+
+  return (
+    <pre
+      style={{
+        marginTop: 6,
+        maxHeight: 360,
+        overflowY: "auto",
+        background: "var(--chip-bg)",
+        padding: 8,
+        lineHeight: 1.5,
+        whiteSpace: "pre-wrap",
+        fontSize: 12,
+      }}
+    >
+      {lines === null ? "加载中…" : lines.length === 0 ? "(暂无输出)" : lines.join("\n")}
+    </pre>
+  );
+}
+
 // Shared "start a headless executor session from a button" panel for /apply and /network. Both
 // pages configure it with the executor kind(s) relevant to that page (see kinds prop) so the
 // component itself doesn't need to know which page it's on. Polls /api/executor/status every 3s
@@ -56,6 +127,17 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
   // alternative, 无人值守 (headless), spawns `claude -p` against a separate persistent Chrome
   // profile — see the 打开浏览器档案 button below, which only makes sense for that channel.
   const [channel, setChannel] = useState<"user_chrome" | "headless">("user_chrome");
+  // Run ids whose full log ("详情") is expanded — the in-flight run's block and the run-history
+  // list below share this so expanding in one place shows in both.
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  function toggleExpanded(id: number) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function openProfile() {
     setBusyKind("open-profile");
@@ -265,20 +347,33 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                   )}
                   {run.summary && <p style={{ margin: "4px 0", color: "var(--ink)" }}>{run.summary}</p>}
                   {(isRunning || isQueued) && (
-                    <pre
-                      style={{
-                        marginTop: 6,
-                        maxHeight: 180,
-                        overflowY: "auto",
-                        background: "var(--chip-bg)",
-                        padding: 8,
-                        lineHeight: 1.4,
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {(run.channel === "user_chrome" ? (run.logTail ?? []).slice(-5) : run.logTail ?? []).join("\n") ||
-                        "(暂无输出)"}
-                    </pre>
+                    <div style={{ marginTop: 6 }}>
+                      <button
+                        className="btn-ghost"
+                        onClick={() => toggleExpanded(run.id)}
+                        style={{ fontSize: 12, padding: "3px 10px" }}
+                      >
+                        {expanded.has(run.id) ? "收起详情" : "查看详情(每一步)"}
+                      </button>
+                      {expanded.has(run.id) ? (
+                        <RunLogView runId={run.id} live />
+                      ) : (
+                        <pre
+                          style={{
+                            marginTop: 6,
+                            maxHeight: 120,
+                            overflowY: "auto",
+                            background: "var(--chip-bg)",
+                            padding: 8,
+                            lineHeight: 1.4,
+                            whiteSpace: "pre-wrap",
+                            fontSize: 12,
+                          }}
+                        >
+                          {(run.logTail ?? []).slice(-4).join("\n") || "(暂无输出)"}
+                        </pre>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -286,6 +381,59 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
           );
         })}
       </div>
+
+      {runs.length > 0 && (
+        <details style={{ marginTop: 14 }}>
+          <summary>运行记录(最近 {runs.length} 次)</summary>
+          <table style={{ marginTop: 8 }}>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>类型</th>
+                <th>通道</th>
+                <th>任务</th>
+                <th>状态</th>
+                <th>开始</th>
+                <th>结束</th>
+                <th>结果</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((r) => {
+                const live = r.status === "running" || r.status === "queued";
+                const open = expanded.has(r.id);
+                return [
+                  <tr key={r.id}>
+                    <td className="mono">{r.id}</td>
+                    <td>{r.kind}</td>
+                    <td className="text-sub" style={{ fontSize: 12 }}>{CHANNEL_LABELS[r.channel] ?? r.channel}</td>
+                    <td className="text-sub" style={{ fontSize: 12 }}>{describeOptions(r.options) || "—"}</td>
+                    <td className={r.status === "failed" ? "text-accent" : r.status === "done" ? "text-good" : ""}>
+                      {STATUS_LABELS[r.status] ?? r.status}
+                    </td>
+                    <td className="mono text-sub" style={{ fontSize: 12, whiteSpace: "nowrap" }}>{localShort(r.startedAt)}</td>
+                    <td className="mono text-sub" style={{ fontSize: 12, whiteSpace: "nowrap" }}>{localShort(r.endedAt)}</td>
+                    <td className="text-sub" style={{ fontSize: 12, maxWidth: 360 }}>{r.summary ?? ""}</td>
+                    <td>
+                      <button className="btn-ghost" onClick={() => toggleExpanded(r.id)} style={{ fontSize: 12, padding: "3px 10px" }}>
+                        {open ? "收起" : "详情"}
+                      </button>
+                    </td>
+                  </tr>,
+                  open ? (
+                    <tr key={`${r.id}-log`}>
+                      <td colSpan={9} style={{ padding: "0 0 10px" }}>
+                        <RunLogView runId={r.id} live={live} />
+                      </td>
+                    </tr>
+                  ) : null,
+                ];
+              })}
+            </tbody>
+          </table>
+        </details>
+      )}
     </div>
   );
 }

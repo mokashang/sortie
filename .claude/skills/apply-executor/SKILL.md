@@ -26,6 +26,12 @@ anything: poll `GET /api/executor/claim-next?channel=user_chrome` to claim it, w
 call `POST /api/executor/log` as you go and `POST /api/executor/finish` when done (or check
 `GET /api/executor/run?id=` to see if the user hit 停止).
 
+**The authoritative, up-to-date attended-session protocol is CLAUDE.md §3** (count = number of
+fills reported awaiting_confirm, not attempts; `archive:true` for hard ineligibility found on the
+live page; log every single step via `/api/executor/log`; keep filled tabs open; the two
+approve→submit paths, in-run polling and the `resume:true` follow-up run). Where this file and
+CLAUDE.md §3 differ, CLAUDE.md wins.
+
 Read this whole file before starting. If you have not already, load the tool schemas you'll need
 in one batch:
 
@@ -120,7 +126,9 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    - Cannot proceed: same endpoint with
      `{ "jobId": task.jobId, "status": "needs_manual", "reason": "..." }` (see §5 triggers — this
      includes "already applied" pages and dead/expired apply links, see §5), close the tab, and
-     continue the loop with the next task.
+     continue the loop with the next task. Add `"archive": true` when the live page proves the job
+     is a hard no (explicit no-sponsorship, citizens/clearance-only, PhD-only): the App archives it
+     and every still-queued duplicate (same company + title) instead of parking it for a human.
    - Something broke unexpectedly (page crashed, a tool errored repeatedly, the App itself returned
      an unexpected error): report `{ "jobId": task.jobId, "status": "error", "reason": "..." }`
      instead, close the tab, and count it toward the error circuit breaker in §7. Don't use
