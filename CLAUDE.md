@@ -41,7 +41,7 @@ Mengjia Shang(USC M.S. ECE 2027/05,F-1)的 2026 秋招求职作战系统。本�
    `while true; do curl -s http://127.0.0.1:3000/api/executor/status | jq -r '.runs[]|select(.channel=="user_chrome" and .status=="queued")|"QUEUED run \(.id) \(.options|tojson)"'; curl -s http://127.0.0.1:3000/api/apply/pending | jq -r '.pending[]|select(.decision=="approved")|"APPROVED job \(.jobId) \(.company)"'; sleep 5; done`(去重由会话自己记住已处理的 id)。
 
 ## 4. 已知待办(按优先级)
-00. (已做 2026-09-03)**待补信息流**:执行器缺答案 → `needs_info` → App 桌面/ntfy 通知 → /apply「待补信息」卡片(每题可勾仅本次,默认存进 Profile 标准答案)→ 执行器轮询到 `prepared`+`infoAnswers` 继续填;30 分钟超时转需人工但问题保留,补完自动重新入队。`src/apply/info.ts`,schema v8(pending_questions/info_answers)。**尚未真实跑过一次**,下次遇到缺答案岗位(如 Palantir)验证。
+00. (已做 2026-09-03)**待补信息流**:执行器缺答案 → `needs_info` → App 桌面/ntfy 通知 → /apply「待补信息」卡片(每题可勾仅本次,默认存进 Profile 标准答案)→ 执行器轮询到 `prepared`+`infoAnswers` 继续填;30 分钟超时转需人工但问题保留,补完自动重新入队。`src/apply/info.ts`,schema v8(pending_questions/info_answers)。**已真实跑通**(2026-09-03 run #11 Palantir FDSE:两轮 needs_info → App 补答 → 继续填 → 确认 → 提交成功)。Lever 经验:地点栏是联想框,要在 `.dropdown-results` 里对条目派发 mousedown/mouseup/click 才算选中;Simplify 扩展会自动填 Current company,回读时要清掉。
 0. (已做 2026-09-03)**真实跑通**:run #7/#9 Datadog SWE Intern (Winter) 经 App 开始投递 → 值守会话在用户 Chrome 填 36 项 → App 确认(两次,第二次因修正 Boston/新增 Race 重报)→ 自动入队恢复 run → 提交成功。修复 hasLiveOrQueuedRun 未把运行中的 user_chrome 算在线(曾误入队 run #8)。/profile 新增「标准答案」编辑器(`PUT /api/profile/standard-answers`,写回 profile.yaml 保留注释)。
 1. (已做 2026-09-03)执行器语义 count=填好待确认份数;活页面硬拦下 `archive:true` 直接归档+同公司同标题去重;/history 投递历史页(分方向/分日期/手动改状态 OA→面试→Offer);/apply 今日已提交按本地 0 点;需人工清单可单条/批量移除(归档);执行器面板「查看详情」逐步日志 + 运行记录。
 2. 用户下一步:再点一次"开始投递"(SWE General 3)由值守会话跑;队列前排:ByteDance(自有)、Palantir(Lever,免登录)、Blue Origin(Workday)、Datadog、Ciena。
