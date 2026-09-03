@@ -124,12 +124,14 @@ CREATE TABLE IF NOT EXISTS experiences (
 CREATE TABLE IF NOT EXISTS executor_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,            -- apply | network_send | network_find
-  status TEXT NOT NULL DEFAULT 'running',  -- running | done | failed | stopped
+  status TEXT NOT NULL DEFAULT 'running',  -- queued | running | done | failed | stopped
+  channel TEXT NOT NULL DEFAULT 'headless',  -- headless (Playwright, own Chrome profile) | user_chrome (attended session drives the user's own Chrome)
   pid INTEGER,
   log_path TEXT,
   options TEXT NOT NULL DEFAULT '{}',
   summary TEXT,
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  claimed_at TEXT,               -- user_chrome only: when an attended session claimed a queued row
   ended_at TEXT
 );
 

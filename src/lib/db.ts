@@ -17,7 +17,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -59,6 +59,16 @@ export function openDb(file?: string): DB {
       (c) => c.name
     );
     if (!appCols.includes("pinned")) db.exec("ALTER TABLE applications ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+    // v6 -> v7: executor_runs gained channel (headless | user_chrome, the attended-session
+    // "值守会话" path that drives the user's own logged-in Chrome) and claimed_at (when an
+    // attended session claimed a queued user_chrome row). New status value 'queued' needs no
+    // column change — status is a free-text column.
+    const runCols = (db.prepare("PRAGMA table_info(executor_runs)").all() as { name: string }[]).map(
+      (c) => c.name
+    );
+    if (!runCols.includes("channel"))
+      db.exec("ALTER TABLE executor_runs ADD COLUMN channel TEXT NOT NULL DEFAULT 'headless'");
+    if (!runCols.includes("claimed_at")) db.exec("ALTER TABLE executor_runs ADD COLUMN claimed_at TEXT");
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 

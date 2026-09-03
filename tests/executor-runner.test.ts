@@ -3,7 +3,20 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { openDb, DB } from "@/lib/db";
-import { startExecutor, stopExecutor, executorStatus, reapStaleRuns, hasLiveRun, SpawnedChild, SpawnFn } from "@/executor/runner";
+import {
+  startExecutor,
+  stopExecutor,
+  executorStatus,
+  reapStaleRuns,
+  hasLiveRun,
+  hasLiveOrQueuedRun,
+  lastRunChannel,
+  claimNextRun,
+  appendRunLog,
+  finishRun,
+  SpawnedChild,
+  SpawnFn,
+} from "@/executor/runner";
 
 // A fake child process that never actually spawns `claude` — the fake spawn function below
 // tracks calls and returns one of these so tests can drive/inspect it without touching the
@@ -261,6 +274,249 @@ describe("executor/runner", () => {
       const rows = executorStatus(db);
       const row = rows.find((r) => r.kind === "apply")!;
       expect(row.status).toBe("failed");
+    });
+  });
+
+  describe("user_chrome channel", () => {
+    it("startExecutor(..., 'user_chrome') queues a row with no spawn, pid NULL, and an empty log file", () => {
+      const { spawnFn } = makeFakeSpawn(process.pid);
+      const result = startExecutor(db, "apply", { resume: true }, { spawn: spawnFn, logDir: tmpLogDir }, "user_chrome");
+
+      expect(spawnFn).not.toHaveBeenCalled();
+      expect(result.pid).toBeNull();
+      expect(fs.existsSync(result.logPath)).toBe(true);
+      expect(fs.readFileSync(result.logPath, "utf8")).toBe("");
+
+      const row = db.prepare("SELECT * FROM executor_runs WHERE id=?").get(result.id) as Record<string, unknown>;
+      expect(row.status).toBe("queued");
+      expect(row.channel).toBe("user_chrome");
+      expect(row.pid).toBeNull();
+      expect(row.log_path).toBe(result.logPath);
+    });
+
+    it("refuses a duplicate user_chrome start while one of the same kind is queued", () => {
+      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      expect(() => startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).toThrow(/already/i);
+    });
+
+    it("refuses a duplicate user_chrome start while one of the same kind is running (claimed)", () => {
+      const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      claimNextRun(db, "user_chrome");
+      expect(queued).toBeTruthy();
+      expect(() => startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).toThrow(/already/i);
+    });
+
+    it("headless and user_chrome runs of the same kind do not block each other", () => {
+      const { spawnFn } = makeFakeSpawn(process.pid);
+      expect(() => startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless")).not.toThrow();
+      expect(() => startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).not.toThrow();
+    });
+
+    describe("claimNextRun", () => {
+      it("returns null when nothing is queued", () => {
+        expect(claimNextRun(db, "user_chrome")).toBeNull();
+      });
+
+      it("claims the oldest queued run of the channel, marks it running, and returns its shape", () => {
+        const first = startExecutor(db, "apply", { limit: 2 }, { logDir: tmpLogDir }, "user_chrome");
+        const second = startExecutor(db, "network_send", {}, { logDir: tmpLogDir }, "user_chrome");
+
+        const claimed = claimNextRun(db, "user_chrome");
+        expect(claimed).not.toBeNull();
+        expect(claimed!.id).toBe(first.id);
+        expect(claimed!.kind).toBe("apply");
+        expect(claimed!.options).toEqual({ limit: 2 });
+        expect(claimed!.logPath).toBe(first.logPath);
+
+        const row = db.prepare("SELECT status, claimed_at FROM executor_runs WHERE id=?").get(first.id) as {
+          status: string;
+          claimed_at: string | null;
+        };
+        expect(row.status).toBe("running");
+        expect(row.claimed_at).not.toBeNull();
+
+        // second run is still queued — untouched by claiming the first
+        const secondRow = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(second.id) as {
+          status: string;
+        };
+        expect(secondRow.status).toBe("queued");
+      });
+
+      it("does not claim a headless run even if it were (hypothetically) queued", () => {
+        db.prepare(
+          "INSERT INTO executor_runs (kind, status, channel, options, log_path) VALUES ('apply','queued','headless','{}','/tmp/x.log')"
+        ).run();
+        expect(claimNextRun(db, "user_chrome")).toBeNull();
+      });
+    });
+
+    describe("appendRunLog", () => {
+      it("appends a timestamped line to the run's log file", () => {
+        const result = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        appendRunLog(db, result.id, "opened Workday tab");
+
+        const content = fs.readFileSync(result.logPath, "utf8");
+        expect(content).toMatch(/^\[\d{2}:\d{2}:\d{2}\] opened Workday tab\n$/);
+
+        appendRunLog(db, result.id, "filled form");
+        const content2 = fs.readFileSync(result.logPath, "utf8");
+        expect(content2).toContain("opened Workday tab");
+        expect(content2).toContain("filled form");
+      });
+
+      it("throws for an unknown run id", () => {
+        expect(() => appendRunLog(db, 999, "x")).toThrow();
+      });
+    });
+
+    describe("finishRun", () => {
+      it("transitions a running run to done with a summary", () => {
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, "user_chrome");
+        finishRun(db, queued.id, "done", "submitted 3 applications");
+
+        const row = db.prepare("SELECT status, summary, ended_at FROM executor_runs WHERE id=?").get(queued.id) as {
+          status: string;
+          summary: string | null;
+          ended_at: string | null;
+        };
+        expect(row.status).toBe("done");
+        expect(row.summary).toBe("submitted 3 applications");
+        expect(row.ended_at).not.toBeNull();
+      });
+
+      it("transitions a still-queued run to failed (attended session claimed it out of band, e.g. crashed before claiming)", () => {
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        finishRun(db, queued.id, "failed", "extension disconnected");
+
+        const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string };
+        expect(row.status).toBe("failed");
+      });
+
+      it("throws when finishing an already-terminal run", () => {
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, "user_chrome");
+        finishRun(db, queued.id, "done");
+        expect(() => finishRun(db, queued.id, "failed")).toThrow();
+      });
+
+      it("throws for an unknown run id", () => {
+        expect(() => finishRun(db, 999, "done")).toThrow();
+      });
+    });
+
+    describe("stopExecutor on user_chrome rows", () => {
+      it("marks a queued run stopped without touching process.kill", () => {
+        const killSpy = vi.spyOn(process, "kill");
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        stopExecutor(db, queued.id);
+        expect(killSpy).not.toHaveBeenCalled();
+        killSpy.mockRestore();
+
+        const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string };
+        expect(row.status).toBe("stopped");
+      });
+
+      it("marks a running (claimed) run stopped without touching process.kill", () => {
+        const killSpy = vi.spyOn(process, "kill");
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, "user_chrome");
+        stopExecutor(db, queued.id);
+        expect(killSpy).not.toHaveBeenCalled();
+        killSpy.mockRestore();
+
+        const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string };
+        expect(row.status).toBe("stopped");
+      });
+    });
+
+    describe("reapStaleRuns for user_chrome", () => {
+      it("leaves a fresh user_chrome running run alone", () => {
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, "user_chrome");
+
+        const now = Date.now();
+        reapStaleRuns(db, { now: () => now, mtime: () => now - 60_000 }); // 1 minute old
+
+        const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string };
+        expect(row.status).toBe("running");
+      });
+
+      it("fails a user_chrome running run whose log hasn't been touched in 20+ minutes", () => {
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, "user_chrome");
+
+        const now = Date.now();
+        reapStaleRuns(db, { now: () => now, mtime: () => now - 21 * 60_000 });
+
+        const row = db.prepare("SELECT status, summary FROM executor_runs WHERE id=?").get(queued.id) as {
+          status: string;
+          summary: string | null;
+        };
+        expect(row.status).toBe("failed");
+        expect(row.summary).toMatch(/session gone/);
+      });
+
+      it("does not apply pid-liveness checks to user_chrome rows (pid is NULL)", () => {
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, "user_chrome");
+
+        // No mtime override needed — a fresh log file (just created) is well within the window,
+        // and a NULL pid would otherwise look "dead" under the headless isAlive() check.
+        reapStaleRuns(db);
+
+        const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string };
+        expect(row.status).toBe("running");
+      });
+
+      it("still reaps a stale headless run and ignores a fresh user_chrome one in the same pass", () => {
+        db.prepare(
+          "INSERT INTO executor_runs (kind, status, channel, pid, log_path) VALUES ('network_send','running','headless', 999999, '/tmp/x.log')"
+        ).run();
+        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, "user_chrome");
+
+        reapStaleRuns(db);
+
+        const headlessRow = db.prepare("SELECT status FROM executor_runs WHERE kind='network_send'").get() as {
+          status: string;
+        };
+        expect(headlessRow.status).toBe("failed");
+        const chromeRow = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as {
+          status: string;
+        };
+        expect(chromeRow.status).toBe("running");
+      });
+    });
+  });
+
+  describe("hasLiveOrQueuedRun", () => {
+    it("is true for a queued user_chrome run even though it has no pid", () => {
+      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      expect(hasLiveOrQueuedRun(db, "apply")).toBe(true);
+    });
+
+    it("is true for a live headless running run", () => {
+      const { spawnFn } = makeFakeSpawn(process.pid);
+      startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+      expect(hasLiveOrQueuedRun(db, "apply")).toBe(true);
+    });
+
+    it("is false when there's nothing queued or running", () => {
+      expect(hasLiveOrQueuedRun(db, "apply")).toBe(false);
+    });
+  });
+
+  describe("lastRunChannel", () => {
+    it("is null when there's no prior run of that kind", () => {
+      expect(lastRunChannel(db, "apply")).toBeNull();
+    });
+
+    it("returns the channel of the most recent run of that kind", () => {
+      const { spawnFn } = makeFakeSpawn(process.pid);
+      startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      expect(lastRunChannel(db, "apply")).toBe("user_chrome");
     });
   });
 });
