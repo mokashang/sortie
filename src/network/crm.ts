@@ -148,6 +148,9 @@ export const OutreachInputSchema = z.object({
   playbook: z.enum(PLAYBOOKS),
   channel: z.enum(CHANNELS),
   draft: z.string().nullable().optional(),
+  // Referral-in-apply: one message may cover up to 3 jobs at the same company. Each id gets an
+  // outreach_jobs row; job_id (the legacy single link) falls back to the first one.
+  jobIds: z.array(z.number().int().positive()).max(3).optional(),
 });
 export type OutreachInput = z.infer<typeof OutreachInputSchema>;
 
@@ -214,14 +217,43 @@ function rowToOutreach(r: OutreachRawRow): OutreachRow {
 // allowed to move it forward from there.
 export function createOutreach(db: DB, input: OutreachInput): number {
   const o = OutreachInputSchema.parse(input);
-  const info = db
-    .prepare(
-      `INSERT INTO outreach (person_id, job_id, playbook, channel, draft, status)
-       VALUES (?,?,?,?,?, 'draft')`
-    )
-    .run(o.personId, o.jobId ?? null, o.playbook, o.channel, o.draft ?? null);
-  return Number(info.lastInsertRowid);
+  const primary = o.jobId ?? o.jobIds?.[0] ?? null;
+  return db.transaction(() => {
+    const info = db
+      .prepare(
+        `INSERT INTO outreach (person_id, job_id, playbook, channel, draft, status)
+         VALUES (?,?,?,?,?, 'draft')`
+      )
+      .run(o.personId, primary, o.playbook, o.channel, o.draft ?? null);
+    const id = Number(info.lastInsertRowid);
+    const link = db.prepare("INSERT OR IGNORE INTO outreach_jobs (outreach_id, job_id) VALUES (?,?)");
+    for (const jobId of o.jobIds ?? []) link.run(id, jobId);
+    return id;
+  })();
 }
+
+// Every job an outreach covers, in insertion order (the primary first).
+export function outreachJobIds(db: DB, outreachId: number): number[] {
+  return (
+    db.prepare("SELECT job_id FROM outreach_jobs WHERE outreach_id = ? ORDER BY rowid").all(outreachId) as { job_id: number }[]
+  ).map((r) => r.job_id);
+}
+
+// Latest outreach that covers this job (via outreach_jobs, or the legacy single job_id column).
+export function outreachForJob(db: DB, jobId: number): OutreachRow | null {
+  const row = db
+    .prepare(
+      `SELECT o.*, p.name as person_name, p.company as person_company
+       FROM outreach o JOIN people p ON p.id = o.person_id
+       WHERE o.job_id = ? OR o.id IN (SELECT outreach_id FROM outreach_jobs WHERE job_id = ?)
+       ORDER BY o.id DESC LIMIT 1`
+    )
+    .get(jobId, jobId) as OutreachRawRow | undefined;
+  return row ? rowToOutreach(row) : null;
+}
+
+// SQL fragment (alias `o` = outreach): does this outreach belong to the referral pipeline?
+export const JOB_LINKED_SQL = "(o.job_id IS NOT NULL OR EXISTS (SELECT 1 FROM outreach_jobs oj WHERE oj.outreach_id = o.id))";
 
 // Appends one entry to thread_log's JSON array, stamped with the current time. Used both by the
 // send gate (an approved draft's own text, once actually sent) and by reply-harvesting (a
@@ -243,7 +275,7 @@ export function appendThread(db: DB, outreachId: number, entry: { dir: "sent" | 
 
 export function listOutreach(
   db: DB,
-  filter?: { personId?: number; jobId?: number; status?: string }
+  filter?: { personId?: number; jobId?: number; status?: string; jobLinked?: boolean }
 ): OutreachRow[] {
   let sql = `SELECT o.*, p.name as person_name, p.company as person_company
              FROM outreach o JOIN people p ON p.id = o.person_id WHERE 1=1`;
@@ -253,13 +285,17 @@ export function listOutreach(
     params.push(filter.personId);
   }
   if (filter?.jobId) {
-    sql += " AND o.job_id = ?";
-    params.push(filter.jobId);
+    sql += " AND (o.job_id = ? OR o.id IN (SELECT outreach_id FROM outreach_jobs WHERE job_id = ?))";
+    params.push(filter.jobId, filter.jobId);
   }
   if (filter?.status) {
     sql += " AND o.status = ?";
     params.push(filter.status);
   }
+  // jobLinked=false is /network's view (coffee chat / hidden opportunity only); true is the
+  // referral pipeline's; undefined (the executor's sendables poll) sees everything.
+  if (filter?.jobLinked === true) sql += ` AND ${JOB_LINKED_SQL}`;
+  if (filter?.jobLinked === false) sql += ` AND NOT ${JOB_LINKED_SQL}`;
   sql += " ORDER BY o.created_at DESC, o.id DESC";
   const rows = db.prepare(sql).all(...params) as OutreachRawRow[];
   return rows.map(rowToOutreach);

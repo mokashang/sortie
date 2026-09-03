@@ -1,5 +1,5 @@
 import { DB } from "@/lib/db";
-import { appendThread } from "@/network/crm";
+import { appendThread, JOB_LINKED_SQL } from "@/network/crm";
 
 // Outreach send gate (Plan 5 §7, same red-line shape as the apply-executor gate in
 // src/apply/queue.ts): the App is the only thing that may move an outreach row to 'sent', and it
@@ -81,13 +81,15 @@ interface SendableRawRow {
 // Executor's polling endpoint: every outreach the user has approved and is waiting to be sent,
 // joined with just the person fields the executor needs (linkedin_url to open, email as a
 // mailto: fallback) — it never needs to touch the people table directly.
-export function sendables(db: DB): SendableRow[] {
+export function sendables(db: DB, opts: { jobLinked?: boolean } = {}): SendableRow[] {
+  const linked =
+    opts.jobLinked === true ? ` AND ${JOB_LINKED_SQL}` : opts.jobLinked === false ? ` AND NOT ${JOB_LINKED_SQL}` : "";
   const rows = db
     .prepare(
       `SELECT o.id, o.person_id, p.name as person_name, p.linkedin_url, p.email,
               o.channel, o.playbook, o.draft, o.job_id
        FROM outreach o JOIN people p ON p.id = o.person_id
-       WHERE o.status = 'pending_send'
+       WHERE o.status = 'pending_send'${linked}
        ORDER BY o.created_at ASC`
     )
     .all() as SendableRawRow[];

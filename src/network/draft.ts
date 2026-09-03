@@ -32,7 +32,8 @@ const DraftResponseSchema = z.object({
 });
 
 const PLAYBOOK_GUIDANCE: Record<Playbook, string> = {
-  referral: "Playbook = referral: attach the specific job link and one sentence on why you're a fit for that role.",
+  referral:
+    "Playbook = referral: you may be given up to 3 roles at the same company — name every role (title) with its link in a compact list, then one sentence on why you're a fit, and ask whether they'd be open to referring you.",
   self_pitch: "Playbook = self_pitch: respond directly to a signal that they're hiring (a post, a team growing, etc.).",
   recruiter: "Playbook = recruiter: mention you've already applied, plus one sentence of background.",
   coffee_chat: "Playbook = coffee_chat: ask only for 15 minutes to learn from them — do not ask them for anything (no referral, no job).",
@@ -48,9 +49,10 @@ export function buildDraftPrompt(
   profile: Profile,
   person: Pick<Person, "name" | "company" | "role_title" | "relation">,
   playbook: Playbook,
-  job?: JobInfo,
+  job?: JobInfo | JobInfo[],
   threadTail?: ThreadEntry
 ): LlmRequest {
+  const jobs = job === undefined ? [] : Array.isArray(job) ? job : [job];
   const system = [
     "You are the job seeker themself writing a private outreach message — this is not marketing copy.",
     "Tone: sincere, specific, and human. Keep the message body to at most 120 words.",
@@ -75,10 +77,10 @@ export function buildDraftPrompt(
       2
     )}`
   );
-  if (job) {
+  if (jobs.length > 0) {
     promptParts.push(
-      `Job (for reference, do not invent details beyond this):\n${JSON.stringify(
-        { company: job.company, title: job.title, applyUrl: job.applyUrl ?? null },
+      `Jobs (for reference, do not invent details beyond this):\n${JSON.stringify(
+        jobs.map((j) => ({ company: j.company, title: j.title, applyUrl: j.applyUrl ?? null })),
         null,
         2
       )}`
@@ -111,6 +113,9 @@ export interface GenerateDraftOptions {
   personId: number;
   playbook: Playbook;
   jobId?: number;
+  // Referral-in-apply: several jobs at the same company covered by one message (≤3). Takes
+  // precedence over jobId when both are given.
+  jobIds?: number[];
   // Not specified by the plan's generateDraft signature — added as an optional param defaulting
   // to 'linkedin' (this module's call; see the draft-storage note above). Task 4's UI is the
   // natural place to let the user actually choose it.
@@ -172,10 +177,14 @@ export async function generateDraft(db: DB, opts: GenerateDraftOptions): Promise
   }
 
   const person = getPerson(db, opts.personId);
-  const job = opts.jobId ? getJob(db, opts.jobId) : undefined;
+  const jobs = opts.jobIds?.length
+    ? opts.jobIds.map((id) => getJob(db, id))
+    : opts.jobId
+    ? [getJob(db, opts.jobId)]
+    : undefined;
   const threadTail = opts.playbook === "followup" ? lastThreadEntryForPerson(db, opts.personId) : undefined;
 
-  const req = buildDraftPrompt(opts.profile, person, opts.playbook, job, threadTail);
+  const req = buildDraftPrompt(opts.profile, person, opts.playbook, jobs, threadTail);
   const res = await opts.backend.complete(req);
   const parsed = DraftResponseSchema.parse(extractJson(res.text));
 
@@ -188,6 +197,7 @@ export async function generateDraft(db: DB, opts: GenerateDraftOptions): Promise
     playbook: opts.playbook,
     channel,
     draft,
+    jobIds: opts.jobIds,
   });
 
   return { outreachId, draft };

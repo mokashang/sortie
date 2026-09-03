@@ -266,3 +266,20 @@ describe("reportReply", () => {
     expect(() => reportReply(d, outreachId, "hi")).toThrow();
   });
 });
+
+describe("sendables jobLinked filter", () => {
+  it("sendables({jobLinked:false}) hides referral (job-linked) outreach", () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const jobId = d
+      .prepare("INSERT INTO jobs (fingerprint, company, title, source) VALUES ('f-link','Google','SWE','manual')")
+      .run().lastInsertRowid as number;
+    const linked = createOutreach(d, { personId: pid, playbook: "referral", channel: "linkedin", draft: "a", jobIds: [jobId] });
+    const coffee = createOutreach(d, { personId: pid, playbook: "coffee_chat", channel: "linkedin", draft: "b" });
+    approveOutreach(d, linked);
+    approveOutreach(d, coffee);
+    expect(sendables(d).map((s) => s.id).sort()).toEqual([linked, coffee].sort());
+    expect(sendables(d, { jobLinked: false }).map((s) => s.id)).toEqual([coffee]);
+    expect(sendables(d, { jobLinked: true }).map((s) => s.id)).toEqual([linked]);
+  });
+});

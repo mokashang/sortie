@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { openDb, DB } from "@/lib/db";
 import { parseProfile, Profile } from "@/lib/profile";
-import { upsertPerson, createOutreach, appendThread, listOutreach } from "@/network/crm";
+import { upsertPerson, createOutreach, appendThread, listOutreach, outreachJobIds } from "@/network/crm";
 import { buildDraftPrompt, generateDraft } from "@/network/draft";
 import { LlmBackend, LlmRequest } from "@/llm/types";
 
@@ -184,5 +184,33 @@ describe("generateDraft", () => {
     await expect(
       generateDraft(d, { backend, profile: testProfile(), personId: 9999, playbook: "coffee_chat" })
     ).rejects.toThrow();
+  });
+});
+
+describe("multi-job referral drafts", () => {
+  it("prompt lists every job title + link when given an array", () => {
+    const req = buildDraftPrompt(
+      testProfile(),
+      { name: "Jane", company: "Google", role_title: "SWE", relation: "alum" },
+      "referral",
+      [
+        { company: "Google", title: "SWE New Grad", applyUrl: "https://g/1" },
+        { company: "Google", title: "SRE New Grad", applyUrl: "https://g/2" },
+      ]
+    );
+    expect(req.prompt).toContain("SWE New Grad");
+    expect(req.prompt).toContain("https://g/2");
+    expect(req.system).toMatch(/up to 3|multiple roles|every role/i);
+  });
+
+  it("generateDraft with jobIds creates one outreach linked to all jobs", async () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const j1 = seedJob(d, { company: "Google", title: "SWE" });
+    const j2 = seedJob(d, { company: "Google", title: "SRE" });
+    const { backend, requests } = fakeBackend({ message: "Hi Jane" });
+    const res = await generateDraft(d, { backend, profile: testProfile(), personId: pid, playbook: "referral", jobIds: [j1, j2] });
+    expect(requests[0].prompt).toContain("SRE");
+    expect(outreachJobIds(d, res.outreachId)).toEqual([j1, j2]);
   });
 });
