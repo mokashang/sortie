@@ -130,18 +130,25 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
         );
         const failReason = elig.written ? elig.failReason : null;
         const lowScore = res.skip || res.score < threshold;
-        // rescoreMatched: 只因资格失败归档(且不动 pinned);常规打分:资格失败或低分都归档。
-        const archived = opts.rescoreMatched ? failReason !== null && r.pinned === 0 : failReason !== null || lowScore;
+        // rescoreMatched: 只因资格失败归档;常规打分:资格失败或低分都归档。任何模式下都绝不
+        // 自动归档 pinned 行 —— 用户手动置顶是比任何自动判断更强的信号。
+        const wantsArchive = opts.rescoreMatched ? failReason !== null : failReason !== null || lowScore;
+        const archived = wantsArchive && r.pinned === 0;
         const skipReason = failReason ?? (res.skip ? "low fit" : lowScore ? `low score (${res.score})` : null);
         insMatch.run(r.id, res.direction, res.score, tier, res.reason, opts.rescoreMatched && !failReason ? null : skipReason);
         if (failReason && archived) archiveCluster(db, r.id, failReason, { respectPinned: true });
-        const info = setStatus.run(archived ? "archived" : "matched", r.id);
+        // Pinned rows are never auto-archived by the matcher (see `archived` above) — and for the
+        // same reason, the matcher must not touch their status at all here: flipping a pinned
+        // 'archived' row to 'matched' just because it wasn't archived would be an equally
+        // unwanted automatic status change. Score/skip_reason/eligibility fields are still written
+        // above regardless of pinned status.
+        const changes = r.pinned === 0 ? setStatus.run(archived ? "archived" : "matched", r.id).changes : 0;
         summary.scored++;
         // Only count matched/archived when the UPDATE actually changed a row — a job already past
         // these states (e.g. 'submitted') still gets its match row written, but the counters
         // should reflect the real status transition, not a no-op.
         if (archived) summary.archived++;
-        else if (info.changes > 0) summary.matched++;
+        else if (changes > 0) summary.matched++;
       }
     });
     tx();

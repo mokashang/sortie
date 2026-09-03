@@ -479,4 +479,32 @@ describe("runMatching", () => {
     expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.paralegal) as any).status).toBe("matched");
     expect((db.prepare("SELECT role_kind FROM jobs WHERE id=?").get(ids.paralegal) as any).role_kind).toBe("non_tech");
   });
+
+  it("never touches status for a pinned row in normal mode either, even when eligibility fails via rescoreArchived", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    // Give the paralegal an existing match row + archived status + pinned, so rescoreArchived's
+    // "OR a.status = 'archived'" clause is what makes it eligible for this (normal, not
+    // rescoreMatched) scoring pass.
+    db.prepare("INSERT INTO matches (job_id, direction, score) VALUES (?,?,?)").run(ids.paralegal, "swe_backend", 80);
+    db.prepare("UPDATE applications SET status='archived', pinned=1 WHERE job_id=?").run(ids.paralegal);
+    const backend = scriptedBackend({
+      "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false },
+      Paralegal: { direction: null, score: 60, skip: false, role: "non_tech" },
+    });
+    const s = await runMatching(db, {
+      backend,
+      rescoreArchived: true,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+    });
+    expect(s.scored).toBe(2);
+    // Pinned → the matcher must not flip status at all, not even from 'archived' to 'matched'
+    // just because the (failed) eligibility check declined to re-archive it.
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.paralegal) as any;
+    expect(app.status).toBe("archived");
+    const j = db.prepare("SELECT role_kind FROM jobs WHERE id=?").get(ids.paralegal) as any;
+    expect(j.role_kind).toBe("non_tech");
+    const m = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(ids.paralegal) as any;
+    expect(m.skip_reason).toBe("non-engineering role");
+  });
 });
