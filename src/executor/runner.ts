@@ -40,8 +40,7 @@ export interface RunnerDeps {
   logDir?: string;
 }
 
-const ALLOWED_TOOLS =
-  "Bash(curl:*),mcp__browser__browser_start,mcp__browser__browser_status,mcp__browser__browser_message,mcp__browser__browser_screenshot,mcp__browser__browser_stop";
+const ALLOWED_TOOLS = "Bash(curl:*),mcp__playwright__*";
 
 // launchd's PATH for the prod server process includes /opt/homebrew/bin but not ~/.local/bin,
 // where the `claude` CLI actually lives on this machine — so a bare 'claude' spawn fails under

@@ -24,13 +24,30 @@ describe("executor prompts", () => {
       expect(p).toContain('"http://127.0.0.1:3000/api/apply/pending?jobId=<jobId>"');
     });
 
-    it("contains the browser MCP tool names, not claude-in-chrome tools", () => {
+    it("contains the playwright MCP tool names, not hanzi or claude-in-chrome tools", () => {
       const p = buildApplyPrompt();
-      expect(p).toContain("mcp__browser__browser_start");
-      expect(p).toContain("mcp__browser__browser_status");
-      expect(p).toContain("mcp__browser__browser_stop");
+      expect(p).toContain("mcp__playwright__browser_navigate");
+      expect(p).toContain("mcp__playwright__browser_snapshot");
+      expect(p).toContain("mcp__playwright__browser_click");
+      expect(p).toContain("mcp__playwright__browser_type");
+      expect(p).toContain("mcp__playwright__browser_file_upload");
+      expect(p).toContain("mcp__playwright__browser_tabs");
+      expect(p).not.toContain("mcp__browser__");
+      expect(p.toLowerCase()).not.toContain("hanzi");
       expect(p).not.toContain("mcp__claude-in-chrome__");
       expect(p).not.toContain("tabs_create_mcp");
+    });
+
+    it("requires re-verifying the form for drift after approval, before the final submit click", () => {
+      const p = buildApplyPrompt();
+      expect(p).toMatch(/批准可能是 30 分钟之后才来的/);
+      expect(p).toMatch(/字段漂移/);
+      expect(p).toMatch(/不要提交/);
+    });
+
+    it("reports needs_manual with the login-wall reason when the profile isn't logged in", () => {
+      const p = buildApplyPrompt();
+      expect(p).toContain("login required in browser profile — 请在设置里打开浏览器档案登录一次");
     });
 
     it("carries the submit red line verbatim in spirit", () => {

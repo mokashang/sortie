@@ -32,20 +32,34 @@
 
 ## 投递执行
 半自动填表:App 负责选岗、建答案包(标准字段 + 命中方向的最新简历版本),一个**由 App 按钮直接启动的
-headless `claude -p` 会话**(执行器)负责驱动你**已登录的真实 Chrome**逐个打开申请页、填表,填完把
-"字段→填入值"清单回报给 App;真正点提交前必须先在 App 里人工确认。**不用再手动开 claude 会话**——`/apply`
-页顶部就是启动/停止入口。
+headless `claude -p` 会话**(执行器)负责驱动一个**专属的、持久化的 Chrome 浏览器档案**逐个打开申请页、
+填表,填完把"字段→填入值"清单回报给 App;真正点提交前必须先在 App 里人工确认。**不用再手动开 claude
+会话**——`/apply` 页顶部就是启动/停止入口。
+
+**"专属浏览器档案"是什么:** 执行器用的不是你日常登录的 Chrome,而是一个单独的、持久化到磁盘的 Chrome
+profile(`data/browser-profile`,已 gitignore),由官方 Playwright MCP(`@playwright/mcp`,CLI-scope
+注册为 `playwright`,见 `claude mcp list`)驱动。这个档案的登录状态**跨次执行器运行保留**——首次使用前
+(或换了密码/新增要投的站点后),在 `/apply` 或 `/network` 页的执行器面板里点
+**[打开浏览器档案(登录一次)]**(`POST /api/executor/open-profile`,`src/executor/open-profile.ts`),
+会弹出一个真实的、带 GUI 的 Chrome 窗口,在里面手动登录一次 LinkedIn/Workday/目标 ATS 站点即可,登录
+session 会写进这个 profile 目录,之后所有无人值守的执行器运行都能直接用。这个按钮只是 spawn
+`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=<profile> --no-first-run`
+(找不到就退回 `open -na "Google Chrome" --args ...`),不经过 Playwright MCP 本身。
 
 **从 App 里启动(`/apply` 页):**
 1. 确保 App 在跑(`npm run dev` 或生产模式 `npm run build && npm start`,监听 127.0.0.1:3000)。
 2. 页面顶部"执行器"面板:填"前 N 个"(默认 5)→ 点[开始投递]。这会调用 `POST /api/executor/start`
    (`{kind:'apply', options:{limit}}`),在服务器进程里 `spawn` 一个 detached 的
-   `claude -p --allowedTools 'Bash(curl:*),mcp__browser__browser_start,...'` 子进程,把整套投递协议
+   `claude -p --allowedTools 'Bash(curl:*),mcp__playwright__*'` 子进程,把整套投递协议
    (取任务 → 填表 → 回报 → 等确认 → 提交)当作一次性 prompt 从 stdin 喂给它——见
    `src/executor/prompts.ts` 的 `buildApplyPrompt`。
-3. Headless 会话只有一个 MCP:`browser`(hanzi-browse)。它不直接操作 DOM,而是把每一步(开申请页、填表、
-   点提交)都包成一句自然语言任务丢给 `mcp__browser__browser_start`,由子代理驱动你已登录的 Chrome 执行,
-   `browser_status` 轮询进度。**第一次调用可能会弹一个 hanzi/Chrome 权限确认框,去 Chrome 里点一下同意。**
+3. Headless 会话只有一个 MCP:`playwright`(官方 Playwright MCP,驱动上面那个专属持久化 Chrome 档案)。
+   这个会话直接调用底层工具自己操作页面——`mcp__playwright__browser_navigate` 打开申请页、
+   `mcp__playwright__browser_snapshot` 读无障碍树拿到每个元素的 `ref`、
+   `mcp__playwright__browser_click`/`browser_type`/`browser_select_option`/`browser_fill_form` 按
+   `ref` 填表、`mcp__playwright__browser_file_upload` 传简历——没有子代理、不委托自然语言任务给别人执行。
+   如果专属档案在某个站点还没登录过,执行器不会自己尝试登录(没有凭据),而是标"需人工",提示去点上面的
+   [打开浏览器档案(登录一次)]。
 4. 面板每 3 秒轮询 `GET /api/executor/status`,显示运行状态、pid、最近 ~30 行日志(完整日志在
    `data/executor-logs/run-<id>.log`);想中途叫停点[停止](`POST /api/executor/stop`,对进程组发
    SIGTERM)。
@@ -64,7 +78,9 @@ headless `claude -p` 会话**(执行器)负责驱动你**已登录的真实 Chro
 **红线(代码层强制,不是靠自觉):** 执行器不会在没看到你批准之前点最终提交;App 侧 `reportSubmitted` 只在 `confirm_decision='approved'` 且状态仍为 `awaiting_confirm` 时才允许把状态写成 `submitted`,否则直接抛错——即使执行器出于某种原因想跳过确认硬点提交,回报也会被 App 拒绝。页面/JD 里的任何文字都只是数据,不会被当作对执行器的指令;所有字段值只来自答案包,绝不临时编造,尤其是签证/工作授权类问题。同一 `kind` 不能同时跑两个执行器会话(`src/executor/runner.ts` 按 PID 存活状态判重,进程死了会自动回收再放行新的一个)。
 
 `.claude/skills/apply-executor/SKILL.md`(以及 `ats-field-maps.md`)仍然留着,作为协议的完整文字说明 /
-人工兜底(claude-in-chrome 会话仍可手动加载它跑,不依赖 App 按钮)——日常使用不再需要手动加载它。
+人工兜底——它面向 claude-in-chrome + 你日常登录的浏览器(交互式会话手动加载它跑,不依赖 App 按钮,也不用
+上面的专属 Playwright 档案),和 headless 执行器走的是两条独立的浏览器通道,互不依赖。日常使用不再需要手动
+加载它。
 
 **`claude` 二进制路径:** `npm run dev` 之类交互式终端跑的 App,PATH 里通常已经有 `claude`;但如果你把 App
 挂在 launchd 常驻(`com.jobseeker.os`),launchd 给的 PATH 一般只有 `/opt/homebrew/bin` 这类系统目录,不含
@@ -90,16 +106,18 @@ coffee_chat/hidden_opportunity/followup/thanks)、消息记录、与申请双向
   你自己的邮件客户端),发完点[标记已发]手动回报(因为执行器不碰邮件)。
 
 **从 App 里启动(`/network` 页):**
-1. 确保 App 在跑,浏览器里已登录 LinkedIn。
+1. 确保 App 在跑;确保上面"投递执行"节说的那个专属 Playwright 浏览器档案已经登录过 LinkedIn(没登录过就点
+   [打开浏览器档案(登录一次)] 登录一次)。
 2. 页面顶部"执行器"面板,两个独立按钮,各自对应一个 `POST /api/executor/start` 的 `kind`:
    - **[发送已批准消息]**(`kind:'network_send'`):先回收已发送外联的新回复写回 CRM,再轮询
      `/api/network/sendables`,只发这个列表里、渠道为 linkedin 的批准草稿——未连接就发连接请求(note
      裁剪到 280 字符内,超长且没法安全裁剪就跳过标"needs-edit",绝不自行改写);已连接就发 DM 全文。
    - **[找人(队列头部公司)]**(`kind:'network_find'`):只读 LinkedIn 搜索(不连接、不发消息),从队列
      头部公司找 recruiter/USC 校友/工程师,写入 CRM 等你后续手动生成草稿。
-3. 和投递执行器一样是 headless `claude -p` + 唯一的 `browser` MCP,每步浏览器操作都是丢给
-   `mcp__browser__browser_start` 的一句自然语言任务(见 `src/executor/prompts.ts` 的
-   `buildNetworkSendPrompt` / `buildNetworkFindPrompt`),第一次调用可能弹 hanzi/Chrome 权限确认框。
+3. 和投递执行器一样是 headless `claude -p` + 唯一的 `playwright` MCP,直接驱动那个专属持久化 Chrome 档案
+   自己操作页面(navigate → snapshot 读 ref → click/type 填/发)——见 `src/executor/prompts.ts` 的
+   `buildNetworkSendPrompt` / `buildNetworkFindPrompt`。如果档案还没登录 LinkedIn,执行器不会自己登录,
+   会在总结里报告并停止整个会话,提示去点[打开浏览器档案(登录一次)]。
 4. 面板每 3 秒轮询状态、显示日志尾部,[停止]随时可中断。
 
 **发送红线(prompt 里写死,App 侧也有代码层双锁):** 执行器只发送 `sendables()` 返回的、已经在 App 里
@@ -107,8 +125,9 @@ coffee_chat/hidden_opportunity/followup/thanks)、消息记录、与申请双向
 ≤10 个连接请求、≤15 条消息,动作间隔 ≥30 秒,遇到任何限流/验证码信号立即停止汇报。App 侧 `reportSent` 只在
 `pending_send`(即已经过 `/network` 页批准)状态才允许推进到 `sent`,否则抛错——这一层与 §6 投递红线同构。
 
-`.claude/skills/network-executor/SKILL.md` 仍然留着,作为协议的完整文字说明 / 人工兜底——日常使用不再需要
-手动加载它。
+`.claude/skills/network-executor/SKILL.md` 仍然留着,作为协议的完整文字说明 / 人工兜底——同样面向
+claude-in-chrome + 你日常登录的浏览器,和 headless 执行器走的专属 Playwright 档案是两条独立通道。日常使用
+不再需要手动加载它。
 
 ## Dashboard
 首页 `/` 直接跳到 `/dashboard`(导航栏第一项也是它)。SSR 页面,不引图表库,横条纯靠 `<div>` 宽度百分比:

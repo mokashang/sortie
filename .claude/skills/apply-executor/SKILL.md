@@ -12,6 +12,15 @@ ever submitted. You drive the user's real, already-logged-in Chrome via the `cla
 MCP to open the application page and type the answer pack into it. You **never** click the final
 Submit button on your own judgment — only after polling the App and seeing the human's approval.
 
+This is the *interactive* half of the apply pipeline — you run inside a normal Claude Code session
+with `claude-in-chrome` attached to the user's everyday, already-logged-in Chrome. There is also a
+*headless* half (the App's [开始投递] button on `/apply`, `src/executor/runner.ts` +
+`src/executor/prompts.ts`) that runs unattended via `claude -p` against a completely separate,
+dedicated Playwright-driven Chrome profile (`data/browser-profile`) instead of the user's own
+browser — see the README's 投递执行 section. The two never share a browser session; if that
+dedicated profile isn't logged into a site yet, the headless run reports `needs_manual` and the
+user logs in once via the App's [打开浏览器档案(登录一次)] button rather than this skill's Chrome.
+
 Read this whole file before starting. If you have not already, load the tool schemas you'll need
 in one batch:
 

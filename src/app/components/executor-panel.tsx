@@ -46,6 +46,26 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
   );
   const [busyKind, setBusyKind] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [profileMsg, setProfileMsg] = useState("");
+
+  async function openProfile() {
+    setBusyKind("open-profile");
+    setProfileMsg("");
+    setError("");
+    try {
+      const r = await fetch("/api/executor/open-profile", { method: "POST" });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setError(`打开浏览器档案失败:${j.error ?? r.status}`);
+        return;
+      }
+      setProfileMsg("已打开一个 Chrome 窗口(专属浏览器档案)——在里面登录一次 LinkedIn/Workday 等站点即可,登录状态会保留给之后的无人值守执行器使用。");
+    } catch (e) {
+      setError(`打开浏览器档案失败:${e}`);
+    } finally {
+      setBusyKind(null);
+    }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -123,6 +143,19 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
   return (
     <div className="panel">
       {error && <p className="text-accent">{error}</p>}
+      <div style={{ marginBottom: 12 }}>
+        <button className="btn-ghost" onClick={openProfile} disabled={busyKind === "open-profile"}>
+          打开浏览器档案(登录一次)
+        </button>
+        <p className="text-sub" style={{ fontSize: 12, margin: "4px 0 0" }}>
+          执行器用的是一个专属的持久化 Chrome 档案,不是你日常用的浏览器——第一次用前(或换了账号密码后)点这个按钮,在弹出的窗口里登录一次 LinkedIn/Workday 等站点,登录状态会保留给之后的无人值守执行器使用。
+        </p>
+        {profileMsg && (
+          <p className="text-sub" style={{ fontSize: 12, marginTop: 4 }}>
+            {profileMsg}
+          </p>
+        )}
+      </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
         {kinds.map(({ kind, label, withLimit, quotaTable }) => {
           const run = latestByKind[kind];

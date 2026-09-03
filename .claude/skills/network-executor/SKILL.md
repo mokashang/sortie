@@ -16,6 +16,16 @@ user's real, already-logged-in Chrome via the `claude-in-chrome` MCP to do two d
    CRM as candidate contacts. This mode is **read-only on LinkedIn** — it never connects with or
    messages anyone. Every send still has to go through the App's draft → approve flow.
 
+This is the *interactive* half of the networking pipeline — you run inside a normal Claude Code
+session with `claude-in-chrome` attached to the user's everyday, already-logged-in Chrome. There
+is also a *headless* half (the App's [发送已批准消息] / [找人] buttons on `/network`,
+`src/executor/runner.ts` + `src/executor/prompts.ts`) that runs unattended via `claude -p` against
+a completely separate, dedicated Playwright-driven Chrome profile (`data/browser-profile`) instead
+of the user's own browser — see the README's 人脉 / Networking section. The two never share a
+browser session; if that dedicated profile isn't logged into LinkedIn yet, the headless run stops
+and reports it, and the user logs in once via the App's [打开浏览器档案(登录一次)] button rather
+than this skill's Chrome.
+
 Read this whole file before starting. If you have not already, load the tool schemas you'll need
 in one batch:
 
