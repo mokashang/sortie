@@ -1,6 +1,6 @@
 import { DB } from "@/lib/db";
 import { decide } from "@/apply/queue";
-import { hasLiveRun, startExecutor } from "@/executor/runner";
+import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel } from "@/executor/runner";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
 // named export on route.ts) because Next's typed-routes checker only tolerates the recognized
@@ -10,22 +10,31 @@ import { hasLiveRun, startExecutor } from "@/executor/runner";
 // machinery.
 
 export interface DecideAutoStartDeps {
-  hasLiveRun?: typeof hasLiveRun;
+  hasLiveOrQueuedRun?: typeof hasLiveOrQueuedRun;
+  lastRunChannel?: typeof lastRunChannel;
   startExecutor?: typeof startExecutor;
 }
 
 export interface DecideAutoStartResult {
   autoStarted: boolean;
   runId?: number;
+  channel?: ExecutorChannel;
 }
 
 // User -> App from the in-app confirmation queue: approve or reject a filled application.
-// On a successful 'approve', if no 'apply' executor is currently alive, auto-starts one in
-// resume mode — otherwise an approval just sits in the DB forever with nobody to act on it (the
-// gap this closes: the user clicks 确认提交 with no executor process running, and nothing
-// happens). Inject hasLiveRun/startExecutor to avoid spawning a real process in tests. A spawn
-// failure here must never break the approve itself, hence the try/catch: the approval already
-// succeeded by the time we get here.
+// On a successful 'approve', if no 'apply' executor is currently alive or queued, auto-starts one
+// in resume mode — otherwise an approval just sits in the DB forever with nobody to act on it
+// (the gap this closes: the user clicks 确认提交 with no executor running, and nothing happens).
+//
+// Which channel to auto-start follows whatever the user last used for 'apply' — headless stays
+// headless, user_chrome stays user_chrome — and defaults to user_chrome (the App's default
+// channel) when there's no prior run to follow at all. A user_chrome auto-start just enqueues a
+// row for an attended session to pick up (no process spawned here); the App's toast/status UI
+// tells the user it's waiting on their 值守会话.
+//
+// Inject hasLiveOrQueuedRun/lastRunChannel/startExecutor to avoid touching a real DB/process in
+// tests. A failure here must never break the approve itself, hence the try/catch: the approval
+// already succeeded by the time we get here.
 export function decideAndMaybeAutoStart(
   db: DB,
   jobId: number,
@@ -39,16 +48,18 @@ export function decideAndMaybeAutoStart(
     return { autoStarted: false };
   }
 
-  const checkLive = deps.hasLiveRun ?? hasLiveRun;
+  const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
+  const getLastChannel = deps.lastRunChannel ?? lastRunChannel;
   const start = deps.startExecutor ?? startExecutor;
   try {
-    if (!checkLive(db, "apply")) {
-      const result = start(db, "apply", { resume: true });
-      return { autoStarted: true, runId: result.id };
+    if (!checkLiveOrQueued(db, "apply")) {
+      const channel: ExecutorChannel = getLastChannel(db, "apply") === "headless" ? "headless" : "user_chrome";
+      const result = start(db, "apply", { resume: true }, {}, channel);
+      return { autoStarted: true, runId: result.id, channel };
     }
   } catch {
-    // Spawn failure must never break the approve itself — the approval already succeeded above.
-    // The user still sees "已批准" and can retry from the App's own 开始投递 button.
+    // Spawn/enqueue failure must never break the approve itself — the approval already succeeded
+    // above. The user still sees "已批准" and can retry from the App's own 开始投递 button.
   }
   return { autoStarted: false };
 }

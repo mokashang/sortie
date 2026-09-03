@@ -15,18 +15,24 @@ function seedAwaitingConfirm(db: DB): number {
 }
 
 describe("decideAndMaybeAutoStart", () => {
-  it("approve with no live executor auto-starts one in resume mode and reports autoStarted+runId", () => {
+  it("approve with no prior apply run at all auto-starts on the default user_chrome channel", () => {
     const db = openDb(":memory:");
     const jobId = seedAwaitingConfirm(db);
 
-    const hasLiveRun = vi.fn(() => false);
-    const startExecutor = vi.fn(() => ({ id: 42, pid: 123, logPath: "/tmp/run-42.log" }));
+    const hasLiveOrQueuedRun = vi.fn(() => false);
+    const lastRunChannel = vi.fn(() => null);
+    const startExecutor = vi.fn(() => ({ id: 42, pid: null, logPath: "/tmp/run-42.log" }));
 
-    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, { hasLiveRun, startExecutor });
+    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, {
+      hasLiveOrQueuedRun,
+      lastRunChannel,
+      startExecutor,
+    });
 
-    expect(result).toEqual({ autoStarted: true, runId: 42 });
-    expect(hasLiveRun).toHaveBeenCalledWith(db, "apply");
-    expect(startExecutor).toHaveBeenCalledWith(db, "apply", { resume: true });
+    expect(result).toEqual({ autoStarted: true, runId: 42, channel: "user_chrome" });
+    expect(hasLiveOrQueuedRun).toHaveBeenCalledWith(db, "apply");
+    expect(lastRunChannel).toHaveBeenCalledWith(db, "apply");
+    expect(startExecutor).toHaveBeenCalledWith(db, "apply", { resume: true }, {}, "user_chrome");
 
     const row = db.prepare("SELECT confirm_decision FROM applications WHERE job_id=?").get(jobId) as {
       confirm_decision: string;
@@ -34,14 +40,55 @@ describe("decideAndMaybeAutoStart", () => {
     expect(row.confirm_decision).toBe("approved");
   });
 
-  it("approve with a live executor already running does not auto-start", () => {
+  it("approve follows the last apply run's channel when it was user_chrome", () => {
     const db = openDb(":memory:");
     const jobId = seedAwaitingConfirm(db);
 
-    const hasLiveRun = vi.fn(() => true);
+    const hasLiveOrQueuedRun = vi.fn(() => false);
+    const lastRunChannel = vi.fn(() => "user_chrome" as const);
+    const startExecutor = vi.fn(() => ({ id: 7, pid: null, logPath: "/tmp/run-7.log" }));
+
+    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, {
+      hasLiveOrQueuedRun,
+      lastRunChannel,
+      startExecutor,
+    });
+
+    expect(result).toEqual({ autoStarted: true, runId: 7, channel: "user_chrome" });
+    expect(startExecutor).toHaveBeenCalledWith(db, "apply", { resume: true }, {}, "user_chrome");
+  });
+
+  it("approve follows the last apply run's channel when it was headless", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+
+    const hasLiveOrQueuedRun = vi.fn(() => false);
+    const lastRunChannel = vi.fn(() => "headless" as const);
+    const startExecutor = vi.fn(() => ({ id: 8, pid: 123, logPath: "/tmp/run-8.log" }));
+
+    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, {
+      hasLiveOrQueuedRun,
+      lastRunChannel,
+      startExecutor,
+    });
+
+    expect(result).toEqual({ autoStarted: true, runId: 8, channel: "headless" });
+    expect(startExecutor).toHaveBeenCalledWith(db, "apply", { resume: true }, {}, "headless");
+  });
+
+  it("approve with a live or queued executor already does not auto-start", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+
+    const hasLiveOrQueuedRun = vi.fn(() => true);
+    const lastRunChannel = vi.fn(() => "user_chrome" as const);
     const startExecutor = vi.fn(() => ({ id: 1, pid: 1, logPath: "" }));
 
-    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, { hasLiveRun, startExecutor });
+    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, {
+      hasLiveOrQueuedRun,
+      lastRunChannel,
+      startExecutor,
+    });
 
     expect(result).toEqual({ autoStarted: false });
     expect(startExecutor).not.toHaveBeenCalled();
@@ -51,29 +98,34 @@ describe("decideAndMaybeAutoStart", () => {
     const db = openDb(":memory:");
     const jobId = seedAwaitingConfirm(db);
 
-    const hasLiveRun = vi.fn(() => false);
+    const hasLiveOrQueuedRun = vi.fn(() => false);
     const startExecutor = vi.fn(() => ({ id: 1, pid: 1, logPath: "" }));
 
-    const result = decideAndMaybeAutoStart(db, jobId, "reject", "not a fit", { hasLiveRun, startExecutor });
+    const result = decideAndMaybeAutoStart(db, jobId, "reject", "not a fit", { hasLiveOrQueuedRun, startExecutor });
 
     expect(result).toEqual({ autoStarted: false });
-    expect(hasLiveRun).not.toHaveBeenCalled();
+    expect(hasLiveOrQueuedRun).not.toHaveBeenCalled();
     expect(startExecutor).not.toHaveBeenCalled();
   });
 
-  it("a spawn failure in startExecutor never breaks the approve itself", () => {
+  it("a start/enqueue failure never breaks the approve itself", () => {
     const db = openDb(":memory:");
     const jobId = seedAwaitingConfirm(db);
 
-    const hasLiveRun = vi.fn(() => false);
+    const hasLiveOrQueuedRun = vi.fn(() => false);
+    const lastRunChannel = vi.fn(() => null);
     const startExecutor = vi.fn(() => {
       throw new Error("spawn ENOENT");
     });
 
-    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, { hasLiveRun, startExecutor });
+    const result = decideAndMaybeAutoStart(db, jobId, "approve", undefined, {
+      hasLiveOrQueuedRun,
+      lastRunChannel,
+      startExecutor,
+    });
 
     expect(result).toEqual({ autoStarted: false });
-    // The approve itself still went through despite the spawn failure.
+    // The approve itself still went through despite the failure.
     const row = db.prepare("SELECT confirm_decision FROM applications WHERE job_id=?").get(jobId) as {
       confirm_decision: string;
     };
