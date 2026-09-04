@@ -138,6 +138,10 @@ describe("db", () => {
     expect(rows[1]).toMatchObject({ fingerprint: "b", dedup_key: "acme|swe intern", jd_status: null });
     const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_jobs_dedup_key'").get();
     expect(idx).toBeTruthy();
+    const dupIdx = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_jobs_duplicate_of'")
+      .get();
+    expect(dupIdx).toBeTruthy();
     expect(db.pragma("user_version", { simple: true })).toBe(8);
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });

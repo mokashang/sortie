@@ -98,6 +98,8 @@ export function openDb(file?: string): DB {
   // live in schema.sql's CREATE INDEX IF NOT EXISTS because that runs via db.exec(readSchema())
   // before old DBs have gained the dedup_key column, so it's created here unconditionally instead.
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs(dedup_key)");
+  // Same reasoning as idx_jobs_dedup_key above: created here so both old and new DBs get it.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_duplicate_of ON jobs(duplicate_of)");
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 
   return db;
