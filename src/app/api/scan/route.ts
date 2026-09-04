@@ -48,7 +48,8 @@ export async function POST(req: Request) {
         const profile = loadProfile();
         const backend = getBackend();
         // 顺序固定:先去重(重复行不进匹配),再匹配,最后补正文接力。
-        const c = await runConsolidate(db, { backend, groupsPerCall: 15 });
+        // limitGroups bounds per-scan LLM spend; `npm run consolidate` drains any backlog beyond this.
+        const c = await runConsolidate(db, { backend, groupsPerCall: 15, limitGroups: 20 });
         console.log(`[scan→consolidate] groups ${c.groups}, archived ${c.archived}, errors ${c.errors.length}`);
         await runMatching(db, {
           backend,
