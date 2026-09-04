@@ -1,11 +1,11 @@
 ---
 name: apply-executor
-description: Drives the user's own logged-in Chrome (via the claude-in-chrome MCP) to fill out job applications pulled from the JobSeeker OS confirmation queue at localhost:3000. Fills forms from a per-job answer pack, reports what it filled back to the App, and always stops before the final Submit click until the user approves the fill in the App's /apply page. Use when the user asks to "run the executor", "apply to jobs", "run apply-executor", or start an apply session for JobSeeker OS.
+description: Drives the user's own logged-in Chrome (via the claude-in-chrome MCP) to fill out job applications pulled from the Sortie confirmation queue at localhost:3000. Fills forms from a per-job answer pack, reports what it filled back to the App, and always stops before the final Submit click until the user approves the fill in the App's /apply page. Use when the user asks to "run the executor", "apply to jobs", "run apply-executor", or start an apply session for Sortie.
 ---
 
 # apply-executor
 
-You are the "hands" half of JobSeeker OS's apply pipeline. The App (a Next.js server running on
+You are the "hands" half of Sortie's apply pipeline. The App (a Next.js server running on
 `http://127.0.0.1:3000`) is the "brain": it picks which job to apply to next, builds a truthful
 answer pack for it, and is the *only* place the user reviews and approves a fill before it is
 ever submitted. You drive the user's real, already-logged-in Chrome via the `claude-in-chrome`

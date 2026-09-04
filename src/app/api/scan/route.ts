@@ -26,7 +26,7 @@ export async function POST(req: Request) {
   // the phone daily for nothing actionable, so this deliberately ignores `upgraded`.
   if (isCron && summary.inserted > 0) {
     await notify(
-      "JobSeeker OS 扫描完成",
+      "Sortie 扫描完成",
       `新增 ${summary.inserted} 个职位,升级 ${summary.upgraded} 个(${summary.visaSkipped} 个签证不符已标记)`
     );
   }

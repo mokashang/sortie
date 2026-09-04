@@ -1,4 +1,4 @@
-# JobSeeker OS — 新会话交接(2026-09-03,内推接入投递流程已落地)
+# Sortie(原 JobSeeker OS)— 新会话交接(2026-09-04,内推接入投递流程已落地)
 
 Mengjia Shang(USC M.S. ECE 2027/05,F-1)的 2026 秋招求职作战系统。本文件是给新会话的**完整上下文**;更细的历史在 `docs/superpowers/specs/2026-08-30-jobseeker-os-design.md`(总设计)和 `docs/superpowers/plans/`(Plan 1–5 逐步实现记录)。自动记忆(`~/.claude/projects/-Users-moka-Documents-job-seeker/memory/`)也会自动加载,与本文件互补。
 
