@@ -326,6 +326,7 @@ describe("pagedQueue", () => {
 describe("QUEUE_ELIGIBLE_SQL", () => {
   it("hides duplicate, no-sponsor, phd-only and non-tech jobs from pagedQueue and takeNextApplication", () => {
     const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
     const ok = seedJob(db, { fingerprint: "ok", title: "SWE A" });
     const dup = seedJob(db, { fingerprint: "dup", title: "SWE B" });
     const nos = seedJob(db, { fingerprint: "nos", title: "SWE C" });
@@ -339,5 +340,14 @@ describe("QUEUE_ELIGIBLE_SQL", () => {
     expect(page.rows.map((r) => r.id)).toEqual([ok]);
     const groups = queueByDirection(db);
     expect(groups[0].matched).toBe(1);
+
+    // Prove the same QUEUE_ELIGIBLE_SQL filter applies to the actual picker, not just the
+    // read-only queue views: takeNextApplication must surface only the one eligible job, and
+    // report `done: true` once it's been taken — never reach into the duplicate/no-sponsor/
+    // phd-only/non-tech rows the queue view also hides.
+    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    expect(result.jobId).toBe(ok);
+    const next = takeNextApplication(db, testProfile());
+    expect(next).toEqual({ done: true });
   });
 });
