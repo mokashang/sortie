@@ -43,7 +43,7 @@ export function buildMatchPrompt(profile: MatchProfile, jobs: MatchJobInput[]): 
   const jobBlocks = jobs
     .map(
       (j) =>
-        `<job id="${j.id}">\ncompany: ${j.company}\ntitle: ${j.title}\nlocation: ${j.location ?? "n/a"}\ndescription: ${escapeAngles(excerptJd(j.jdText, 2500))}\n</job>`
+        `<job id="${j.id}">\ncompany: ${escapeAngles(j.company)}\ntitle: ${escapeAngles(j.title)}\nlocation: ${escapeAngles(j.location ?? "n/a")}\ndescription: ${escapeAngles(excerptJd(j.jdText, 2500))}\n</job>`
     )
     .join("\n\n");
 
