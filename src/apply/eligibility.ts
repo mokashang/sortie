@@ -47,7 +47,11 @@ export function archiveCluster(db: DB, jobId: number, skipReason: string, opts: 
   const respectPinned = opts.respectPinned ?? true;
   const ids = clusterIds(db, jobId);
   const archived: number[] = [];
-  const setSkip = db.prepare("UPDATE matches SET skip_reason = ? WHERE job_id = ?");
+  // A sibling already tagged "duplicate of #<main>" carries the cluster's provenance — the
+  // cascade reason (e.g. no-sponsor) must not clobber that label with the wrong story.
+  const setSkip = db.prepare(
+    "UPDATE matches SET skip_reason = ? WHERE job_id = ? AND (skip_reason IS NULL OR skip_reason NOT LIKE 'duplicate of #%')"
+  );
   const archive = db.prepare(
     `UPDATE applications SET status = 'archived' WHERE job_id = ? AND status IN ('discovered','matched','prepared')` +
       (respectPinned ? " AND pinned = 0" : "")

@@ -22,18 +22,23 @@ describe("eligibilityFailReason", () => {
 });
 
 describe("clusterIds / archiveCluster", () => {
-  it("resolves the whole cluster from any member and archives open members with skip_reason", () => {
+  it("resolves the whole cluster from any member, archives open members, and preserves 'duplicate of' provenance", () => {
     const db = openDb(":memory:");
     const main = seed(db, "m", { withMatch: true });
     const d1 = seed(db, "d1", { duplicateOf: main, status: "archived", withMatch: true });
+    const d3 = seed(db, "d3", { duplicateOf: main, status: "archived", withMatch: true });
     const d2 = seed(db, "d2", { duplicateOf: main });
-    expect(clusterIds(db, d2).sort()).toEqual([main, d1, d2].sort());
+    // d1 already carries its cluster provenance label; the cascade must not clobber it.
+    db.prepare("UPDATE matches SET skip_reason = ? WHERE job_id = ?").run(`duplicate of #${main}`, d1);
+    expect(clusterIds(db, d2).sort()).toEqual([main, d1, d2, d3].sort());
     const archived = archiveCluster(db, d2, "no sponsorship");
-    expect(archived.sort()).toEqual([main, d2].sort()); // d1 already archived → not counted
+    expect(archived.sort()).toEqual([main, d2].sort()); // d1/d3 already archived → not counted
     const st = db.prepare("SELECT status FROM applications WHERE job_id=?").get(main) as any;
     expect(st.status).toBe("archived");
-    const sk = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(d1) as any;
-    expect(sk.skip_reason).toBe("no sponsorship"); // already-archived rows still get the reason
+    const sk1 = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(d1) as any;
+    expect(sk1.skip_reason).toBe(`duplicate of #${main}`); // provenance label preserved, not overwritten
+    const sk3 = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(d3) as any;
+    expect(sk3.skip_reason).toBe("no sponsorship"); // NULL skip_reason → still gets the cascade reason
   });
 
   it("respects pinned rows by default", () => {
