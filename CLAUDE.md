@@ -3,7 +3,7 @@
 Mengjia Shang(USC M.S. ECE 2027/05,F-1)的 2026 秋招求职作战系统。本文件是给新会话的**完整上下文**;更细的历史在 `docs/superpowers/specs/2026-08-30-jobseeker-os-design.md`(总设计)和 `docs/superpowers/plans/`(Plan 1–5 逐步实现记录)。自动记忆(`~/.claude/projects/-Users-moka-Documents-job-seeker/memory/`)也会自动加载,与本文件互补。
 
 ## 0. 一句话状态
-系统全部建成、已部署常驻(launchd `com.jobseeker.os`,http://127.0.0.1:3000,545 测试全绿,全部在 `main`,无分支/worktree)。**已真实投出 1 份申请(Stripe SWE New Grad,2026-09-02)**。当前默认执行通道 = **值守会话(user_chrome)**:用户在 App 点"开始投递",一个**交互式** Claude Code 会话(就是你,如果你在 Claude 桌面 App 里且 Chrome 扩展已连接)接单,在用户自己登录好的 Chrome 里填表。
+系统全部建成、已部署常驻(launchd `com.jobseeker.os`,http://127.0.0.1:3000,549 测试全绿,全部在 `main`,无分支/worktree)。**已真实投出 1 份申请(Stripe SWE New Grad,2026-09-02)**。当前默认执行通道 = **值守会话(user_chrome)**:用户在 App 点"开始投递",一个**交互式** Claude Code 会话(就是你,如果你在 Claude 桌面 App 里且 Chrome 扩展已连接)接单,在用户自己登录好的 Chrome 里填表。
 
 ## 1. 用户偏好与红线(不可违背)
 - **提交/发送必须经用户在 App 确认**:`reportSubmitted` 代码层只在 `confirm_decision='approved'` 时放行;执行器绝不先点 Submit。发消息同理(`reportSent` 仅 pending_send)。
