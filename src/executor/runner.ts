@@ -38,6 +38,11 @@ export interface StartOptions {
   // before it could submit. See buildApplyPrompt's resume section and the /api/apply/decide
   // route's auto-start-on-approve path, which is what actually sets this.
   resume?: boolean;
+  // apply kind only — a run scoped to specific jobs (the 内推进行中 board's 直接投 / 有内推 /
+  // 换人再问 buttons enqueue these). `mode` says whether to fill them (direct) or seek a
+  // referral for them (referral). Referral mode is attended-session only.
+  jobIds?: number[];
+  mode?: "referral" | "direct";
 }
 
 // A structural subset of child_process.ChildProcess — deliberately loose so tests can inject a
@@ -168,11 +173,16 @@ export function hasLiveRun(db: DB, kind: ExecutorKind): boolean {
 // attended session to claim it — no pid to check liveness on, but it's still "spoken for" and a
 // second auto-start would be a duplicate). Used by decideAndMaybeAutoStart's auto-start-on-approve
 // check instead of hasLiveRun, since a queued attended run must also block a second auto-start.
+//
+// A *running* user_chrome row also counts: it has no pid (the attended session is what's alive),
+// and while it's marked running that session is the one polling /api/apply/pending for the
+// approval — auto-starting a second run alongside it just produces a duplicate 'resume' row (as
+// happened with run #8 on 2026-09-03). Only reapStaleRuns's log-mtime check may retire it.
 export function hasLiveOrQueuedRun(db: DB, kind: ExecutorKind): boolean {
   const rows = db
-    .prepare("SELECT pid, status FROM executor_runs WHERE kind=? AND status IN ('running','queued')")
-    .all(kind) as { pid: number | null; status: string }[];
-  return rows.some((row) => row.status === "queued" || isAlive(row.pid));
+    .prepare("SELECT pid, status, channel FROM executor_runs WHERE kind=? AND status IN ('running','queued')")
+    .all(kind) as { pid: number | null; status: string; channel: string }[];
+  return rows.some((row) => row.status === "queued" || row.channel === "user_chrome" || isAlive(row.pid));
 }
 
 // The channel of the most recent run of `kind` (any status), or null if there has never been one.
@@ -208,6 +218,10 @@ export function startExecutor(
   deps: RunnerDeps = {},
   channel: ExecutorChannel = "headless"
 ): StartResult {
+  const wantsReferral = options.mode === "referral" || (options.plan ?? []).some((p) => p.mode === "referral");
+  if (channel === "headless" && wantsReferral) {
+    throw new Error("内推模式仅支持值守会话(user_chrome)——无人值守通道只做海投");
+  }
   const existing = db
     .prepare("SELECT id, pid, status FROM executor_runs WHERE kind=? AND channel=? AND status IN ('running','queued')")
     .all(kind, channel) as { id: number; pid: number | null; status: string }[];
@@ -408,6 +422,20 @@ export interface RunStatusRow {
   claimedAt: string | null;
   endedAt: string | null;
   logTail?: string[];
+}
+
+// The App's "详情" view of one run (GET /api/executor/log?id=): the whole log, not a tail, for
+// running and finished runs alike — an attended session logs every step it takes (claim, open
+// page, eligibility check, each field group, upload, read-back, report, wait, submit), and the
+// user wants to be able to read all of it after the fact. Throws for an unknown run; a missing
+// log file (deleted out of band) reads as empty rather than an error.
+export function runLogLines(db: DB, runId: number): string[] {
+  const row = db.prepare("SELECT log_path FROM executor_runs WHERE id=?").get(runId) as
+    | { log_path: string | null }
+    | undefined;
+  if (!row) throw new Error(`runLogLines: no run #${runId}`);
+  if (!row.log_path) return [];
+  return tailLines(row.log_path, Number.MAX_SAFE_INTEGER);
 }
 
 function tailLines(filePath: string, n: number): string[] {

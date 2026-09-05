@@ -17,6 +17,18 @@ export interface AnswerPack {
   resume: { version_name: string; pdf_path: string };
   custom: Record<string, string>;
   job: { company: string; title: string; apply_url: string };
+  // Present only when the user recorded a referral for this job (referralDecide 'won'). When
+  // `link` is non-empty the executor opens it INSTEAD of job.apply_url; "Referred by"-type
+  // form fields are filled from person_name/code.
+  referral?: AnswerPackReferral;
+}
+
+export interface AnswerPackReferral {
+  source: string;       // linkedin | email | wechat | other
+  person_name: string;  // the referrer, as the user entered/selected it
+  link: string;         // referral URL — when non-empty the executor opens THIS instead of job.apply_url
+  code: string;         // referral code, if the ATS asks for one
+  note: string;
 }
 
 export interface AnswerPackJob {
@@ -64,7 +76,12 @@ function completeUrl(value: string): string {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export function buildAnswerPack(profile: Profile, job: AnswerPackJob, resume: AnswerPackResume): AnswerPack {
+export function buildAnswerPack(
+  profile: Profile,
+  job: AnswerPackJob,
+  resume: AnswerPackResume,
+  referral?: AnswerPackReferral
+): AnswerPack {
   const { first, last } = splitName(profile.name);
 
   return {
@@ -94,5 +111,6 @@ export function buildAnswerPack(profile: Profile, job: AnswerPackJob, resume: An
     resume: { version_name: resume.version_name, pdf_path: resume.pdf_path ?? "" },
     custom: { ...profile.standard_answers },
     job: { company: job.company, title: job.title, apply_url: job.apply_url ?? "" },
+    ...(referral ? { referral } : {}),
   };
 }

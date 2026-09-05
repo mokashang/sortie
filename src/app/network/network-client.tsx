@@ -5,12 +5,13 @@ import { useCallback, useEffect, useState } from "react";
 // because crm.ts pulls in @/lib/db (better-sqlite3, a native Node module) which cannot be
 // bundled into a "use client" component for the browser.
 const RELATIONS = ["recruiter", "alum", "hiring_manager", "engineer", "other"] as const;
+// 'referral' is deliberately absent: referral requests are created and approved on /apply's
+// 内推进行中 board (src/app/apply/referral-panel.tsx), never from this page.
 const PLAYBOOKS = [
-  "referral",
-  "self_pitch",
-  "recruiter",
   "coffee_chat",
   "hidden_opportunity",
+  "self_pitch",
+  "recruiter",
   "followup",
   "thanks",
 ] as const;
@@ -142,8 +143,8 @@ export function NetworkClient() {
     try {
       const [peopleRes, draftRes, pendingRes] = await Promise.all([
         fetch("/api/network/people").then((r) => r.json()),
-        fetch("/api/network/outreach?status=draft").then((r) => r.json()),
-        fetch("/api/network/sendables").then((r) => r.json()),
+        fetch("/api/network/outreach?status=draft&jobLinked=false").then((r) => r.json()),
+        fetch("/api/network/sendables?jobLinked=false").then((r) => r.json()),
       ]);
       setPeople(peopleRes.people ?? []);
       const drafts: OutreachRow[] = draftRes.outreach ?? [];
@@ -334,14 +335,6 @@ export function NetworkClient() {
               </option>
             ))}
           </select>
-          <select value={genForm.jobId} onChange={(e) => setGenForm({ ...genForm, jobId: e.target.value })}>
-            <option value="">(不关联岗位)</option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {j.company} · {j.title}
-              </option>
-            ))}
-          </select>
           <button type="submit" disabled={genBusy}>
             {genBusy ? "生成中…(最长约 30 秒)" : "AI 草稿"}
           </button>
@@ -361,9 +354,6 @@ export function NetworkClient() {
                   收件人:<strong className="company-name">{row.personName}</strong>
                   {row.personCompany ? ` · ${row.personCompany}` : ""} · {PLAYBOOK_LABELS[row.playbook] ?? row.playbook} ·{" "}
                   {row.channel}
-                </span>
-                <span>
-                  关联岗位:{row.jobId && jobMap.has(row.jobId) ? `${jobMap.get(row.jobId)!.company} · ${jobMap.get(row.jobId)!.title}` : "—"}
                 </span>
               </div>
               <textarea

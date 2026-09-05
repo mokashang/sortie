@@ -1,6 +1,8 @@
 "use client";
-import { Fragment, useCallback, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { directionLabel } from "@/matcher/directions";
+import { ALL_JOBS_DIRECTION } from "@/apply/queue";
+import { ModeFilter, ModeFilterValue } from "@/app/components/mode-filter";
 
 export type QueueSort = "score" | "fresh" | "company";
 
@@ -8,6 +10,8 @@ interface TabInfo {
   direction: string;
   tier: number | null;
   matched: number;
+  referralSuggested: number;
+  directSuggested: number;
 }
 
 interface QueueRow {
@@ -22,8 +26,17 @@ interface QueueRow {
   reason: string | null;
   posted_at: string | null;
   pinned: number;
-  dup_count: number;
-  jd_status: string | null;
+  dup_count?: number;
+  jd_status?: string | null;
+  // Referral-in-apply (spec §3): Claude's suggestion, the user's override, and the resolved mode.
+  referral_fit?: number | null;
+  apply_mode?: string | null;
+  effective_mode?: "referral" | "direct";
+  referral_reason?: string | null;
+  // Only present on the 全部入库 tab (pagedAllJobs rows): scan time, and whether the job is
+  // currently in the apply queue (pin/skip only apply to those).
+  created_at?: string;
+  in_queue?: number;
 }
 
 interface PagedResult {
@@ -69,6 +82,7 @@ function truncateLocations(location: string | null): { display: string; full: st
 
 export function QueueBoard({
   tabs: initialTabs,
+  allJobsCount,
   initialDirection,
   initialPage,
   initialSort,
@@ -76,6 +90,7 @@ export function QueueBoard({
   pageSize,
 }: {
   tabs: TabInfo[];
+  allJobsCount: number;
   initialDirection: string;
   initialPage: number;
   initialSort: QueueSort;
@@ -93,6 +108,9 @@ export function QueueBoard({
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [jdCache, setJdCache] = useState<Map<number, JdState>>(new Map());
   const [pinBusy, setPinBusy] = useState<Set<number>>(new Set());
+  const [mode, setMode] = useState<ModeFilterValue>("all");
+  const [modeBusy, setModeBusy] = useState<Set<number>>(new Set());
+  const [fitInfo, setFitInfo] = useState<{ unclassified: number; running: boolean } | null>(null);
   const undoTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   function updateUrl(d: string, p: number, s: QueueSort) {
@@ -101,11 +119,12 @@ export function QueueBoard({
   }
 
   const fetchPage = useCallback(
-    async (d: string, p: number, s: QueueSort) => {
+    async (d: string, p: number, s: QueueSort, m: ModeFilterValue = mode) => {
       setLoading(true);
       setError("");
       try {
         const params = new URLSearchParams({ direction: d, page: String(p), pageSize: String(pageSize), sort: s });
+        if (m !== "all" && d !== ALL_JOBS_DIRECTION) params.set("mode", m);
         const r = await fetch(`/api/queue?${params.toString()}`);
         if (!r.ok) throw new Error(String(r.status));
         const j = (await r.json()) as PagedResult;
@@ -116,8 +135,22 @@ export function QueueBoard({
         setLoading(false);
       }
     },
-    [pageSize]
+    [pageSize, mode]
   );
+
+  const fetchFitInfo = useCallback(async () => {
+    try {
+      const r = await fetch("/api/queue/referral-fit");
+      if (!r.ok) return;
+      setFitInfo(await r.json());
+    } catch {
+      // non-fatal
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchFitInfo();
+  }, [fetchFitInfo]);
 
   const fetchTabs = useCallback(async () => {
     try {
@@ -132,10 +165,15 @@ export function QueueBoard({
 
   function selectTab(d: string) {
     if (d === direction) return;
+    // Each side has its own natural default (queue: score; raw listing: scan time) — only swap
+    // when the user is still on the previous side's default, so an explicit choice sticks.
+    const wasDefault = sort === (direction === ALL_JOBS_DIRECTION ? "fresh" : "score");
+    const nextSort: QueueSort = wasDefault ? (d === ALL_JOBS_DIRECTION ? "fresh" : "score") : sort;
     setDirection(d);
+    setSort(nextSort);
     setPage(1);
-    updateUrl(d, 1, sort);
-    fetchPage(d, 1, sort);
+    updateUrl(d, 1, nextSort);
+    fetchPage(d, 1, nextSort);
   }
 
   function goToPage(p: number) {
@@ -151,6 +189,56 @@ export function QueueBoard({
     setPage(1);
     updateUrl(direction, 1, s);
     fetchPage(direction, 1, s);
+  }
+
+  function changeMode(m: ModeFilterValue) {
+    setMode(m);
+    setPage(1);
+    fetchPage(direction, 1, sort, m);
+  }
+
+  async function setRowMode(row: QueueRow, m: "referral" | "direct" | null) {
+    setModeBusy((prev) => new Set(prev).add(row.id));
+    try {
+      const r = await fetch("/api/queue/mode", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobId: row.id, mode: m }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      await fetchPage(direction, page, sort);
+      fetchTabs();
+    } catch (e) {
+      setError(`修改模式失败:${e}`);
+    } finally {
+      setModeBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(row.id);
+        return next;
+      });
+    }
+  }
+
+  // 补判内推建议: kick off the background classification, then poll until it reports done.
+  async function runFit() {
+    setError("");
+    try {
+      const r = await fetch("/api/queue/referral-fit", { method: "POST" });
+      if (!r.ok) throw new Error(String(r.status));
+      setFitInfo((prev) => ({ unclassified: prev?.unclassified ?? 0, running: true }));
+      const poll = async () => {
+        const s = await fetch("/api/queue/referral-fit").then((x) => x.json());
+        setFitInfo(s);
+        if (s.running) setTimeout(poll, 5000);
+        else {
+          fetchPage(direction, page, sort);
+          fetchTabs();
+        }
+      };
+      setTimeout(poll, 5000);
+    } catch (e) {
+      setError(`补判失败:${e}`);
+    }
   }
 
   async function archiveRow(jobId: number) {
@@ -241,6 +329,8 @@ export function QueueBoard({
     }
   }
 
+  const isAllTab = direction === ALL_JOBS_DIRECTION;
+
   return (
     <div>
       <div className="tabbar">
@@ -254,6 +344,12 @@ export function QueueBoard({
             <span className="tab-count">{t.matched}</span>
           </button>
         ))}
+        <button
+          className={`tab ${direction === ALL_JOBS_DIRECTION ? "active" : ""}`}
+          onClick={() => selectTab(ALL_JOBS_DIRECTION)}
+        >
+          全部入库 <span className="tab-count">{allJobsCount}</span>
+        </button>
       </div>
 
       {undos.length > 0 && (
@@ -290,14 +386,33 @@ export function QueueBoard({
           排序{" "}
           <select value={sort} onChange={(e) => changeSort(e.target.value as QueueSort)} disabled={loading}>
             <option value="score">分数</option>
-            <option value="fresh">新鲜度</option>
+            <option value="fresh">{isAllTab ? "入库时间" : "新鲜度"}</option>
             <option value="company">公司名</option>
           </select>
         </label>
+        {!isAllTab && (
+          <ModeFilter
+            value={mode}
+            onChange={changeMode}
+            disabled={loading}
+            counts={(() => {
+              const t = tabs.find((x) => x.direction === direction);
+              return t ? { all: t.matched, referral: t.referralSuggested, direct: t.directSuggested } : undefined;
+            })()}
+          />
+        )}
+        <button
+          className="btn-ghost"
+          onClick={runFit}
+          disabled={!fitInfo || fitInfo.running || fitInfo.unclassified === 0}
+          title="让 Claude 给还没判定的队列岗位打上「建议内推 / 海投」"
+        >
+          {fitInfo?.running ? "补判中…" : `补判内推建议${fitInfo ? `(未判 ${fitInfo.unclassified})` : ""}`}
+        </button>
       </div>
 
       {result.rows.length === 0 ? (
-        <p className="text-sub">{loading ? "加载中…" : "该方向暂无队列职位。"}</p>
+        <p className="text-sub">{loading ? "加载中…" : isAllTab ? "还没有入库的职位,先扫描一次。" : "该方向暂无队列职位。"}</p>
       ) : (
         <table>
           <thead>
@@ -306,6 +421,7 @@ export function QueueBoard({
               <th>公司</th>
               <th>标题</th>
               <th>地点</th>
+              {isAllTab && <th>入库</th>}
               <th></th>
             </tr>
           </thead>
@@ -315,6 +431,8 @@ export function QueueBoard({
               const isExpanded = expanded.has(r.id);
               const jd = jdCache.get(r.id);
               const isPinBusy = pinBusy.has(r.id);
+              // Direction tabs only ever contain queue rows; the 全部入库 tab says so per row.
+              const inQueue = isAllTab ? r.in_queue === 1 : true;
               return (
                 <Fragment key={r.id}>
                   <tr>
@@ -323,14 +441,31 @@ export function QueueBoard({
                       {r.score ?? "—"}
                     </td>
                     <td className="company">{r.company}</td>
-                    <td>{r.title}</td>
+                    <td>
+                      {r.title}
+                      {r.effective_mode && (
+                        <span
+                          className={`chip${r.effective_mode === "referral" ? " text-good" : ""}`}
+                          style={{ marginLeft: 6 }}
+                          title={r.referral_reason ?? undefined}
+                        >
+                          {r.apply_mode ? "手动·" : ""}
+                          {r.effective_mode === "referral" ? "内推" : r.referral_fit == null ? "未判定" : "海投"}
+                        </span>
+                      )}
+                    </td>
                     <td title={loc.full || undefined}>
                       {loc.display}
-                      {r.dup_count > 0 && <span className="chip" style={{ marginLeft: 6 }} title="同岗其他 base 已合并">另有 {r.dup_count} 个地点</span>}
+                      {(r.dup_count ?? 0) > 0 && <span className="chip" style={{ marginLeft: 6 }} title="同岗其他 base 已合并">另有 {r.dup_count} 个地点</span>}
                       {r.jd_status === "missing" && <span className="chip" style={{ marginLeft: 6 }}>无正文</span>}
                       {r.jd_status === "login_wall" && <span className="chip" style={{ marginLeft: 6 }}>登录墙</span>}
                       {r.jd_status === "unreachable" && <span className="chip" style={{ marginLeft: 6 }}>打不开</span>}
                     </td>
+                    {isAllTab && (
+                      <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                        {r.created_at?.slice(0, 16) ?? "—"}
+                      </td>
+                    )}
                     <td className="row-actions">
                       {r.apply_url && (
                         <a href={r.apply_url} target="_blank" rel="noreferrer" className="btn-ghost">
@@ -340,17 +475,33 @@ export function QueueBoard({
                       <button className="btn-ghost" onClick={() => toggleExpand(r.id)}>
                         {isExpanded ? "收起" : "展开"}
                       </button>
-                      <button className="btn-ghost" disabled={isPinBusy} onClick={() => togglePin(r.id, !r.pinned)}>
-                        {r.pinned ? "取消置顶" : "置顶"}
-                      </button>
-                      <button className="btn-ghost" onClick={() => archiveRow(r.id)}>
-                        跳过
-                      </button>
+                      {inQueue && (
+                        <>
+                          <button className="btn-ghost" disabled={isPinBusy} onClick={() => togglePin(r.id, !r.pinned)}>
+                            {r.pinned ? "取消置顶" : "置顶"}
+                          </button>
+                          <button
+                            className="btn-ghost"
+                            disabled={modeBusy.has(r.id)}
+                            onClick={() => setRowMode(r, r.effective_mode === "referral" ? "direct" : "referral")}
+                          >
+                            {r.effective_mode === "referral" ? "改为海投" : "改为找内推"}
+                          </button>
+                          {r.apply_mode && (
+                            <button className="btn-ghost" disabled={modeBusy.has(r.id)} onClick={() => setRowMode(r, null)}>
+                              跟随建议
+                            </button>
+                          )}
+                          <button className="btn-ghost" onClick={() => archiveRow(r.id)}>
+                            跳过
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={5} style={{ padding: 0, borderBottom: "1px solid var(--line)" }}>
+                      <td colSpan={isAllTab ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--line)" }}>
                         <div className="jd-drawer">
                           {!jd || jd.status === "loading" ? (
                             <p className="text-sub">加载中…</p>
@@ -372,6 +523,12 @@ export function QueueBoard({
                                   {jd.data.skip_reason ? ` · 归档原因:${jd.data.skip_reason}` : ""}
                                 </p>
                               )}
+                              <h4>内推建议</h4>
+                              <p style={{ fontSize: 13, marginBottom: 12 }}>
+                                {r.effective_mode === "referral" ? "建议先找内推" : r.referral_fit == null ? "尚未判定" : "建议海投"}
+                                {r.apply_mode ? `(已手动改为${r.apply_mode === "referral" ? "找内推" : "海投"})` : ""}
+                                {r.referral_reason ? ` · ${r.referral_reason}` : ""}
+                              </p>
                               <h4>JD</h4>
                               <pre>{jd.data.jd_text ?? "(无 JD 文本)"}</pre>
                             </>

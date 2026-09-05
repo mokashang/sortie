@@ -24,14 +24,14 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
-export const metadata = { title: "JobSeeker OS" };
+export const metadata = { title: "Sortie" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh" className={`${newsreader.variable} ${plexSans.variable} ${jetbrainsMono.variable}`}>
       <body>
         <nav className="topnav">
-          <a href="/" className="brand">JobSeeker OS</a>
+          <a href="/" className="brand">Sortie</a>
           <NavLinks />
         </nav>
         <main>{children}</main>

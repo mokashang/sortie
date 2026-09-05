@@ -1,4 +1,4 @@
-# JobSeeker OS
+# Sortie
 
 本地求职作战系统(Phase A:个人版)。spec 见 `docs/superpowers/specs/2026-08-30-jobseeker-os-design.md`。
 

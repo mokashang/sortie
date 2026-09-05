@@ -20,7 +20,7 @@ export async function POST(req: Request) {
   // the phone daily for nothing actionable, so this deliberately ignores `upgraded`.
   if (isCron && summary.inserted > 0) {
     await notify(
-      "JobSeeker OS 扫描完成",
+      "Sortie 扫描完成",
       `新增 ${summary.inserted} 个职位,升级 ${summary.upgraded} 个(${summary.visaSkipped} 个签证不符已标记)`
     );
   }
@@ -59,6 +59,9 @@ export async function POST(req: Request) {
           limit: 200,
           concurrency: 6,
         });
+        // Second pass: classify the newly matched jobs as 建议内推 / 海投 (matches.referral_fit).
+        const { runReferralFit } = await import("@/matcher/referral-fit");
+        await runReferralFit(db, { backend, batchSize: 40, limit: 400, concurrency: 4 });
         const relay = maybeStartJdReview(db);
         console.log("[scan→jd_review]", relay);
       } catch (e) {

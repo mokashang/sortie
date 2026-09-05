@@ -1,11 +1,11 @@
 ---
 name: apply-executor
-description: Drives the user's own logged-in Chrome (via the claude-in-chrome MCP) to fill out job applications pulled from the JobSeeker OS confirmation queue at localhost:3000. Fills forms from a per-job answer pack, reports what it filled back to the App, and always stops before the final Submit click until the user approves the fill in the App's /apply page. Use when the user asks to "run the executor", "apply to jobs", "run apply-executor", or start an apply session for JobSeeker OS.
+description: Drives the user's own logged-in Chrome (via the claude-in-chrome MCP) to fill out job applications pulled from the Sortie confirmation queue at localhost:3000. Fills forms from a per-job answer pack, reports what it filled back to the App, and always stops before the final Submit click until the user approves the fill in the App's /apply page. Use when the user asks to "run the executor", "apply to jobs", "run apply-executor", or start an apply session for Sortie.
 ---
 
 # apply-executor
 
-You are the "hands" half of JobSeeker OS's apply pipeline. The App (a Next.js server running on
+You are the "hands" half of Sortie's apply pipeline. The App (a Next.js server running on
 `http://127.0.0.1:3000`) is the "brain": it picks which job to apply to next, builds a truthful
 answer pack for it, and is the *only* place the user reviews and approves a fill before it is
 ever submitted. You drive the user's real, already-logged-in Chrome via the `claude-in-chrome`
@@ -25,6 +25,19 @@ When the App's 值守会话 channel is selected (the default), it enqueues a run
 anything: poll `GET /api/executor/claim-next?channel=user_chrome` to claim it, work the loop below,
 call `POST /api/executor/log` as you go and `POST /api/executor/finish` when done (or check
 `GET /api/executor/run?id=` to see if the user hit 停止).
+
+**Never ask the user for missing answers in the Claude session** (AskUserQuestion or chat) — the
+user wants every interaction in the App. A required question with no answer-pack value is a
+`needs_info` report (`{jobId, status:'needs_info', questions:[{key,label,hint?,options?}]}`): the
+App notifies the user, they answer on /apply's 待补信息 card, and you keep the tab open and poll
+`GET /api/apply/pending?jobId=` until status is back to `prepared` with `infoAnswers`, then
+continue the fill. See CLAUDE.md §3.4 for the timeout rule.
+
+**The authoritative, up-to-date attended-session protocol is CLAUDE.md §3** (count = number of
+fills reported awaiting_confirm, not attempts; `archive:true` for hard ineligibility found on the
+live page; log every single step via `/api/executor/log`; keep filled tabs open; the two
+approve→submit paths, in-run polling and the `resume:true` follow-up run). Where this file and
+CLAUDE.md §3 differ, CLAUDE.md wins.
 
 Read this whole file before starting. If you have not already, load the tool schemas you'll need
 in one batch:
@@ -73,9 +86,12 @@ Only once both checks pass, tell the user you're starting and begin the loop bel
 Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-breaker condition in
 §7 fires:
 
-1. **Take the next task.**
+1. **Take the next task.** The body carries the mode and (in plan mode) the direction; targeted
+   runs carry `jobIds` instead. `mode: "referral"` returns a `ReferralTask` and is handled by
+   §2b, not this loop.
    ```
-   curl -s -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{}'
+   curl -s -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{"direction": "<slug>", "mode": "direct"}'
+   curl -s -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{"jobIds": [123, 124]}'
    ```
    - Response `{ done: true }` → no more matched jobs with a ready resume. Stop the loop, report
      a summary to the user (how many submitted this session, how many parked as needs_manual).
@@ -94,10 +110,15 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
          "eeo": { "gender": "...", "race": "...", "veteran": "...", "disability": "..." },
          "resume": { "version_name": "...", "pdf_path": "/absolute/path/to.pdf" },
          "custom": { "How did you hear about us": "..." },
-         "job": { "company": "...", "title": "...", "apply_url": "..." }
+         "job": { "company": "...", "title": "...", "apply_url": "..." },
+         "referral": { "source": "wechat", "person_name": "...", "link": "https://...", "code": "", "note": "" }
        }
      }
      ```
+   `referral` is present only when the user recorded a referral for this job. When `referral.link`
+   is non-empty, open **it** instead of `applyUrl`; fill any "How did you hear about us / Referred
+   by / Referral name / Referral code" fields from `referral.person_name` / `referral.code` and
+   list them in `filledFields`. Everything else (confirm → approve → submit) is unchanged.
    Keep this task object in context for the rest of the iteration — every field you type must
    trace back to it (see §6, red lines).
 
@@ -120,7 +141,9 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    - Cannot proceed: same endpoint with
      `{ "jobId": task.jobId, "status": "needs_manual", "reason": "..." }` (see §5 triggers — this
      includes "already applied" pages and dead/expired apply links, see §5), close the tab, and
-     continue the loop with the next task.
+     continue the loop with the next task. Add `"archive": true` when the live page proves the job
+     is a hard no (explicit no-sponsorship, citizens/clearance-only, PhD-only): the App archives it
+     and every still-queued duplicate (same company + title) instead of parking it for a human.
    - Something broke unexpectedly (page crashed, a tool errored repeatedly, the App itself returned
      an unexpected error): report `{ "jobId": task.jobId, "status": "error", "reason": "..." }`
      instead, close the tab, and count it toward the error circuit breaker in §7. Don't use
@@ -142,6 +165,36 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
 6. **Throttle, then repeat from step 1.** Wait 5-10 seconds before taking the next task (see §7).
 
 ---
+
+## 2b. Referral mode (plan entries with `mode: "referral"`, or `{jobIds, mode: "referral"}` runs)
+
+The authoritative protocol is **CLAUDE.md §3.10** — read it before the first referral entry. In
+short, per company:
+
+1. `POST /api/apply/next {"direction": "<slug>", "mode": "referral"}` → `ReferralTask`
+   `{company, jobs:[{jobId,title,applyUrl,direction,score}], knownPeople:[…], skipPersonIds:[…]}`.
+   Those jobs are now `referral_seeking`; each one counts toward the entry's `count`.
+2. Find ONE person, in this order, in the user's Chrome (read-only on LinkedIn until the send
+   step): an uncontacted USC alum from `knownPeople` → LinkedIn People search `"<company> USC"`
+   (Education mentions USC / University of Southern California / Trojan) → `"<company> <direction
+   keyword> engineer"` / `"<company> recruiter"`. A person is reachable only if their profile shows
+   a **Connect** or **Message** button. Never contact anyone in `skipPersonIds`. Never guess an
+   email; only use one printed on the profile/company page, and then set `channel: "email"` (the
+   user sends it themself via mailto in the App).
+3. Nobody reachable → `POST /api/apply/report {"jobIds":[…],"status":"referral_no_contact","reason":"…"}`
+   and take the next company.
+4. `POST /api/referral/outreach {"jobIds":[…],"person":{name,company,role_title,linkedin_url,relation},"channel":"linkedin"}`
+   → `{outreachId, draft}`. You never write the message yourself — the App drafts it and the user
+   edits/approves it on /apply.
+5. Poll `GET /api/referral/pending?outreachId=<id>` every 5s (≤30 min, heartbeat log every ≤5
+   min). `pending_send` → send exactly per network-executor SKILL §2.2 c/d (280-char trim rule,
+   verbatim read-back, double-send guard) → `POST /api/network/report {"outreachId":<id>,"event":"sent","text":"<what went out>"}`.
+   `archived` → skip. Timeout → leave it; a later approval auto-enqueues a resume run.
+6. ≥30s between companies; ≤10 connection requests and ≤15 DMs per run; stop on any
+   CAPTCHA/rate-limit/verification signal.
+
+Resume runs (`options.resume`) must also send `GET /api/network/sendables?jobLinked=true` rows with
+`channel: "linkedin"` the same way, after re-submitting approved fills.
 
 ## 3. Tiered fill strategy
 

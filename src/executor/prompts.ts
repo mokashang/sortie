@@ -21,7 +21,7 @@ const APP_BASE = "http://127.0.0.1:3000";
 
 const LOGIN_WALL_REASON = "login required in browser profile — 请在设置里打开浏览器档案登录一次";
 
-const COMMON_PREAMBLE = `你是 JobSeeker OS 执行器的一次性无人值守会话(headless \`claude -p\`)。App(Next.js,${APP_BASE})是"大脑":选任务、建数据、是用户审批的唯一入口。你是"手":用 Bash+curl 和 App 的 API 对话,用 Playwright MCP 直接操作一个专属的、持久化的 Chrome 浏览器档案(登录状态跨次会话保留——用户已经手动登录过 LinkedIn/Workday 等站点)。
+const COMMON_PREAMBLE = `你是 Sortie 执行器的一次性无人值守会话(headless \`claude -p\`)。App(Next.js,${APP_BASE})是"大脑":选任务、建数据、是用户审批的唯一入口。你是"手":用 Bash+curl 和 App 的 API 对话,用 Playwright MCP 直接操作一个专属的、持久化的 Chrome 浏览器档案(登录状态跨次会话保留——用户已经手动登录过 LinkedIn/Workday 等站点)。
 
 You have exactly ONE MCP server: \`playwright\` (mcp__playwright__browser_navigate / browser_snapshot / browser_click / browser_type / browser_select_option / browser_fill_form / browser_file_upload / browser_take_screenshot / browser_wait_for / browser_tabs, plus a few more under the same mcp__playwright__* prefix). There is no sub-agent and no natural-language delegation — you call these tools yourself, directly: \`browser_navigate\` to a URL, \`browser_snapshot\` to read the current accessibility tree (every interactive element comes back tagged with a \`ref\`), then \`browser_click\`/\`browser_type\`/\`browser_select_option\`/\`browser_fill_form\` addressing elements **by \`ref\`**. After any fill, take a fresh \`browser_snapshot\` and read back the field's **actual** current value — never assume a click/type landed the way you intended. \`browser_file_upload\` handles the resume PDF. This browser is a DEDICATED persistent profile, not the user's daily-driver Chrome — if a page you land on is a login/sign-in wall instead of the page you expected, do not attempt to log in yourself (no credentials to type, and guessing is not an option): treat it as a login-wall condition (see each task section below for exactly how to report it) and move on.
 
@@ -30,6 +30,9 @@ You have exactly ONE MCP server: \`playwright\` (mcp__playwright__browser_naviga
 export interface ApplyPlanEntry {
   direction: string;
   count: number;
+  // 'referral' entries are only ever worked by the attended session (CLAUDE.md §3.10); the
+  // headless runner refuses them (src/executor/runner.ts). Default 'direct'.
+  mode?: "referral" | "direct";
 }
 
 // Hard-won from a live walkthrough of a real Greenhouse form — see fix #4 in the task this
@@ -106,11 +109,13 @@ ${plan.map((p) => `- \`${p.direction}\` × **${p.count}**(该方向最多调用 
 
 若某方向对 /api/apply/next 的调用已经返回 \`{"done": true}\`,立即放弃该方向剩余配额、换下一个方向——这不算失败,不计入 §5 的 needs_manual/error 熔断计数。全部方向处理完(或撞到下面的硬性上限/熔断)后跳到 §6 收尾。
 
-本会话总硬性上限 **${capCount}** 份填好待确认的申请(以上各方向配额之和),达到后停止循环并总结,即使某个方向仍有未用完的配额。`
+本会话总硬性上限 **${capCount}** 份填好待确认的申请(以上各方向配额之和),达到后停止循环并总结,即使某个方向仍有未用完的配额。
+
+本无人值守会话只做海投(mode direct);内推模式的条目由值守会话处理,这里不会出现。`
     : `本会话最多投递 **${limit}** 个申请(硬性上限,达到后停止循环并总结,即使 /api/apply/next 还有更多任务)。`;
 
   const takeTaskStep = plan
-    ? `1. **按当前方向取任务**:依次处理上面列出的每个方向。对当前方向(把 \`<direction>\` 换成实际方向 slug,例如第一个方向请求体是 \`{"direction": "swe_backend"}\`):\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{"direction": "<direction>"}'\`
+    ? `1. **按当前方向取任务**:依次处理上面列出的每个方向。对当前方向(把 \`<direction>\` 换成实际方向 slug,例如第一个方向请求体是 \`{"direction": "swe_backend"}\`):\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{"direction": "<direction>", "mode": "direct"}'\`
    - \`{"done": true}\` → 当前方向没有更多待投递岗位了,放弃该方向剩余配额,换下一个方向;如果这已经是最后一个方向,跳到 §6 收尾。
    - 否则拿到 \`ApplyTask\`:\`{jobId, company, title, applyUrl, ats, answerPack}\`。answerPack 里有 contact/education/work_auth/eeo/resume/custom/job 几组字段,把它拍平成一份"字段: 值"列表——只用 answerPack 里实际存在的字段,绝不编造。这个方向的取数次数 +1(上限 3 × 配额,达到即换下一个方向)。只有当这条任务最终回报 awaiting_confirm 时,该方向的完成计数才 +1;完成计数达到配额后换下一个方向。被资格检查拦下 / 登录墙 / already applied / dead link / error 不计入完成计数。`
     : `1. **取任务**:\`curl -s -X POST ${APP_BASE}/api/apply/next -H 'content-type: application/json' -d '{}'\`

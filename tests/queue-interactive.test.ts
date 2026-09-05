@@ -8,6 +8,7 @@ import {
   setPinned,
   pagedQueue,
   queueByDirection,
+  pagedAllJobs,
   UNCLASSIFIED_DIRECTION,
   ApplyTask,
 } from "@/apply/queue";
@@ -349,5 +350,132 @@ describe("QUEUE_ELIGIBLE_SQL", () => {
     expect(result.jobId).toBe(ok);
     const next = takeNextApplication(db, testProfile());
     expect(next).toEqual({ done: true });
+  });
+});
+
+// A job straight from the scanner: no matches row, no applications row — the population the
+// merged /queue page's "全部入库" tab must still show (the old /jobs page listed exactly these).
+function seedRawJob(
+  db: DB,
+  opts: { company?: string; createdAt?: string; visaFlag?: string | null; locFlag?: string | null } = {}
+): number {
+  return db
+    .prepare(
+      "INSERT INTO jobs (fingerprint, company, title, apply_url, source, created_at, visa_flag, loc_flag) VALUES (?,?,?,?,?,?,?,?)"
+    )
+    .run(
+      `fp-${Math.random()}`,
+      opts.company ?? "Raw",
+      "SWE",
+      "https://raw.example/apply",
+      "manual",
+      opts.createdAt ?? "2026-01-01 00:00:00",
+      opts.visaFlag ?? null,
+      opts.locFlag ?? null
+    ).lastInsertRowid as number;
+}
+
+describe("pagedAllJobs", () => {
+  it("lists unscored jobs (no matches/applications) alongside queued ones, flagging queue membership", () => {
+    const db = openDb(":memory:");
+    const raw = seedRawJob(db, { company: "RawCo" });
+    const queued = seedJob(db, { company: "QueuedCo", direction: "swe_general", score: 77 });
+
+    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+
+    expect(result.total).toBe(2);
+    const rawRow = result.rows.find((r) => r.id === raw)!;
+    const queuedRow = result.rows.find((r) => r.id === queued)!;
+    expect(rawRow.score).toBeNull();
+    expect(rawRow.in_queue).toBe(0);
+    expect(queuedRow.score).toBe(77);
+    expect(queuedRow.in_queue).toBe(1);
+  });
+
+  it("hides visa-flagged and non-US jobs, exactly like the old /jobs listing", () => {
+    const db = openDb(":memory:");
+    const visible = seedRawJob(db, { company: "Visible" });
+    seedRawJob(db, { company: "NoSponsor", visaFlag: "no_sponsor" });
+    seedRawJob(db, { company: "Overseas", locFlag: "non_us" });
+    seedJob(db, { company: "QueuedOverseas", locFlag: "non_us" });
+
+    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "fresh" });
+
+    expect(result.total).toBe(1);
+    expect(result.rows[0].id).toBe(visible);
+  });
+
+  it("marks archived and parked applications as not in the queue", () => {
+    const db = openDb(":memory:");
+    const archived = seedJob(db, { company: "Archived", direction: "swe_general" });
+    archiveFromQueue(db, archived);
+
+    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+
+    expect(result.total).toBe(1);
+    expect(result.rows[0].in_queue).toBe(0);
+  });
+
+  it("sort=fresh orders by scan time (created_at) descending", () => {
+    const db = openDb(":memory:");
+    seedRawJob(db, { company: "Old", createdAt: "2026-01-01 00:00:00" });
+    seedRawJob(db, { company: "New", createdAt: "2026-03-01 00:00:00" });
+    seedJob(db, { company: "Mid", createdAt: "2026-02-01 00:00:00" });
+
+    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "fresh" });
+
+    expect(result.rows.map((r) => r.company)).toEqual(["New", "Mid", "Old"]);
+    expect(result.rows[0].created_at).toBe("2026-03-01 00:00:00");
+  });
+
+  it("sort=score puts scored jobs first (highest score first) and unscored jobs last", () => {
+    const db = openDb(":memory:");
+    seedRawJob(db, { company: "Unscored" });
+    seedJob(db, { company: "Low", score: 30 });
+    seedJob(db, { company: "High", score: 90 });
+
+    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+
+    expect(result.rows.map((r) => r.company)).toEqual(["High", "Low", "Unscored"]);
+  });
+
+  it("paginates and clamps like pagedQueue", () => {
+    const db = openDb(":memory:");
+    for (let i = 0; i < 30; i++) seedRawJob(db, { company: `Co${i}` });
+
+    const page2 = pagedAllJobs(db, { page: 2, pageSize: 25, sort: "fresh" });
+    expect(page2.total).toBe(30);
+    expect(page2.pages).toBe(2);
+    expect(page2.rows).toHaveLength(5);
+
+    const clamped = pagedAllJobs(db, { page: 99, pageSize: 25, sort: "fresh" });
+    expect(clamped.rows).toHaveLength(5);
+
+    expect(pagedAllJobs(openDb(":memory:"), { page: 1, pageSize: 25, sort: "fresh" })).toEqual({
+      rows: [],
+      total: 0,
+      pages: 1,
+    });
+  });
+});
+
+describe("pagedQueue mode filter", () => {
+  it("filters by effective mode and exposes mode columns", () => {
+    const db = openDb(":memory:");
+    const a = seedJob(db, { direction: "ai_infra", score: 90 });
+    const b = seedJob(db, { direction: "ai_infra", score: 80 });
+    db.prepare("UPDATE matches SET referral_fit = 1, referral_reason = 'big tech' WHERE job_id = ?").run(a);
+    const all = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    expect(all.total).toBe(2);
+    expect(all.rows[0].effective_mode).toBe("referral");
+    expect(all.rows[0].referral_reason).toBe("big tech");
+    expect(all.rows[1].effective_mode).toBe("direct");
+    const onlyRef = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "referral" });
+    expect(onlyRef.rows.map((r) => r.id)).toEqual([a]);
+    expect(onlyRef.total).toBe(1);
+    const onlyDirect = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "direct" });
+    expect(onlyDirect.rows.map((r) => r.id)).toEqual([b]);
+    const allJobs = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+    expect(allJobs.rows.find((r) => r.id === a)!.effective_mode).toBe("referral");
   });
 });

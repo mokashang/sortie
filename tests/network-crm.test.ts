@@ -7,6 +7,8 @@ import {
   appendThread,
   listOutreach,
   setOutreachStatus,
+  outreachJobIds,
+  outreachForJob,
 } from "@/network/crm";
 
 function db(): DB {
@@ -188,5 +190,31 @@ describe("setOutreachStatus", () => {
   it("throws on an unknown outreach id", () => {
     const d = db();
     expect(() => setOutreachStatus(d, 9999, "sent")).toThrow();
+  });
+});
+
+function seedJob(d: DB, opts: { company?: string; title?: string } = {}): number {
+  return d
+    .prepare("INSERT INTO jobs (fingerprint, company, title, source) VALUES (?,?,?,?)")
+    .run(`fp-${Math.random()}`, opts.company ?? "Acme", opts.title ?? "SWE", "manual").lastInsertRowid as number;
+}
+
+describe("outreach_jobs", () => {
+  it("createOutreach with jobIds links every job and sets job_id to the first", () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const j1 = seedJob(d, { company: "Google", title: "SWE" });
+    const j2 = seedJob(d, { company: "Google", title: "SRE" });
+    const id = createOutreach(d, { personId: pid, playbook: "referral", channel: "linkedin", draft: "hi", jobIds: [j1, j2] });
+    expect(outreachJobIds(d, id)).toEqual([j1, j2]);
+    expect(listOutreach(d, { jobId: j1 })[0].id).toBe(id);
+    expect(listOutreach(d, { jobId: j2 })[0].id).toBe(id);
+    expect(listOutreach(d, { jobId: j2 })[0].jobId).toBe(j1);
+    expect(outreachForJob(d, j2)!.id).toBe(id);
+    expect(outreachForJob(d, seedJob(d))).toBeNull();
+    expect(listOutreach(d, { jobLinked: false })).toEqual([]);
+    expect(listOutreach(d, { jobLinked: true }).map((o) => o.id)).toEqual([id]);
+    const coffee = createOutreach(d, { personId: pid, playbook: "coffee_chat", channel: "linkedin", draft: "yo" });
+    expect(listOutreach(d, { jobLinked: false }).map((o) => o.id)).toEqual([coffee]);
   });
 });

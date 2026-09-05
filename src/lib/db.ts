@@ -19,7 +19,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 10;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -71,8 +71,25 @@ export function openDb(file?: string): DB {
     if (!runCols.includes("channel"))
       db.exec("ALTER TABLE executor_runs ADD COLUMN channel TEXT NOT NULL DEFAULT 'headless'");
     if (!runCols.includes("claimed_at")) db.exec("ALTER TABLE executor_runs ADD COLUMN claimed_at TEXT");
-    // v7 -> v8: jobs gained the dedup/eligibility/jd_status columns (spec 2026-09-03 §3).
-    const jobCols8 = (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name);
+    // v7 -> v8: applications gained pending_questions / info_answers (the in-App "待补信息" flow:
+    // executor asks, App notifies, user answers on /apply, executor continues). New status value
+    // 'needs_info' needs no column change.
+    const appCols8 = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map((c) => c.name);
+    if (!appCols8.includes("pending_questions")) db.exec("ALTER TABLE applications ADD COLUMN pending_questions TEXT");
+    if (!appCols8.includes("info_answers")) db.exec("ALTER TABLE applications ADD COLUMN info_answers TEXT");
+    // v8 -> v9: referral-in-apply. matches gained referral_fit/referral_reason (Claude's
+    // "worth seeking a referral?" classification); applications gained apply_mode (user
+    // override), referral_info (JSON, once a referral is obtained) and referral_reached_at.
+    // outreach_jobs is a new table — CREATE TABLE IF NOT EXISTS above already created it.
+    const matchCols = (db.prepare("PRAGMA table_info(matches)").all() as { name: string }[]).map((c) => c.name);
+    if (!matchCols.includes("referral_fit")) db.exec("ALTER TABLE matches ADD COLUMN referral_fit INTEGER");
+    if (!matchCols.includes("referral_reason")) db.exec("ALTER TABLE matches ADD COLUMN referral_reason TEXT");
+    const appCols9 = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map((c) => c.name);
+    for (const col of ["apply_mode", "referral_info", "referral_reached_at"] as const) {
+      if (!appCols9.includes(col)) db.exec(`ALTER TABLE applications ADD COLUMN ${col} TEXT`);
+    }
+    // v9 -> v10: jobs gained the dedup/eligibility/jd_status columns (spec 2026-09-03 scan-precision-dedup §3).
+    const jobCols10 = (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name);
     for (const [col, type] of [
       ["dedup_key", "TEXT"],
       ["duplicate_of", "INTEGER REFERENCES jobs(id)"],
@@ -83,7 +100,7 @@ export function openDb(file?: string): DB {
       ["elig_source", "TEXT"],
       ["jd_status", "TEXT"],
     ] as const) {
-      if (!jobCols8.includes(col)) db.exec(`ALTER TABLE jobs ADD COLUMN ${col} ${type}`);
+      if (!jobCols10.includes(col)) db.exec(`ALTER TABLE jobs ADD COLUMN ${col} ${type}`);
     }
     // Backfill in JS: norm() lives in TS, not SQL. Only rows never keyed — re-runnable.
     const pending = db.prepare("SELECT id, company, title, jd_text FROM jobs WHERE dedup_key IS NULL").all() as

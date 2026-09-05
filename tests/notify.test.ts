@@ -59,7 +59,7 @@ describe("escapeAppleScript", () => {
 
 describe("encodeNtfyTitle", () => {
   it("passes pure-ASCII titles through unchanged", () => {
-    expect(encodeNtfyTitle("JobSeeker OS")).toBe("JobSeeker OS");
+    expect(encodeNtfyTitle("Sortie")).toBe("Sortie");
   });
 
   it("RFC-2047-encodes titles containing non-ASCII characters", () => {

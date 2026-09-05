@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { approveOutreach, rejectOutreach } from "@/network/gate";
+import { rejectOutreach } from "@/network/gate";
+import { approveOutreachAndMaybeAutoStart } from "@/apply/referral-glue";
 
 // POST {outreachId, decision: 'approve'|'reject'} — user's decision from the draft-approval UI.
 export async function POST(req: Request) {
@@ -8,7 +9,10 @@ export async function POST(req: Request) {
     const body = await req.json();
     const outreachId = Number(body.outreachId);
     if (body.decision === "approve") {
-      approveOutreach(getDb(), outreachId);
+      // A job-linked (referral) approval also enqueues a resume run if no apply run is alive,
+      // so an attended session picks up the send; coffee-chat approvals just sit in sendables.
+      const r = approveOutreachAndMaybeAutoStart(getDb(), outreachId);
+      return NextResponse.json({ ok: true, ...r });
     } else if (body.decision === "reject") {
       rejectOutreach(getDb(), outreachId);
     } else {

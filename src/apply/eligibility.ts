@@ -1,4 +1,8 @@
-import { DB, logEvent } from "@/lib/db";
+// Type-only import on purpose: src/apply/queue.ts is imported by the /queue client component
+// (for ALL_JOBS_DIRECTION), so nothing reachable from it may pull better-sqlite3 into the browser
+// bundle at runtime. The eligibility_fail event is written with a plain prepared INSERT below
+// instead of logEvent() for the same reason.
+import type { DB } from "@/lib/db";
 
 export type Sponsorship = "yes" | "no" | "unknown";
 export type DegreeReq = "ms_ok" | "phd_only";
@@ -83,10 +87,12 @@ export function applyEligibility(
   );
   const failReason = eligibilityFailReason(input);
   if (!failReason) return { written: true, failReason: null, archivedJobIds: [] };
-  logEvent(db, "eligibility_fail", {
-    entity: "job", entityId: input.jobId,
-    payload: { reason: failReason, source: input.source, evidence: input.evidence ?? null },
-  });
+  db.prepare("INSERT INTO events (kind, entity, entity_id, payload) VALUES (?,?,?,?)").run(
+    "eligibility_fail",
+    "job",
+    input.jobId,
+    JSON.stringify({ reason: failReason, source: input.source, evidence: input.evidence ?? null })
+  );
   const archivedJobIds = (opts.archive ?? true) ? archiveCluster(db, input.jobId, failReason, { respectPinned: opts.respectPinned }) : [];
   return { written: true, failReason, archivedJobIds };
 }

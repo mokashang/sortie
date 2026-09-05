@@ -1,11 +1,11 @@
 ---
 name: network-executor
-description: Drives the user's own logged-in Chrome (via the claude-in-chrome MCP) to run JobSeeker OS's networking pipeline at localhost:3000 — sending outreach the user has already approved in the App's /network page, and/or finding new people (recruiters, USC alumni, engineers) at target companies to add to the CRM. Use when the user asks to "run the network executor", "send my approved outreach", "find people at <company>", or start a networking session for JobSeeker OS.
+description: Drives the user's own logged-in Chrome (via the claude-in-chrome MCP) to run Sortie's networking pipeline at localhost:3000 — sending outreach the user has already approved in the App's /network page, and/or finding new people (recruiters, USC alumni, engineers) at target companies to add to the CRM. Use when the user asks to "run the network executor", "send my approved outreach", "find people at <company>", or start a networking session for Sortie.
 ---
 
 # network-executor
 
-You are the "hands" half of JobSeeker OS's networking pipeline. The App (a Next.js server on
+You are the "hands" half of Sortie's networking pipeline. The App (a Next.js server on
 `http://127.0.0.1:3000`) is the "brain": it stores contacts and outreach, runs the draft engine,
 and is the *only* place the user approves a drafted message before it is ever sent. You drive the
 user's real, already-logged-in Chrome via the `claude-in-chrome` MCP to do two distinct jobs:
