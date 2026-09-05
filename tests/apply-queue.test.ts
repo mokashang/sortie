@@ -360,6 +360,33 @@ describe("reportFill", () => {
     expect(row.needs_manual_reason).toBe("error: upload timed out");
   });
 
+  it("needs_manual with failing eligibility archives the job and its cluster instead of parking it", () => {
+    const db = openDb(":memory:");
+    const main = seedJob(db, { fingerprint: "m", title: "SWE" });
+    const sib = seedJob(db, { fingerprint: "s", title: "SWE" });
+    db.prepare("UPDATE jobs SET duplicate_of=? WHERE id=?").run(main, sib);
+    db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(sib);
+    seedResume(db, "ai_infra-v1", ["ai_infra"]); // seedJob 默认 direction ai_infra;没有简历会被停车而不是取到
+    const task = takeNextApplication(db, testProfile()) as ApplyTask;
+    expect(task.jobId).toBe(main);
+    reportFill(db, { jobId: main, status: "needs_manual", reason: "no sponsorship (live page)", eligibility: { sponsorship: "no", evidence: "We cannot sponsor" } });
+    const a = db.prepare("SELECT status, needs_manual_reason FROM applications WHERE job_id=?").get(main) as any;
+    expect(a).toEqual({ status: "archived", needs_manual_reason: null });
+    const j = db.prepare("SELECT sponsorship, elig_source FROM jobs WHERE id=?").get(main) as any;
+    expect(j).toEqual({ sponsorship: "no", elig_source: "executor_live" });
+    expect((db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(sib) as any).skip_reason).toBe("no sponsorship");
+  });
+
+  it("needs_manual with passing eligibility still parks (login wall etc.)", () => {
+    const db = openDb(":memory:");
+    const id = seedJob(db, { fingerprint: "m", title: "SWE" });
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    takeNextApplication(db, testProfile());
+    reportFill(db, { jobId: id, status: "needs_manual", reason: "login wall", eligibility: { sponsorship: "unknown" } });
+    const a = db.prepare("SELECT status, needs_manual_reason FROM applications WHERE job_id=?").get(id) as any;
+    expect(a).toEqual({ status: "matched", needs_manual_reason: "login wall" });
+  });
+
   it("rejects a report from an invalid from-state (e.g. matched)", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "matched" });

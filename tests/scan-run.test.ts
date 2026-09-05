@@ -236,4 +236,21 @@ describe("runScan", () => {
     expect(s.duplicates).toBe(0);
     expect(s.sourceErrors.some((e) => e.source === "insert")).toBe(true);
   });
+
+  it("writes dedup_key and jd_status on insert, and clears jd_status on a richer-JD upgrade", async () => {
+    const db = openDb(":memory:");
+    syncWatchlist(db, [{ name: "Acme", tier: 1, ats: "greenhouse", board_token: "acme", directions: [] }]);
+    const thin = { ...job({ source: "github_list", ats: null, jdText: "" }) };
+    const rich = job({ jdText: "Full posting text" });
+    const mk = (rows: RawJob[]) => ({
+      greenhouse: async () => rows, lever: async () => [] as RawJob[], ashby: async () => [] as RawJob[],
+      githubLists: async () => [] as RawJob[],
+    });
+    await runScan(db, mk([thin]));
+    let row = db.prepare("SELECT dedup_key, jd_status FROM jobs").get() as any;
+    expect(row).toEqual({ dedup_key: "acme|swe new grad", jd_status: "missing" });
+    await runScan(db, mk([rich]));
+    row = db.prepare("SELECT dedup_key, jd_status FROM jobs").get() as any;
+    expect(row).toEqual({ dedup_key: "acme|swe new grad", jd_status: null });
+  });
 });

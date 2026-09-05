@@ -3,7 +3,13 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { DB } from "@/lib/db";
-import { buildApplyPrompt, buildNetworkSendPrompt, buildNetworkFindPrompt, ApplyPlanEntry } from "@/executor/prompts";
+import {
+  buildApplyPrompt,
+  buildNetworkSendPrompt,
+  buildNetworkFindPrompt,
+  buildJdReviewPrompt,
+  ApplyPlanEntry,
+} from "@/executor/prompts";
 
 // The process manager for headless `claude -p` executor sessions launched from the App's UI.
 // See docs on the API routes (src/app/api/executor/*) and README's 投递执行/人脉 sections for the
@@ -11,7 +17,7 @@ import { buildApplyPrompt, buildNetworkSendPrompt, buildNetworkFindPrompt, Apply
 // `claude -p` process wired to prompts.ts's prompt for the requested kind, and the App polls
 // executorStatus() to show progress until the process exits.
 
-export type ExecutorKind = "apply" | "network_send" | "network_find";
+export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review";
 
 // headless: this module spawns a detached `claude -p` process itself (unchanged path).
 // user_chrome: the "值守会话" (attended session) channel — no process is spawned here. A row is
@@ -89,6 +95,8 @@ function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
       return buildNetworkSendPrompt();
     case "network_find":
       return buildNetworkFindPrompt({ companies: options.companies });
+    case "jd_review":
+      return buildJdReviewPrompt({ limit: options.limit });
     default:
       throw new Error(`startExecutor: unknown kind '${kind satisfies never}'`);
   }

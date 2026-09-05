@@ -26,6 +26,8 @@ interface QueueRow {
   reason: string | null;
   posted_at: string | null;
   pinned: number;
+  dup_count?: number;
+  jd_status?: string | null;
   // Referral-in-apply (spec §3): Claude's suggestion, the user's override, and the resolved mode.
   referral_fit?: number | null;
   apply_mode?: string | null;
@@ -51,6 +53,13 @@ interface JobDetail {
   jd_text: string | null;
   match: { direction: string | null; score: number | null; tier: number | null; reason: string | null };
   resume_version: string | null;
+  jd_status: string | null;
+  duplicate_of: number | null;
+  skip_reason: string | null;
+  sibling_locations: string | null;
+  sponsorship: string | null;
+  degree_req: string | null;
+  role_kind: string | null;
 }
 
 type JdState = { status: "loading" } | { status: "ready"; data: JobDetail } | { status: "error"; message: string };
@@ -445,7 +454,13 @@ export function QueueBoard({
                         </span>
                       )}
                     </td>
-                    <td title={loc.full || undefined}>{loc.display}</td>
+                    <td title={loc.full || undefined}>
+                      {loc.display}
+                      {(r.dup_count ?? 0) > 0 && <span className="chip" style={{ marginLeft: 6 }} title="同岗其他 base 已合并">另有 {r.dup_count} 个地点</span>}
+                      {r.jd_status === "missing" && <span className="chip" style={{ marginLeft: 6 }}>无正文</span>}
+                      {r.jd_status === "login_wall" && <span className="chip" style={{ marginLeft: 6 }}>登录墙</span>}
+                      {r.jd_status === "unreachable" && <span className="chip" style={{ marginLeft: 6 }}>打不开</span>}
+                    </td>
                     {isAllTab && (
                       <td className="mono" style={{ whiteSpace: "nowrap" }}>
                         {r.created_at?.slice(0, 16) ?? "—"}
@@ -501,6 +516,13 @@ export function QueueBoard({
                                 {jd.data.resume_version ? ` · 简历版本 ${jd.data.resume_version}` : ""}
                               </p>
                               <p style={{ fontSize: 13, marginBottom: 12 }}>{jd.data.match.reason ?? "(无理由记录)"}</p>
+                              {(jd.data.sibling_locations || jd.data.skip_reason || jd.data.sponsorship) && (
+                                <p className="text-sub" style={{ fontSize: 13, marginBottom: 12 }}>
+                                  {jd.data.sibling_locations ? `其他地点:${jd.data.sibling_locations}` : ""}
+                                  {jd.data.sponsorship ? ` · sponsorship ${jd.data.sponsorship} · degree ${jd.data.degree_req} · role ${jd.data.role_kind}` : ""}
+                                  {jd.data.skip_reason ? ` · 归档原因:${jd.data.skip_reason}` : ""}
+                                </p>
+                              )}
                               <h4>内推建议</h4>
                               <p style={{ fontSize: 13, marginBottom: 12 }}>
                                 {r.effective_mode === "referral" ? "建议先找内推" : r.referral_fit == null ? "尚未判定" : "建议海投"}

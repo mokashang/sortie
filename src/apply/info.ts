@@ -153,7 +153,7 @@ export function answerInfo(
 export function needsInfoNotification(company: string, title: string, questions: InfoQuestion[]): { title: string; body: string } {
   const labels = questions.map((q) => q.label).join(" / ");
   return {
-    title: `JobSeeker · ${company} 需要你补 ${questions.length} 项信息`,
+    title: `Sortie · ${company} 需要你补 ${questions.length} 项信息`,
     body: `${title}:${labels.slice(0, 160)} — 打开 App 投递页「待补信息」填写,执行器会接着投。`,
   };
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { pagedQueue, pagedAllJobs, ALL_JOBS_DIRECTION, QueueSort } from "@/apply/queue";
+import { pagedQueue, pagedAllJobs, ALL_JOBS_DIRECTION, QueueSort, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { isApplyMode } from "@/apply/mode";
 
 const VALID_SORTS: QueueSort[] = ["score", "fresh", "company"];
@@ -42,7 +42,7 @@ export async function GET(req: Request) {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND j.loc_flag IS NULL AND m.score >= ?
+       WHERE a.status = 'matched' AND ${QUEUE_ELIGIBLE_SQL} AND m.score >= ?
        ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
        LIMIT 1000`
     )

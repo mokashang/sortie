@@ -1,5 +1,5 @@
 import { getDb } from "@/lib/db";
-import { queueByDirection, pagedQueue, pagedAllJobs, QueueSort, ALL_JOBS_DIRECTION } from "@/apply/queue";
+import { queueByDirection, pagedQueue, pagedAllJobs, QueueSort, ALL_JOBS_DIRECTION, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { QueueBoard } from "./queue-board";
 import { ScanButton } from "./scan-button";
 
@@ -27,7 +27,7 @@ export default async function QueuePage({
   const scoredTotal = count("SELECT COUNT(*) n FROM matches");
   const matchedTotal = count(
     `SELECT COUNT(*) n FROM applications a JOIN jobs j ON j.id = a.job_id
-     WHERE a.status='matched' AND j.loc_flag IS NULL`
+     WHERE a.status='matched' AND ${QUEUE_ELIGIBLE_SQL}`
   );
 
   // Tab strip: one tab per direction that currently has matched jobs, already ordered exactly

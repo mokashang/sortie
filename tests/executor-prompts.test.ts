@@ -1,18 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { buildApplyPrompt, buildNetworkSendPrompt, buildNetworkFindPrompt } from "@/executor/prompts";
+import { buildApplyPrompt, buildNetworkSendPrompt, buildNetworkFindPrompt, buildJdReviewPrompt } from "@/executor/prompts";
 
 describe("executor prompts", () => {
   describe("buildApplyPrompt", () => {
     it("interpolates the limit (default 5) and repeats it as the hard cap", () => {
       const p = buildApplyPrompt();
       expect(p).toContain("最多投递 **5** 个申请");
-      expect(p).toMatch(/硬上限 5 个申请/);
+      expect(p).toMatch(/硬上限 5 份填好待确认的申请/);
     });
 
     it("honors a custom limit", () => {
       const p = buildApplyPrompt({ limit: 12 });
       expect(p).toContain("最多投递 **12** 个申请");
-      expect(p).toMatch(/硬上限 12 个申请/);
+      expect(p).toMatch(/硬上限 12 份填好待确认的申请/);
       expect(p).not.toContain("最多投递 **5** 个申请");
     });
 
@@ -77,6 +77,32 @@ describe("executor prompts", () => {
       expect(p).toMatch(/"PhD preferred"、"MS or PhD"/);
     });
 
+    it("reports live-page disqualifiers with a structured eligibility object", () => {
+      const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2 }] });
+      expect(p).toContain('"eligibility": {"sponsorship"');
+      expect(p).toMatch(/currently pursuing/);
+    });
+
+    it("requires reason/evidence to be a quote-free plain-ASCII paraphrase, never verbatim page text", () => {
+      const p = buildApplyPrompt();
+      expect(p).toContain("纯 ASCII 改写");
+      expect(p).toMatch(/绝不逐字粘贴页面原句/);
+    });
+
+    it("plan count means filled-and-awaiting-confirm, with a 3x take cap per direction", () => {
+      const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2 }, { direction: "mle", count: 1 }] });
+      expect(p).toContain("填好并回报 awaiting_confirm");
+      expect(p).toContain("最多调用 /api/apply/next **6** 次"); // 3 × 2 for swe_general
+      expect(p).toContain("最多调用 /api/apply/next **3** 次"); // 3 × 1 for mle
+      expect(p).toMatch(/被拦下.*不计数/);
+    });
+
+    it("main-loop take step does not use the old raw-take count semantics", () => {
+      const p = buildApplyPrompt({ plan: [{ direction: "swe_general", count: 2 }] });
+      expect(p).not.toContain("已投递计数 +1");
+      expect(p).toContain("只有当这条任务最终回报 awaiting_confirm");
+    });
+
     describe("with a plan (per-direction quotas)", () => {
       const plan = [
         { direction: "swe_backend", count: 5 },
@@ -97,7 +123,7 @@ describe("executor prompts", () => {
       it("shows the total (sum of quotas) as the session's hard cap", () => {
         const p = buildApplyPrompt({ plan });
         expect(p).toContain("硬性上限 **8**");
-        expect(p).toMatch(/硬上限 8 个申请/);
+        expect(p).toMatch(/硬上限 8 份填好待确认的申请/);
       });
 
       it("shapes the /api/apply/next POST body with a direction field", () => {
@@ -239,6 +265,41 @@ describe("executor prompts", () => {
     it("caps at 5 people per company and 3 companies per session", () => {
       const p = buildNetworkFindPrompt();
       expect(p).toMatch(/每公司最多 5 人,每会话最多 3 个公司/);
+    });
+  });
+
+  describe("buildJdReviewPrompt", () => {
+    it("names the batch/report endpoints, the limit, the four statuses and the no-login/no-fill red lines", () => {
+      const p = buildJdReviewPrompt({ limit: 40 });
+      expect(p).toContain('"http://127.0.0.1:3000/api/jd-review/batch?limit=40"');
+      expect(p).toContain("http://127.0.0.1:3000/api/jd-review/report");
+      expect(p).toContain("http://127.0.0.1:3000/api/executor/finish");
+      // runId must be looked up (GET /api/executor/status) before the batch is fetched, so the
+      // empty-batch path still has a runId to report finish with.
+      expect(p.indexOf("http://127.0.0.1:3000/api/executor/status")).toBeLessThan(
+        p.indexOf('"http://127.0.0.1:3000/api/jd-review/batch?limit=40"')
+      );
+      expect(p).toContain('"status=reviewed"');
+      for (const s of ['"login_wall"', '"unreachable"', '"closed"']) expect(p).toContain(s);
+      expect(p).toContain("mcp__playwright__browser_navigate");
+      expect(p).toContain("mcp__playwright__browser_evaluate");
+      expect(p).toMatch(/不要登录|绝不登录/);
+      expect(p).toMatch(/不填表|绝不填/);
+      expect(p).toContain('"sponsorship=');
+      expect(p).toContain("currently pursuing");
+      // The report call is form-urlencoded, not JSON — the JD text is piped in raw via a heredoc
+      // rather than JSON-escaped, since only Bash(curl:*) is allowed (no jq/python).
+      expect(p).toContain('--data-urlencode "jdText@-"');
+      expect(p).toContain("JDTEXT_END_7f3a");
+    });
+    it("defaults limit to 40", () => {
+      expect(buildJdReviewPrompt()).toContain("batch?limit=40");
+    });
+
+    it("requires evidence/line/summary to be a quote-free plain-ASCII paraphrase, never verbatim page text", () => {
+      const p = buildJdReviewPrompt();
+      expect(p).toContain("纯 ASCII 改写");
+      expect(p).toMatch(/绝不逐字粘贴页面原句/);
     });
   });
 });

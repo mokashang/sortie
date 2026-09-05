@@ -21,7 +21,12 @@ function seedJobs(db: ReturnType<typeof openDb>) {
 }
 
 // Fake backend returns a scripted array keyed on the job ids present in the prompt.
-function scriptedBackend(scoreByTitle: Record<string, { direction: string | null; score: number; skip: boolean }>): LlmBackend {
+function scriptedBackend(
+  scoreByTitle: Record<
+    string,
+    { direction: string | null; score: number; skip: boolean; sponsorship?: string; degree?: string; role?: string }
+  >
+): LlmBackend {
   return {
     name: "fake",
     complete: async (req) => {
@@ -29,7 +34,16 @@ function scriptedBackend(scoreByTitle: Record<string, { direction: string | null
       const titles = [...req.prompt.matchAll(/title: (.+)/g)].map((m) => m[1]);
       const arr = ids.map((id, i) => {
         const s = scoreByTitle[titles[i]] ?? { direction: null, score: 0, skip: true };
-        return { job_id: id, direction: s.direction, score: s.score, skip: s.skip, reason: "test" };
+        return {
+          job_id: id,
+          direction: s.direction,
+          score: s.score,
+          skip: s.skip,
+          reason: "test",
+          ...(s.sponsorship !== undefined ? { sponsorship: s.sponsorship } : {}),
+          ...(s.degree !== undefined ? { degree: s.degree } : {}),
+          ...(s.role !== undefined ? { role: s.role } : {}),
+        };
       });
       return { text: JSON.stringify(arr), backend: "fake" };
     },
@@ -419,5 +433,95 @@ describe("runMatching", () => {
         expect(m.score).toBe(84);
       }
     }
+  });
+
+  it("archives on eligibility failure with the specific skip_reason and writes jobs fields", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    const backend = scriptedBackend({
+      "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false, degree: "phd_only" },
+      Paralegal: { direction: null, score: 60, skip: false, role: "non_tech" },
+    });
+    await runMatching(db, { backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
+    const m = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(ids.backend) as any;
+    expect(m.skip_reason).toBe("PhD only");
+    const j = db.prepare("SELECT degree_req, elig_source FROM jobs WHERE id=?").get(ids.backend) as any;
+    expect(j).toEqual({ degree_req: "phd_only", elig_source: "match_llm" });
+    const p = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(ids.paralegal) as any;
+    expect(p.skip_reason).toBe("non-engineering role");
+    expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.backend) as any).status).toBe("archived");
+  });
+
+  it("skips duplicate rows entirely", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    db.prepare("UPDATE jobs SET duplicate_of=? WHERE id=?").run(ids.backend, ids.paralegal);
+    const backend = scriptedBackend({ "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false } });
+    const s = await runMatching(db, { backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
+    expect(s.scored).toBe(1);
+  });
+
+  it("rescoreMatched re-scores matched rich-JD rows, archives only on eligibility failure, never on low score, never pinned", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    db.prepare("INSERT INTO matches (job_id, direction, score) VALUES (?,?,?)").run(ids.backend, "swe_backend", 80);
+    db.prepare("INSERT INTO matches (job_id, direction, score) VALUES (?,?,?)").run(ids.paralegal, "swe_backend", 80);
+    db.prepare("UPDATE applications SET status='matched' WHERE job_id IN (?,?)").run(ids.backend, ids.paralegal);
+    db.prepare("UPDATE applications SET pinned=1 WHERE job_id=?").run(ids.paralegal);
+    const backend = scriptedBackend({
+      "Backend Engineer New Grad": { direction: "swe_backend", score: 20, skip: true },       // low score → stays matched
+      Paralegal: { direction: null, score: 10, skip: true, role: "non_tech" },                 // fails but pinned → stays
+    });
+    const s = await runMatching(db, { backend, rescoreMatched: true, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
+    expect(s.scored).toBe(2);
+    expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.backend) as any).status).toBe("matched");
+    expect((db.prepare("SELECT score FROM matches WHERE job_id=?").get(ids.backend) as any).score).toBe(20);
+    expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.paralegal) as any).status).toBe("matched");
+    expect((db.prepare("SELECT role_kind FROM jobs WHERE id=?").get(ids.paralegal) as any).role_kind).toBe("non_tech");
+  });
+
+  it("never touches status for a pinned row in normal mode either, even when eligibility fails via rescoreArchived", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    // Give the paralegal an existing match row + archived status + pinned, so rescoreArchived's
+    // "OR a.status = 'archived'" clause is what makes it eligible for this (normal, not
+    // rescoreMatched) scoring pass.
+    db.prepare("INSERT INTO matches (job_id, direction, score) VALUES (?,?,?)").run(ids.paralegal, "swe_backend", 80);
+    db.prepare("UPDATE applications SET status='archived', pinned=1 WHERE job_id=?").run(ids.paralegal);
+    const backend = scriptedBackend({
+      "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false },
+      Paralegal: { direction: null, score: 60, skip: false, role: "non_tech" },
+    });
+    const s = await runMatching(db, {
+      backend,
+      rescoreArchived: true,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+    });
+    expect(s.scored).toBe(2);
+    // Pinned → the matcher must not flip status at all, not even from 'archived' to 'matched'
+    // just because the (failed) eligibility check declined to re-archive it.
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.paralegal) as any;
+    expect(app.status).toBe("archived");
+    const j = db.prepare("SELECT role_kind FROM jobs WHERE id=?").get(ids.paralegal) as any;
+    expect(j.role_kind).toBe("non_tech");
+    const m = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(ids.paralegal) as any;
+    expect(m.skip_reason).toBe("non-engineering role");
+  });
+
+  it("promotes a pinned discovered row (jd_review requeue) back to matched on a passing score — pinned blocks archiving, not promotion", async () => {
+    const db = openDb(":memory:");
+    const ids = seedJobs(db);
+    // Simulate a jd_review requeue: pinned, status reset to 'discovered', match row deleted.
+    db.prepare("UPDATE applications SET status='discovered', pinned=1 WHERE job_id=?").run(ids.backend);
+    const backend = scriptedBackend({
+      "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false },
+    });
+    const s = await runMatching(db, {
+      backend,
+      profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
+    });
+    expect(s.matched).toBe(1);
+    const app = db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.backend) as any;
+    expect(app.status).toBe("matched");
   });
 });

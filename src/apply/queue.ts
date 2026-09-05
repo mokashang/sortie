@@ -3,6 +3,15 @@ import { Profile } from "@/lib/profile";
 import { buildAnswerPack, AnswerPack, AnswerPackReferral } from "@/apply/answers";
 import { EFFECTIVE_MODE_SQL, ApplyMode } from "@/apply/mode";
 import { selectResumeForJob } from "@/apply/resume-select";
+import { applyEligibility, Sponsorship, DegreeReq, RoleKind } from "@/apply/eligibility";
+
+// 队列/取数的统一资格过滤(spec 2026-09-03 §3)。以 `j` 为 jobs 别名。所有"用户会看到 / 执行器会取到"
+// 的查询都必须带上它,否则重复行或被判不合格的岗会从某个入口漏回来。
+export const QUEUE_ELIGIBLE_SQL =
+  "j.loc_flag IS NULL AND j.visa_flag IS NULL AND j.duplicate_of IS NULL" +
+  " AND COALESCE(j.sponsorship,'') <> 'no'" +
+  " AND COALESCE(j.degree_req,'') <> 'phd_only'" +
+  " AND COALESCE(j.role_kind,'') <> 'non_tech'";
 
 // The apply-executor protocol: the App is the "brain" (this file's pure DB logic) and a
 // Claude-in-Chrome session is the "hands" (drives the user's real, logged-in Chrome per
@@ -85,7 +94,7 @@ export function takeNextApplication(
     const where = targeted
       ? `a.status IN ('matched','referral_ready') AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
          AND a.job_id IN (${opts.jobIds!.map(() => "?").join(",")})`
-      : `a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+      : `a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
          AND ${EFFECTIVE_MODE_SQL} = 'direct'${opts.direction ? " AND m.direction = ?" : ""}`;
     const params: unknown[] = targeted ? [...opts.jobIds!] : opts.direction ? [opts.direction] : [];
     const row = db
@@ -181,6 +190,11 @@ export interface ReportFillInput {
   // unvalidated JSON — see coerceFieldValue below for why the runtime doesn't trust the type.
   filledFields?: Record<string, string>;
   reason?: string;
+  // Live-page eligibility read by the executor while it was on the job's actual apply page —
+  // stronger evidence than anything the match/jd_review passes saw (see SOURCE_RANK in
+  // @/apply/eligibility). When this is present and disqualifying, reportFill archives the job
+  // and its duplicate cluster instead of parking it in the needs-manual list.
+  eligibility?: { sponsorship?: Sponsorship; degree?: DegreeReq; role?: RoleKind; evidence?: string };
   // needs_manual only. true = the live page proved the job is a hard no (explicit no-sponsorship,
   // PhD-only, citizens-only, ...): archive it outright instead of parking it for a human, and
   // archive every other still-queued application with the same company+title so a duplicated
@@ -236,6 +250,34 @@ export function reportFill(db: DB, input: ReportFillInput): void {
       "UPDATE applications SET filled_fields = ?, status = 'awaiting_confirm', confirm_decision = NULL WHERE job_id = ?"
     ).run(JSON.stringify(coerced), input.jobId);
     return;
+  }
+
+  // needs_manual carrying a live-page eligibility read: apply it before parking. A disqualifying
+  // read (no sponsorship / phd_only / non_tech) archives this job and its whole duplicate cluster
+  // via applyEligibility -> archiveCluster, which also covers a 'prepared' row (archive's status
+  // IN list includes 'prepared'). respectPinned:false because live-page text is stronger evidence
+  // than a user's earlier pin. When it archives, clear needs_manual_reason/confirm_decision so
+  // the now-archived row doesn't linger on the needs-manual list.
+  if (input.status === "needs_manual" && input.eligibility) {
+    const e = input.eligibility;
+    const out = applyEligibility(
+      db,
+      {
+        jobId: input.jobId,
+        sponsorship: e.sponsorship ?? "unknown",
+        degree: e.degree ?? "ms_ok",
+        role: e.role ?? "eng",
+        source: "executor_live",
+        evidence: e.evidence ?? input.reason,
+      },
+      { respectPinned: false }
+    );
+    if (out.failReason) {
+      db.prepare("UPDATE applications SET needs_manual_reason = NULL, confirm_decision = NULL WHERE job_id = ?").run(
+        input.jobId
+      );
+      return;
+    }
   }
 
   // needs_manual | error: both park the application back at 'matched' with a reason recorded;
@@ -532,7 +574,7 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
        GROUP BY m.direction
        ORDER BY COALESCE(m.tier, 9) ASC, COUNT(*) DESC`
     )
@@ -546,7 +588,7 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
        ORDER BY m.score DESC, j.created_at DESC`
     )
     .all() as TopRawRow[];
@@ -643,6 +685,8 @@ export interface PagedQueueRow {
   reason: string | null;
   posted_at: string | null;
   pinned: number;
+  dup_count: number;
+  jd_status: string | null;
   referral_fit: number | null;      // Claude's suggestion (NULL = not classified yet)
   apply_mode: string | null;        // user override, if any
   effective_mode: "referral" | "direct";
@@ -675,7 +719,7 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
          FROM applications a
          JOIN jobs j ON j.id = a.job_id
          JOIN matches m ON m.job_id = j.id
-         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
            AND ${directionFilter}${modeFilter}`
       )
       .get(...directionParams) as { n: number }
@@ -696,11 +740,13 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
     .prepare(
       `SELECT j.id, j.company, j.title, j.location, j.apply_url, m.direction, m.score, m.tier, m.reason,
               j.posted_at, a.pinned,
+              j.jd_status,
+              (SELECT COUNT(*) FROM jobs d WHERE d.duplicate_of = j.id) AS dup_count,
               m.referral_fit, a.apply_mode, ${EFFECTIVE_MODE_SQL} AS effective_mode, m.referral_reason
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
+       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
          AND ${directionFilter}${modeFilter}
        ORDER BY a.pinned DESC, ${secondarySort}
        LIMIT ? OFFSET ?`

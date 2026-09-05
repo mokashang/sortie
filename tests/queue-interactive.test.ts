@@ -7,6 +7,7 @@ import {
   unarchive,
   setPinned,
   pagedQueue,
+  queueByDirection,
   pagedAllJobs,
   UNCLASSIFIED_DIRECTION,
   ApplyTask,
@@ -308,6 +309,47 @@ describe("pagedQueue", () => {
 
     expect(result.total).toBe(1);
     expect(result.rows[0].id).toBe(noDir);
+  });
+
+  it("pagedQueue rows carry dup_count and jd_status", () => {
+    const db = openDb(":memory:");
+    const main = seedJob(db, { fingerprint: "m", title: "SWE" });
+    const d1 = seedJob(db, { fingerprint: "d1", title: "SWE" });
+    const d2 = seedJob(db, { fingerprint: "d2", title: "SWE" });
+    db.prepare("UPDATE jobs SET duplicate_of=? WHERE id IN (?,?)").run(main, d1, d2);
+    db.prepare("UPDATE jobs SET jd_status='missing' WHERE id=?").run(main);
+    const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0]).toMatchObject({ id: main, dup_count: 2, jd_status: "missing" });
+  });
+});
+
+describe("QUEUE_ELIGIBLE_SQL", () => {
+  it("hides duplicate, no-sponsor, phd-only and non-tech jobs from pagedQueue and takeNextApplication", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const ok = seedJob(db, { fingerprint: "ok", title: "SWE A" });
+    const dup = seedJob(db, { fingerprint: "dup", title: "SWE B" });
+    const nos = seedJob(db, { fingerprint: "nos", title: "SWE C" });
+    const phd = seedJob(db, { fingerprint: "phd", title: "SWE D" });
+    const sales = seedJob(db, { fingerprint: "sales", title: "SWE E" });
+    db.prepare("UPDATE jobs SET duplicate_of=? WHERE id=?").run(ok, dup);
+    db.prepare("UPDATE jobs SET sponsorship='no' WHERE id=?").run(nos);
+    db.prepare("UPDATE jobs SET degree_req='phd_only' WHERE id=?").run(phd);
+    db.prepare("UPDATE jobs SET role_kind='non_tech' WHERE id=?").run(sales);
+    const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    expect(page.rows.map((r) => r.id)).toEqual([ok]);
+    const groups = queueByDirection(db);
+    expect(groups[0].matched).toBe(1);
+
+    // Prove the same QUEUE_ELIGIBLE_SQL filter applies to the actual picker, not just the
+    // read-only queue views: takeNextApplication must surface only the one eligible job, and
+    // report `done: true` once it's been taken — never reach into the duplicate/no-sponsor/
+    // phd-only/non-tech rows the queue view also hides.
+    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    expect(result.jobId).toBe(ok);
+    const next = takeNextApplication(db, testProfile());
+    expect(next).toEqual({ done: true });
   });
 });
 

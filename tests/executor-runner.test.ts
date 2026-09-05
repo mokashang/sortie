@@ -150,6 +150,15 @@ describe("executor/runner", () => {
       const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(result.id) as { status: string };
       expect(row.status).toBe("failed");
     });
+
+    it("starts a headless jd_review run and pipes the jd_review prompt to stdin", () => {
+      const { spawnFn, child } = makeFakeSpawn(process.pid);
+      const r = startExecutor(db, "jd_review", { limit: 40 }, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+      expect(r.pid).toBe(process.pid);
+      expect(child.written).toContain("/api/jd-review/batch?limit=40");
+      const row = db.prepare("SELECT kind, channel FROM executor_runs WHERE id=?").get(r.id) as any;
+      expect(row).toEqual({ kind: "jd_review", channel: "headless" });
+    });
   });
 
   describe("stopExecutor", () => {

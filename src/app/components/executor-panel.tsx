@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApplyQuotaTable } from "@/app/apply/quota-table";
 
-export type ExecutorKind = "apply" | "network_send" | "network_find";
+export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review";
 
 export interface ExecutorKindConfig {
   kind: ExecutorKind;
@@ -12,6 +12,14 @@ export interface ExecutorKindConfig {
   // apply-only: swaps the input+button for the per-direction quota table (quota-table.tsx),
   // which drives its own "开始投递" button and passes { plan } as options instead of { limit }.
   quotaTable?: boolean;
+  // This kind never runs on the user_chrome channel (read-only, no login/typing needed) — always
+  // forced to headless regardless of the panel's channel radio selection.
+  headlessOnly?: boolean;
+  // Overrides the withLimit input's initial value (default 5 otherwise).
+  defaultLimit?: number;
+  // Polled every 3s alongside /api/executor/status; the returned { pending } count is appended
+  // to this kind's start-button label.
+  pendingCountUrl?: string;
 }
 
 interface RunRow {
@@ -126,8 +134,9 @@ function RunLogView({ runId, live }: { runId: number; live: boolean }) {
 export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [limits, setLimits] = useState<Record<string, number>>(
-    Object.fromEntries(kinds.filter((k) => k.withLimit).map((k) => [k.kind, 5]))
+    Object.fromEntries(kinds.filter((k) => k.withLimit).map((k) => [k.kind, k.defaultLimit ?? 5]))
   );
+  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({});
   const [busyKind, setBusyKind] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [profileMsg, setProfileMsg] = useState("");
@@ -177,7 +186,20 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
     } catch {
       // transient network hiccup during polling — keep showing the last known list
     }
-  }, []);
+    for (const k of kinds) {
+      if (!k.pendingCountUrl) continue;
+      try {
+        const r = await fetch(k.pendingCountUrl);
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (typeof j.pending === "number") {
+          setPendingCounts((prev) => ({ ...prev, [k.kind]: j.pending }));
+        }
+      } catch {
+        // pending-count fetch failures are non-fatal — just skip showing a number this tick.
+      }
+    }
+  }, [kinds]);
 
   useEffect(() => {
     refresh();
@@ -196,10 +218,11 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
     setBusyKind(kind);
     setError("");
     try {
+      const useChannel = kinds.find((k) => k.kind === kind)?.headlessOnly ? "headless" : channel;
       const r = await fetch("/api/executor/start", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ kind, options, channel }),
+        body: JSON.stringify({ kind, options, channel: useChannel }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -287,7 +310,7 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
         </div>
       )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-        {kinds.map(({ kind, label, withLimit, quotaTable }) => {
+        {kinds.map(({ kind, label, withLimit, quotaTable, headlessOnly }) => {
           const run = latestByKind[kind];
           const isRunning = run?.status === "running";
           const isQueued = run?.status === "queued";
@@ -331,6 +354,7 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                   )}
                   <button onClick={() => start(kind, withLimit)} disabled={busy}>
                     {label}
+                    {pendingCounts[kind] != null ? `(待补 ${pendingCounts[kind]})` : ""}
                   </button>
                   {busy && run && (
                     <button className="btn-ghost" onClick={() => stop(run.id)} disabled={busyKind === `stop-${run.id}`}>
@@ -338,6 +362,11 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                     </button>
                   )}
                 </div>
+              )}
+              {headlessOnly && (
+                <p className="text-sub" style={{ fontSize: 12 }}>
+                  只读页面,不登录不填表;走专属浏览器档案,无需值守。
+                </p>
               )}
 
               {run && (

@@ -1,6 +1,7 @@
 import { DB, logEvent } from "@/lib/db";
 import { RawJob } from "@/scanner/types";
-import { fingerprint } from "@/scanner/fingerprint";
+import { fingerprint, dedupKey } from "@/scanner/fingerprint";
+import { jdStatusFor } from "@/scanner/jd-status";
 import { visaFlag } from "@/scanner/visa-filter";
 import { locFlag } from "@/scanner/location-filter";
 import { jobKindFromTitle } from "@/scanner/entry-level";
@@ -91,8 +92,8 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
   // there's no meaningful "upgrade" semantics to protect here; always mirroring the freshly
   // computed flag keeps it simple and correct either way.
   const insJob = db.prepare(
-    `INSERT INTO jobs (fingerprint, company, title, location, jd_text, apply_url, source, ats, posted_at, job_kind, visa_flag, loc_flag)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    `INSERT INTO jobs (fingerprint, company, title, location, jd_text, apply_url, source, ats, posted_at, job_kind, visa_flag, loc_flag, dedup_key, jd_status)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(fingerprint) DO UPDATE SET
        jd_text=excluded.jd_text,
        visa_flag=excluded.visa_flag,
@@ -100,6 +101,7 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
        apply_url=excluded.apply_url,
        source=excluded.source,
        ats=excluded.ats,
+       jd_status=excluded.jd_status,
        posted_at=COALESCE(excluded.posted_at, jobs.posted_at)
      WHERE excluded.jd_text<>'' AND (jobs.jd_text='' OR jobs.jd_text LIKE '[listing metadata]%')
        AND excluded.jd_text<>jobs.jd_text`
@@ -119,7 +121,8 @@ export async function runScan(db: DB, sources: ScanSources = LIVE_SOURCES): Prom
       try {
         const info = insJob.run(
           fp, r.company, r.title, r.location, r.jdText, r.applyUrl,
-          r.source, r.ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag, locF
+          r.source, r.ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag, locF,
+          dedupKey(r.company, r.title), jdStatusFor(r.jdText)
         );
         if (!existing) {
           // Brand-new job: create its application row. Never done for upgrades — the job id
