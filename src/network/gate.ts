@@ -32,6 +32,18 @@ export function approveOutreach(db: DB, id: number): void {
   db.prepare("UPDATE outreach SET status = 'pending_send' WHERE id = ?").run(id);
 }
 
+// User pulls an approved-but-not-yet-sent message back to 'draft' so it can be edited and
+// re-approved (e.g. the attended session found the recipient only reachable via a LinkedIn
+// connection note, whose 280-char cap the approved text can't meet). Only from 'pending_send' —
+// once reportSent has run there is nothing to take back.
+export function unapproveOutreach(db: DB, id: number): void {
+  const row = getStatus(db, id);
+  if (row.status !== "pending_send") {
+    throw new Error(`unapproveOutreach: cannot unapprove from status '${row.status}' (must be 'pending_send')`);
+  }
+  db.prepare("UPDATE outreach SET status = 'draft' WHERE id = ?").run(id);
+}
+
 // User rejects a drafted message. Parks it at 'archived' with outcome='rejected' — a dead end,
 // distinct from the send pipeline entirely (unlike apply's reject-and-reoffer, there's no retry
 // path here; the user can always generate a fresh draft for the same person/playbook).

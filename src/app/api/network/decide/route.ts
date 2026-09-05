@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { rejectOutreach } from "@/network/gate";
+import { rejectOutreach, unapproveOutreach } from "@/network/gate";
 import { approveOutreachAndMaybeAutoStart } from "@/apply/referral-glue";
 
 // POST {outreachId, decision: 'approve'|'reject'} — user's decision from the draft-approval UI.
@@ -15,8 +15,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, ...r });
     } else if (body.decision === "reject") {
       rejectOutreach(getDb(), outreachId);
+    } else if (body.decision === "unapprove") {
+      unapproveOutreach(getDb(), outreachId);
     } else {
-      throw new Error(`decide: invalid decision '${body.decision}' (must be 'approve' or 'reject')`);
+      throw new Error(`decide: invalid decision '${body.decision}' (must be 'approve', 'reject' or 'unapprove')`);
     }
     return NextResponse.json({ ok: true });
   } catch (e) {

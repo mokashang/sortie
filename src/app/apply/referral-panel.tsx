@@ -124,6 +124,26 @@ export function ReferralPanel() {
     }
   }
 
+  // pending_send → draft: lets the user shorten/edit an approved message before the session
+  // sends it (a LinkedIn connection note is capped at 280 characters).
+  async function unapproveDraft(o: CardOutreach) {
+    setBusy(`unapprove-${o.id}`);
+    setError("");
+    try {
+      await post("/api/network/decide", { outreachId: o.id, decision: "unapprove" });
+      setDrafts((p) => {
+        const n = { ...p };
+        delete n[o.id];
+        return n;
+      });
+      await refresh();
+    } catch (e) {
+      setError(`退回失败:${e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rejectDraft(o: CardOutreach) {
     setBusy(`reject-${o.id}`);
     setError("");
@@ -225,19 +245,34 @@ export function ReferralPanel() {
                       rows={6}
                       style={{ width: "100%", marginTop: 6, fontFamily: "inherit", fontSize: 14, padding: 8 }}
                     />
-                    <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                    <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
                       <button onClick={() => approveDraft(o)} disabled={busy === `approve-${o.id}`}>
                         批准发送
                       </button>
+                      <span className="text-sub" style={{ fontSize: 12 }}>
+                        {(drafts[o.id] ?? o.draft ?? "").trim().length} 字符 · 好友申请留言上限 280,私信不限
+                      </span>
                       <button className="btn-ghost" onClick={() => rejectDraft(o)} disabled={busy === `reject-${o.id}`}>
                         拒绝草稿
                       </button>
                     </div>
                   </>
                 ) : (
-                  <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, margin: "6px 0", background: "var(--chip-bg)", padding: 8 }}>
-                    {o.draft}
-                  </pre>
+                  <>
+                    <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, margin: "6px 0", background: "var(--chip-bg)", padding: 8 }}>
+                      {o.draft}
+                    </pre>
+                    {o.status === "pending_send" && (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <button className="btn-ghost" onClick={() => unapproveDraft(o)} disabled={busy === `unapprove-${o.id}`}>
+                          退回草稿(改文字)
+                        </button>
+                        <span className="text-sub" style={{ fontSize: 12 }}>
+                          {(o.draft ?? "").trim().length} 字符 · 好友申请留言上限 280
+                        </span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

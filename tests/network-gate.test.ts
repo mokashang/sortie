@@ -9,6 +9,7 @@ import {
   reportReply,
   updateDraft,
   recordOutcome,
+  unapproveOutreach,
 } from "@/network/gate";
 
 function db(): DB {
@@ -281,5 +282,20 @@ describe("sendables jobLinked filter", () => {
     expect(sendables(d).map((s) => s.id).sort()).toEqual([linked, coffee].sort());
     expect(sendables(d, { jobLinked: false }).map((s) => s.id)).toEqual([coffee]);
     expect(sendables(d, { jobLinked: true }).map((s) => s.id)).toEqual([linked]);
+  });
+});
+
+describe("unapproveOutreach", () => {
+  it("moves pending_send back to draft so it can be edited and re-approved; refuses other states", () => {
+    const d = db();
+    const { outreachId } = seedOutreach(d);
+    expect(() => unapproveOutreach(d, outreachId)).toThrow(/pending_send/);
+    approveOutreach(d, outreachId);
+    unapproveOutreach(d, outreachId);
+    updateDraft(d, outreachId, "shorter");
+    approveOutreach(d, outreachId);
+    expect(sendables(d).map((s) => s.draft)).toEqual(["shorter"]);
+    reportSent(d, outreachId);
+    expect(() => unapproveOutreach(d, outreachId)).toThrow(/pending_send/);
   });
 });
