@@ -19,5 +19,12 @@ export async function register() {
     // Referral-conversation monitor: the route itself only acts at 09:xx / 18:xx local.
     fetch(`http://127.0.0.1:${port}/api/referral/tick`, { method: "POST" }).catch((e) => console.error("[referral tick]", e));
   }, 60_000);
-  console.log("[jobseeker] scheduler registered: scan tick every 60s (in-process timer)");
+  // Attended-session dispatcher: spawns a terminal `claude --chrome` for queued user_chrome runs
+  // when no desktop session is heartbeating (see src/executor/attended.ts). Cheap when idle.
+  if (!process.env.ATTENDED_DISPATCH_DISABLED) {
+    setInterval(() => {
+      fetch(`http://127.0.0.1:${port}/api/executor/dispatch`, { method: "POST" }).catch((e) => console.error("[attended dispatch]", e));
+    }, 10_000);
+  }
+  console.log("[jobseeker] scheduler registered: scan tick every 60s, attended dispatch every 10s (in-process timers)");
 }
