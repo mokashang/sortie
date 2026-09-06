@@ -190,12 +190,17 @@ short, per company:
    and take the next company.
 4. One outreach per person: `POST /api/referral/outreach {"jobIds":[…],"person":{name,company,role_title,linkedin_url,relation},"channel":"linkedin"}`
    → `{outreachId, draft, draftNote}`. The App writes BOTH texts — the full DM (`draft`) and a
-   ≤280-char connection note (`draftNote`, auto-trimmed by the App when the model overshoots). You
+   ≤200-char connection note (`draftNote`; free LinkedIn caps notes at 200, Premium at 300;
+   auto-trimmed by the App when the model overshoots). You
    never write or shorten a message yourself; the user edits/approves on /apply (one 全部批准 per
    card).
 5. Poll `GET /api/referral/pending?outreachId=<id>` for each outreach every 5s (≤30 min, heartbeat
    log every ≤5 min). `pending_send` → 1st degree: DM `draft`; 2nd/3rd degree: Connect → Add a
-   note → `draft_note`. Verbatim read-back and double-send guard per network-executor SKILL §2.2
+   note → `draft_note`. Read the dialog first: it shows the real cap (`0/200`) and "N personalized
+   invitations remaining for this month". Cap smaller than the note → `POST /api/referral/shorten
+   {"outreachId":<id>,"max":<cap>}` and use the returned `draftNote` (the App compresses; you
+   never edit text). Zero invitations left → do NOT send a note-less invite; log it and skip that
+   person. Verbatim read-back and double-send guard per network-executor SKILL §2.2
    c/d → `POST /api/network/report {"outreachId":<id>,"event":"sent","text":"<what went out>"}`.
    `archived` → skip. Timeout → leave it; a later approval auto-enqueues a resume run.
 6. ≥30s between people and between companies; ≤10 connection requests and ≤15 DMs per run

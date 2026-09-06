@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { openDb, DB } from "@/lib/db";
 import { parseProfile, Profile } from "@/lib/profile";
 import { upsertPerson, createOutreach, appendThread, listOutreach, outreachJobIds } from "@/network/crm";
-import { buildDraftPrompt, generateDraft, trimToNote } from "@/network/draft";
+import { buildDraftPrompt, generateDraft, trimToNote, shortenNote, NOTE_MAX_CHARS } from "@/network/draft";
 import { LlmBackend, LlmRequest } from "@/llm/types";
 
 const baseYaml = `
@@ -67,7 +67,7 @@ describe("buildDraftPrompt", () => {
     const req = buildDraftPrompt(testProfile(), person, "coffee_chat");
     expect(req.system).toMatch(/never fabricate|don't fabricate|do not fabricate|不编造/i);
     expect(req.system).toMatch(/120/); // ≤120 word guidance
-    expect(req.system).toMatch(/280/); // connection-request character cap guidance
+    expect(req.system).toMatch(/200/); // connection-request character cap guidance
   });
 
   it("fences the Recipient block and thread excerpt as untrusted, instruction-free data", () => {
@@ -222,7 +222,7 @@ describe("connection-note variant", () => {
     const j1 = seedJob(d, { company: "Google", title: "SWE" });
     const { backend, requests } = fakeBackend({ message: "Long full message. With detail.", note: "Hi Jane, fellow Trojan — open to referring me for SWE at Google?" });
     const res = await generateDraft(d, { backend, profile: testProfile(), personId: pid, playbook: "referral", jobIds: [j1], channel: "linkedin" });
-    expect(requests[0].prompt).toMatch(/280/);
+    expect(requests[0].prompt).toMatch(/200/);
     expect(res.draftNote).toBe("Hi Jane, fellow Trojan — open to referring me for SWE at Google?");
     expect(listOutreach(d, { jobId: j1 })[0].draftNote).toBe(res.draftNote);
   });
@@ -232,8 +232,9 @@ describe("connection-note variant", () => {
     const pid = upsertPerson(d, { name: "Jane", company: "Google" });
     const long = "First sentence here. " + "Second sentence that is fairly long and keeps going on. ".repeat(6) + "Ask at the end?";
     const { backend } = fakeBackend({ message: long, note: "x".repeat(300) });
+    expect(NOTE_MAX_CHARS).toBe(200);
     const res = await generateDraft(d, { backend, profile: testProfile(), personId: pid, playbook: "referral", channel: "linkedin" });
-    expect(res.draftNote!.length).toBeLessThanOrEqual(280);
+    expect(res.draftNote!.length).toBeLessThanOrEqual(200);
     expect(res.draftNote!.startsWith("First sentence here.")).toBe(true);
     const { backend: eb } = fakeBackend({ message: "hi", subject: "s" });
     const er = await generateDraft(d, { backend: eb, profile: testProfile(), personId: pid, playbook: "referral", channel: "email" });
@@ -242,7 +243,49 @@ describe("connection-note variant", () => {
 
   it("trimToNote keeps whole sentences and hard-cuts a single overlong sentence", () => {
     expect(trimToNote("A. B. C.", 4)).toBe("A.");
-    expect(trimToNote("x".repeat(300)).length).toBe(280);
+    expect(trimToNote("x".repeat(300)).length).toBe(200);
     expect(trimToNote("Line one\n\nLine two.")).toBe("Line one Line two.");
+  });
+});
+
+describe("shortenNote", () => {
+  function seqBackend(notes: string[]): { backend: LlmBackend; calls: number } {
+    const state = { calls: 0 };
+    const backend: LlmBackend = {
+      name: "seq",
+      complete: async () => {
+        const n = notes[Math.min(state.calls, notes.length - 1)];
+        state.calls++;
+        return { text: JSON.stringify({ note: n }), backend: "seq" };
+      },
+    };
+    return { backend, get calls() { return state.calls; } } as { backend: LlmBackend; calls: number };
+  }
+
+  it("re-compresses an approved (pending_send) note to the live cap without touching status", async () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const id = createOutreach(d, { personId: pid, playbook: "referral", channel: "linkedin", draft: "Hi Jane, fellow Trojan. Long approved text. Would you refer me?", draftNote: "x".repeat(258) });
+    d.prepare("UPDATE outreach SET status = 'pending_send' WHERE id = ?").run(id);
+    const s = seqBackend(["y".repeat(230), "Hi Jane, fellow Trojan. Would you refer me?"]);
+    const r = await shortenNote(d, { backend: s.backend, outreachId: id, max: 200 });
+    expect(r).toEqual({ draftNote: "Hi Jane, fellow Trojan. Would you refer me?", source: "model" });
+    expect(s.calls).toBe(2);
+    const row = d.prepare("SELECT status, draft_note FROM outreach WHERE id = ?").get(id) as { status: string; draft_note: string };
+    expect(row.status).toBe("pending_send");
+    expect(row.draft_note).toBe(r.draftNote);
+  });
+
+  it("falls back to a trim after three overlong attempts; refuses sent rows", async () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const id = createOutreach(d, { personId: pid, playbook: "referral", channel: "linkedin", draft: "First short sentence. " + "Second sentence that is long enough to matter here. ".repeat(5) });
+    const s = seqBackend(["z".repeat(500)]);
+    const r = await shortenNote(d, { backend: s.backend, outreachId: id, max: 100 });
+    expect(r.source).toBe("trim");
+    expect(r.draftNote.length).toBeLessThanOrEqual(100);
+    expect(s.calls).toBe(3);
+    d.prepare("UPDATE outreach SET status = 'sent' WHERE id = ?").run(id);
+    await expect(shortenNote(d, { backend: s.backend, outreachId: id, max: 100 })).rejects.toThrow(/pending_send/);
   });
 });
