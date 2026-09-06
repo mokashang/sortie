@@ -9,6 +9,8 @@ import { fetchAmazon } from "@/scanner/sources/amazon";
 import { fetchSmartRecruiters } from "@/scanner/sources/smartrecruiters";
 import { fetchOracle } from "@/scanner/sources/oracle";
 import { fetchWorkable } from "@/scanner/sources/workable";
+import { fetchIcims } from "@/scanner/sources/icims";
+import { fetchLinkedinGuest } from "@/scanner/sources/linkedin-guest";
 
 export type { FetchCtx, BoardFetcher, FamilyConfig, Registry } from "@/scanner/sources/types";
 
@@ -25,4 +27,6 @@ export const LIVE_REGISTRY: Registry = {
   smartrecruiters: { fetch: fetchSmartRecruiters, concurrency: 4, minGapMs: 200, gated: true },
   oracle: { fetch: fetchOracle, concurrency: 4, minGapMs: 200, gated: true },
   workable: { fetch: fetchWorkable, concurrency: 4, minGapMs: 200, gated: true },
+  icims: { fetch: fetchIcims, concurrency: 2, minGapMs: 500, gated: true },
+  linkedin: { fetch: fetchLinkedinGuest, concurrency: 1, minGapMs: 3000, gated: true },
 };
