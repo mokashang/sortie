@@ -1,0 +1,445 @@
+{
+  "items" : [ {
+    "SearchId" : 1,
+    "Keyword" : "engineer",
+    "CorrectedKeyword" : null,
+    "UseExactKeywordFlag" : false,
+    "SuggestedKeyword" : null,
+    "ExecuteSpellCheckFlag" : true,
+    "Location" : null,
+    "LocationId" : null,
+    "Radius" : 0,
+    "RadiusUnit" : "MI",
+    "SelectedTitlesFacet" : null,
+    "SelectedCategoriesFacet" : null,
+    "SelectedPostingDatesFacet" : null,
+    "SelectedLocationsFacet" : null,
+    "LastSelectedFacet" : null,
+    "Facets" : "TITLES;LOCATIONS;LOCATION_LEVEL1;LOCATION_LEVEL2;LOCATION_LEVEL3;CATEGORIES;POSTING_DATES;WORK_LOCATIONS;FLEX_FIELDS;ORGANIZATIONS;WORKPLACE_TYPES",
+    "Offset" : 0,
+    "Limit" : 3,
+    "SortBy" : "POSTING_DATES_DESC",
+    "TotalJobsCount" : 226,
+    "Latitude" : null,
+    "Longitude" : null,
+    "SiteNumber" : "CX_1",
+    "JobFamilyId" : null,
+    "PostingStartDate" : null,
+    "PostingEndDate" : null,
+    "SelectedWorkLocationsFacet" : null,
+    "RequisitionId" : null,
+    "CandidateNumber" : null,
+    "WorkLocationZipCode" : null,
+    "WorkLocationCountryCode" : null,
+    "SelectedFlexFieldsFacets" : null,
+    "OrganizationId" : null,
+    "SelectedOrganizationsFacet" : null,
+    "UserTargetFacetName" : null,
+    "UserTargetFacetInputTerm" : null,
+    "HotJobFlag" : null,
+    "WorkplaceType" : null,
+    "SelectedWorkplaceTypesFacet" : null,
+    "BotQRShortCode" : null,
+    "requisitionList" : [ {
+      "Id" : "26012889",
+      "Title" : "Director-Infra Engineering",
+      "PostedDate" : "2026-09-04",
+      "PostingEndDate" : null,
+      "Language" : "US",
+      "PrimaryLocationCountry" : "US",
+      "GeographyId" : 300000007667464,
+      "HotJobFlag" : false,
+      "WorkplaceTypeCode" : "ORA_HYBRID",
+      "JobFamily" : null,
+      "JobFunction" : null,
+      "WorkerType" : null,
+      "ContractType" : null,
+      "ManagerLevel" : null,
+      "JobSchedule" : null,
+      "JobShift" : null,
+      "JobType" : null,
+      "StudyLevel" : null,
+      "DomesticTravelRequired" : null,
+      "InternationalTravelRequired" : null,
+      "WorkDurationYears" : null,
+      "WorkDurationMonths" : null,
+      "WorkHours" : null,
+      "WorkDays" : null,
+      "LegalEmployer" : null,
+      "BusinessUnit" : null,
+      "Department" : null,
+      "Organization" : null,
+      "BusinessUnitId" : 300000079628496,
+      "LegalEmployerId" : 300000079647088,
+      "OrganizationId" : 300000079628496,
+      "MediaThumbURL" : null,
+      "ShortDescriptionStr" : "",
+      "PrimaryLocation" : "Phoenix, AZ, United States",
+      "Distance" : 1.78848E+12,
+      "TrendingFlag" : false,
+      "BeFirstToApplyFlag" : false,
+      "Relevancy" : 43.59703826904297,
+      "WorkplaceType" : "Hybrid",
+      "ExternalQualificationsStr" : null,
+      "ExternalResponsibilitiesStr" : null,
+      "secondaryLocations" : [ {
+        "RequisitionLocationId" : 300001827548554,
+        "GeographyNodeId" : 100018238071888,
+        "GeographyId" : 300000007686239,
+        "Name" : "New York, NY, United States",
+        "CountryCode" : "US",
+        "Latitude" : 40.85946,
+        "Longitude" : -73.90212
+      } ]
+    }, {
+      "Id" : "26012702",
+      "Title" : "Senior AI Engineer I - Global Dining",
+      "PostedDate" : "2026-09-04",
+      "PostingEndDate" : null,
+      "Language" : "US",
+      "PrimaryLocationCountry" : "US",
+      "GeographyId" : 300000007686239,
+      "HotJobFlag" : false,
+      "WorkplaceTypeCode" : "ORA_HYBRID",
+      "JobFamily" : null,
+      "JobFunction" : null,
+      "WorkerType" : null,
+      "ContractType" : null,
+      "ManagerLevel" : null,
+      "JobSchedule" : null,
+      "JobShift" : null,
+      "JobType" : null,
+      "StudyLevel" : null,
+      "DomesticTravelRequired" : null,
+      "InternationalTravelRequired" : null,
+      "WorkDurationYears" : null,
+      "WorkDurationMonths" : null,
+      "WorkHours" : null,
+      "WorkDays" : null,
+      "LegalEmployer" : null,
+      "BusinessUnit" : null,
+      "Department" : null,
+      "Organization" : null,
+      "BusinessUnitId" : 300000079628496,
+      "LegalEmployerId" : 300000007506860,
+      "OrganizationId" : 300000079628496,
+      "MediaThumbURL" : null,
+      "ShortDescriptionStr" : "",
+      "PrimaryLocation" : "New York, NY, United States",
+      "Distance" : 1.78848E+12,
+      "TrendingFlag" : true,
+      "BeFirstToApplyFlag" : false,
+      "Relevancy" : 39.48161315917969,
+      "WorkplaceType" : "Hybrid",
+      "ExternalQualificationsStr" : null,
+      "ExternalResponsibilitiesStr" : null,
+      "secondaryLocations" : [ {
+        "RequisitionLocationId" : 300001798330037,
+        "GeographyNodeId" : 100018238072041,
+        "GeographyId" : 300000007672690,
+        "Name" : "Chicago, IL, United States",
+        "CountryCode" : "US",
+        "Latitude" : 41.88425,
+        "Longitude" : -87.63245
+      } ]
+    }, {
+      "Id" : "26012219",
+      "Title" : "Senior Software Engineer I",
+      "PostedDate" : "2026-09-04",
+      "PostingEndDate" : null,
+      "Language" : "US",
+      "PrimaryLocationCountry" : "IN",
+      "GeographyId" : 300000032710650,
+      "HotJobFlag" : false,
+      "WorkplaceTypeCode" : "ORA_HYBRID",
+      "JobFamily" : null,
+      "JobFunction" : null,
+      "WorkerType" : null,
+      "ContractType" : null,
+      "ManagerLevel" : null,
+      "JobSchedule" : null,
+      "JobShift" : null,
+      "JobType" : null,
+      "StudyLevel" : null,
+      "DomesticTravelRequired" : null,
+      "InternationalTravelRequired" : null,
+      "WorkDurationYears" : null,
+      "WorkDurationMonths" : null,
+      "WorkHours" : null,
+      "WorkDays" : null,
+      "LegalEmployer" : null,
+      "BusinessUnit" : null,
+      "Department" : null,
+      "Organization" : null,
+      "BusinessUnitId" : 300000079628496,
+      "LegalEmployerId" : 300000007507893,
+      "OrganizationId" : 300000079628496,
+      "MediaThumbURL" : null,
+      "ShortDescriptionStr" : "",
+      "PrimaryLocation" : "Gurugram, HR, India",
+      "Distance" : 1.78848E+12,
+      "TrendingFlag" : true,
+      "BeFirstToApplyFlag" : false,
+      "Relevancy" : 38.907997131347656,
+      "WorkplaceType" : "Hybrid",
+      "ExternalQualificationsStr" : null,
+      "ExternalResponsibilitiesStr" : null,
+      "secondaryLocations" : [ ]
+    } ],
+    "categoriesFacet" : [ {
+      "Id" : 300000081299474,
+      "Name" : "Technology",
+      "TotalCount" : 149
+    }, {
+      "Id" : 300000380178024,
+      "Name" : "Product",
+      "TotalCount" : 25
+    }, {
+      "Id" : 300000081299486,
+      "Name" : "Risk",
+      "TotalCount" : 13
+    }, {
+      "Id" : 300000573321731,
+      "Name" : "Data Mgmt and Analytics",
+      "TotalCount" : 11
+    }, {
+      "Id" : 300000081299414,
+      "Name" : "Administration/Management Info",
+      "TotalCount" : 9
+    }, {
+      "Id" : 300000081299411,
+      "Name" : "Finance",
+      "TotalCount" : 7
+    }, {
+      "Id" : 300000081296038,
+      "Name" : "Marketing",
+      "TotalCount" : 5
+    }, {
+      "Id" : 300000081299420,
+      "Name" : "Internal Audit",
+      "TotalCount" : 1
+    }, {
+      "Id" : 300000081299465,
+      "Name" : "Sales/Relationship Management",
+      "TotalCount" : 1
+    }, {
+      "Id" : 300000081299492,
+      "Name" : "Real Estate",
+      "TotalCount" : 1
+    } ],
+    "locationsFacet" : [ {
+      "Id" : 300000000229164,
+      "Name" : "United States",
+      "TotalCount" : 180
+    }, {
+      "Id" : 300000007649033,
+      "Name" : "NY, United States",
+      "TotalCount" : 90
+    }, {
+      "Id" : 300000007686239,
+      "Name" : "New York, NY, United States",
+      "TotalCount" : 90
+    }, {
+      "Id" : 300000007649003,
+      "Name" : "AZ, United States",
+      "TotalCount" : 72
+    }, {
+      "Id" : 300000007667464,
+      "Name" : "Phoenix, AZ, United States",
+      "TotalCount" : 72
+    }, {
+      "Id" : 300000007649010,
+      "Name" : "FL, United States",
+      "TotalCount" : 34
+    }, {
+      "Id" : 300000007670739,
+      "Name" : "Sunrise, FL, United States",
+      "TotalCount" : 34
+    }, {
+      "Id" : 300000000228786,
+      "Name" : "India",
+      "TotalCount" : 26
+    }, {
+      "Id" : 300000032698669,
+      "Name" : "KA, India",
+      "TotalCount" : 15
+    }, {
+      "Id" : 300000032718926,
+      "Name" : "Bengaluru, KA, India",
+      "TotalCount" : 15
+    } ],
+    "postingDatesFacet" : [ {
+      "Id" : 7,
+      "Name" : "Less than 7 days",
+      "TotalCount" : 145
+    }, {
+      "Id" : 30,
+      "Name" : "Less than 30 days",
+      "TotalCount" : 197
+    }, {
+      "Id" : 31,
+      "Name" : "Greater than 30 days",
+      "TotalCount" : 29
+    } ],
+    "titlesFacet" : [ {
+      "Id" : "ENA",
+      "Name" : "Engineering & Architecture",
+      "TotalCount" : 94
+    }, {
+      "Id" : "PRD",
+      "Name" : "Product",
+      "TotalCount" : 27
+    }, {
+      "Id" : "CYS",
+      "Name" : "Cybersecurity",
+      "TotalCount" : 22
+    }, {
+      "Id" : "DMA",
+      "Name" : "Data Mgmt and Analytics",
+      "TotalCount" : 14
+    }, {
+      "Id" : "UNC",
+      "Name" : "Unclass",
+      "TotalCount" : 12
+    }, {
+      "Id" : "RSK",
+      "Name" : "Risk Management",
+      "TotalCount" : 8
+    }, {
+      "Id" : "DSA",
+      "Name" : "Data Science",
+      "TotalCount" : 6
+    }, {
+      "Id" : "TOS",
+      "Name" : "Technology Operations",
+      "TotalCount" : 5
+    }, {
+      "Id" : "MKT",
+      "Name" : "Marketing",
+      "TotalCount" : 4
+    }, {
+      "Id" : "PRO",
+      "Name" : "Product Development",
+      "TotalCount" : 4
+    } ],
+    "workLocationsFacet" : [ {
+      "Id" : 300000080896907,
+      "Name" : "New York-Amex Tower WFC-35 Hr",
+      "TotalCount" : 86
+    }, {
+      "Id" : 300000080574221,
+      "Name" : "AEDR Desert Ridge OB4 - Canyon",
+      "TotalCount" : 44
+    }, {
+      "Id" : 300000080897003,
+      "Name" : "AEDR Desert Ridge OB1-Camelback",
+      "TotalCount" : 28
+    }, {
+      "Id" : 300000080892692,
+      "Name" : "Sunrise Campus",
+      "TotalCount" : 26
+    }, {
+      "Id" : 300000321170153,
+      "Name" : "Rome North, Bagmane Capital",
+      "TotalCount" : 15
+    }, {
+      "Id" : 300000860231556,
+      "Name" : "Charlotte Hybrid-600 Tryon",
+      "TotalCount" : 9
+    }, {
+      "Id" : 300000080557217,
+      "Name" : "Amex India Campus, 74 A",
+      "TotalCount" : 8
+    }, {
+      "Id" : 300000080902913,
+      "Name" : "Palo Alto -Waverley",
+      "TotalCount" : 8
+    }, {
+      "Id" : 300000080896901,
+      "Name" : "AEDR Desert Ridge OB2-McDowell",
+      "TotalCount" : 7
+    }, {
+      "Id" : 300000080903013,
+      "Name" : "Cyber City-Bldg 5",
+      "TotalCount" : 5
+    } ],
+    "flexFieldsFacet" : [ {
+      "Name" : "AttributeChar6",
+      "Label" : "Career Area"
+    } ],
+    "organizationsFacet" : [ {
+      "Id" : 300000079628496,
+      "Name" : "A0004 - Enterprise Tech Services",
+      "TotalCount" : 153
+    }, {
+      "Id" : 300000079629936,
+      "Name" : "A0022 - Global Commercial Services",
+      "TotalCount" : 9
+    }, {
+      "Id" : 300000079630096,
+      "Name" : "A0024 - US Consumer Services",
+      "TotalCount" : 9
+    }, {
+      "Id" : 300000079629456,
+      "Name" : "A0016 - Global Risk & Compliance",
+      "TotalCount" : 7
+    }, {
+      "Id" : 300000079628576,
+      "Name" : "A0005 - Global Servicing",
+      "TotalCount" : 5
+    }, {
+      "Id" : 300000079628816,
+      "Name" : "A0008 - Finance",
+      "TotalCount" : 5
+    }, {
+      "Id" : 300000079629536,
+      "Name" : "A0017 - Global Merchant & Network Svcs",
+      "TotalCount" : 5
+    }, {
+      "Id" : 300000079629856,
+      "Name" : "A0021 - Credit and Fraud Risk",
+      "TotalCount" : 5
+    }, {
+      "Id" : 300000435064243,
+      "Name" : "A757027 - US Consumer & Digital Tech",
+      "TotalCount" : 5
+    }, {
+      "Id" : 300000079630976,
+      "Name" : "A0035 - Amex Digital Labs",
+      "TotalCount" : 4
+    } ],
+    "workplaceTypesFacet" : [ {
+      "Id" : "ORA_HYBRID",
+      "Name" : "Hybrid",
+      "TotalCount" : 215
+    }, {
+      "Id" : "ORA_ON_SITE",
+      "Name" : "On-site",
+      "TotalCount" : 9
+    }, {
+      "Id" : "ORA_REMOTE",
+      "Name" : "Remote",
+      "TotalCount" : 2
+    } ]
+  } ],
+  "count" : 1,
+  "hasMore" : false,
+  "limit" : 200,
+  "offset" : 0,
+  "links" : [ {
+    "rel" : "self",
+    "href" : "https://egug.fa.us2.oraclecloud.com:443/hcmRestApi/resources/11.13.18.05/recruitingCEJobRequisitions",
+    "name" : "recruitingCEJobRequisitions",
+    "kind" : "collection"
+  }, {
+    "rel" : "action",
+    "href" : "https://egug.fa.us2.oraclecloud.com:443/hcmRestApi/resources/11.13.18.05/recruitingCEJobRequisitions/action/getRequisitionsLocationCoordinates",
+    "name" : "getRequisitionsLocationCoordinates",
+    "kind" : "other"
+  }, {
+    "rel" : "action",
+    "href" : "https://egug.fa.us2.oraclecloud.com:443/hcmRestApi/resources/11.13.18.05/recruitingCEJobRequisitions/action/getRequisitionDetailsForMap",
+    "name" : "getRequisitionDetailsForMap",
+    "kind" : "other"
+  } ]
+}

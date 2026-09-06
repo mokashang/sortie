@@ -1,0 +1,51 @@
+[
+ {
+  "date_updated": 1743415809,
+  "url": "https://careers.qualcomm.com/careers/job/446704474013",
+  "company_name": "Qualcomm",
+  "title": "Embedded DSP Software Engineer",
+  "locations": [
+   "San Diego, CA"
+  ],
+  "sponsorship": "Other",
+  "active": true,
+  "source": "cvrve-bot",
+  "id": "5dac35b2-b148-49f8-b3f5-828ba68da99c",
+  "date_posted": 1743415809,
+  "company_url": "",
+  "is_visible": true
+ },
+ {
+  "date_updated": 1748649274,
+  "url": "https://redhat.wd5.myworkdayjobs.com/jobs/job/Raleigh/Software-Quality-Engineer_R-043779",
+  "company_name": "Red Hat",
+  "title": "Software Quality Engineer",
+  "locations": [
+   "Raleigh, NC"
+  ],
+  "sponsorship": "Offers Sponsorship",
+  "active": false,
+  "source": "cvrve-bot",
+  "id": "9bd7188b-7f56-4003-8263-af808ccbfe0d",
+  "date_posted": 1743415983,
+  "company_url": "",
+  "is_visible": true
+ },
+ {
+  "date_updated": 1755437821,
+  "url": "https://explore.jobs.netflix.net/careers/job/790301953900",
+  "company_name": "Netflix",
+  "title": "Software Engineer, Cloud Security",
+  "locations": [
+   "Remote",
+   "US"
+  ],
+  "sponsorship": "Other",
+  "active": false,
+  "source": "cvrve-bot",
+  "id": "09c8ec92-f735-42fd-b7bc-2fba1c889d1b",
+  "date_posted": 1743416023,
+  "company_url": "",
+  "is_visible": true
+ }
+]

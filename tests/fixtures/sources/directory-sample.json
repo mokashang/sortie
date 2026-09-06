@@ -1,0 +1,97 @@
+[
+ {
+  "name": "2020 Companies",
+  "slug": "2020companies",
+  "ats": "workday",
+  "wd": "wd1",
+  "site": "external_careers"
+ },
+ {
+  "name": "23andMe",
+  "slug": "23andme",
+  "ats": "workday",
+  "wd": "wd5",
+  "site": "23"
+ },
+ {
+  "name": "3M",
+  "slug": "3m",
+  "ats": "workday",
+  "wd": "wd1",
+  "site": "Search"
+ },
+ {
+  "name": "1-800 Contacts",
+  "slug": "1800contacts",
+  "ats": "greenhouse"
+ },
+ {
+  "name": "10a Labs",
+  "slug": "10alabs",
+  "ats": "greenhouse"
+ },
+ {
+  "name": "10Beauty",
+  "slug": "10beauty",
+  "ats": "greenhouse"
+ },
+ {
+  "name": "15Five",
+  "slug": "15five",
+  "ats": "lever"
+ },
+ {
+  "name": "2nd Order Solutions",
+  "slug": "2os",
+  "ats": "lever"
+ },
+ {
+  "name": "1Password",
+  "slug": "1password",
+  "ats": "ashby"
+ },
+ {
+  "name": "1X",
+  "slug": "1x",
+  "ats": "ashby"
+ },
+ {
+  "name": "360 IT Professionals",
+  "slug": "360ITProfessionals1",
+  "ats": "smartrecruiters"
+ },
+ {
+  "name": "3S Business Corporation",
+  "slug": "3SBusinessCorporationInc1",
+  "ats": "smartrecruiters"
+ },
+ {
+  "name": "Acosta Group",
+  "slug": "eczy.fa.us2.oraclecloud.com",
+  "ats": "oracle",
+  "host": "eczy.fa.us2.oraclecloud.com",
+  "site": "CX_1"
+ },
+ {
+  "name": "ADI Global Distribution",
+  "slug": "ehtl.fa.us6.oraclecloud.com",
+  "ats": "oracle",
+  "host": "ehtl.fa.us6.oraclecloud.com",
+  "site": "CX_2"
+ },
+ {
+  "name": "Advantmed",
+  "slug": "advantmed",
+  "ats": "workable"
+ },
+ {
+  "name": "Aerones",
+  "slug": "aerones",
+  "ats": "workable"
+ },
+ {
+  "name": "Aalyria",
+  "slug": "aalyria-careers",
+  "ats": "rippling"
+ }
+]
