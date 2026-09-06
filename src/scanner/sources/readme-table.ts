@@ -27,13 +27,14 @@ export function parseReadmeTable(md: string, opts: { kind: "newgrad" | "intern";
     let company = strip(cells[ci]);
     if (company === "↳" || company === "") company = lastCompany; else lastCompany = company;
     const title = strip(cells[ti]);
-    const url = (ki >= 0 ? links(cells[ki]) : links(line)).find((u) => !/simplify\.jobs\/p\/|images\/apply|jobright\.ai\/jobs\/info/.test(u));
+    const applyCell = ki >= 0 ? cells[ki] : undefined;
+    const url = (applyCell != null ? links(applyCell) : links(line)).find((u) => !/simplify\.jobs\/p\/|images\/apply|jobright\.ai\/jobs\/info/.test(u));
     if (!company || !title || !url) continue;
     out.push({
       company, title,
-      location: li >= 0 ? strip(cells[li].replace(/<\/?br\s*\/?>/gi, "; ")) || null : null,
+      location: li >= 0 && cells[li] != null ? strip(cells[li].replace(/<\/?br\s*\/?>/gi, "; ")) || null : null,
       jdText: "", applyUrl: url, source: "github_list", ats: null,
-      postedAt: ai >= 0 ? parseAge(strip(cells[ai]), opts.now) : null,
+      postedAt: ai >= 0 && cells[ai] != null ? parseAge(strip(cells[ai]), opts.now) : null,
       jobKind: opts.kind,
     });
   }

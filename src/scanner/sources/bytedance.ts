@@ -5,9 +5,9 @@ import { htmlToText } from "@/scanner/html";
 import { isEntryLevelTitle } from "@/scanner/entry-level";
 
 // 字节 / TikTok 共用一个搜索接口,靠 website-path 头 + portal_type 切门户。列表自带正文与要求。
-const PORTALS: Record<string, { path: string; portal: number; company: string; url: (id: string) => string }> = {
-  tiktok: { path: "tiktok", portal: 4, company: "TikTok", url: (id) => `https://lifeattiktok.com/search/${id}` },
-  bytedance: { path: "bytedance", portal: 6, company: "ByteDance", url: (id) => `https://jobs.bytedance.com/en/position/${id}/detail` },
+const PORTALS: Record<string, { path: string; portal: number; company: string; origin: string; url: (id: string) => string }> = {
+  tiktok: { path: "tiktok", portal: 4, company: "TikTok", origin: "https://lifeattiktok.com", url: (id) => `https://lifeattiktok.com/search/${id}` },
+  bytedance: { path: "bytedance", portal: 6, company: "ByteDance", origin: "https://jobs.bytedance.com", url: (id) => `https://jobs.bytedance.com/en/position/${id}/detail` },
 };
 const KEYWORDS = ["graduate", "intern", "new grad", "campus"];
 const PAGE = 50, MAX_OFFSET = 400;
@@ -23,7 +23,7 @@ export async function fetchBytedance(board: BoardRow, ctx: FetchCtx): Promise<Ra
     for (let offset = 0; offset < MAX_OFFSET; offset += PAGE) {
       const res = await ctx.fetcher("https://jobs.bytedance.com/api/v1/search/job/posts", {
         method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json", "website-path": portal.path },
+        headers: { "content-type": "application/json", accept: "application/json", "website-path": portal.path, origin: portal.origin, referer: portal.origin + "/" },
         body: JSON.stringify({ keyword, limit: PAGE, offset, job_category_id_list: [], tag_id_list: [], location_code_list: [], subject_id_list: [], recruitment_id_list: [], portal_type: portal.portal, job_function_id_list: [], storefront_id_list: [], portal_entrance: 1 }),
         signal: AbortSignal.timeout(20_000),
       });

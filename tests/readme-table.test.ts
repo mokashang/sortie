@@ -13,6 +13,11 @@ describe("readme table parser", () => {
     const r2 = parseReadmeTable("| Company | Role | Location | Posted | Visa | **Apply** |\n|---|---|---|---|---|---|\n| **Acme** | SWE | NYC | 1h | ✅ | [x](https://a.example/1) |\n" + arrow, { kind: "intern", now: NOW });
     expect(r2[1].company).toBe("Acme"); expect(r2[1].jobKind).toBe("intern"); expect(r2[1].applyUrl).toBe("https://jobs.lever.co/x/1");
   });
+  it("tolerates rows with fewer cells than the header (no crash, row skipped)", () => {
+    const md = "| Company | Role | Location | Posted | Visa | **Apply** |\n|---|---|---|---|---|---|\n| **Acme** | SWE |\n| **Beta** | SWE II | NYC | 1h | ✅ | [x](https://b.example/2) |";
+    const rows = parseReadmeTable(md, { kind: "newgrad", now: NOW });
+    expect(rows.map((r) => r.company)).toEqual(["Beta"]);
+  });
   it("converts relative ages", () => {
     expect(parseAge("12m", NOW)).toBe("2026-09-06T11:48:00.000Z");
     expect(parseAge("2d", NOW)).toBe("2026-09-04T12:00:00.000Z");

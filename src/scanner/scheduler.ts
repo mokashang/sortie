@@ -22,13 +22,24 @@ export interface TickSummary {
   errors: { key: string; error: string }[]; durationMs: number;
 }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Node 自带 fetch 的 UA 是 "node",字节等站点对非浏览器 UA 直接 405;统一给所有适配器一个浏览器 UA
+// (jd-fetch.ts 同款),适配器自己设了的头不覆盖。
+export const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+export const browserFetch: Fetcher = (url, init) => {
+  const headers = new Headers(init?.headers ?? {});
+  if (!headers.has("user-agent")) headers.set("user-agent", BROWSER_UA);
+  if (!headers.has("accept-language")) headers.set("accept-language", "en-US,en;q=0.9");
+  return fetch(url, { ...init, headers });
+};
 let seedSynced = false;
 
 export async function runTick(db: DB, opts: TickOptions = {}): Promise<TickSummary> {
   const started = Date.now();
   const now = opts.now ?? new Date();
   const registry = opts.registry ?? LIVE_REGISTRY;
-  const fetcher = opts.fetcher ?? fetch;
+  const fetcher = opts.fetcher ?? browserFetch;
   // 种子每个进程只同步一次(seed=null 表示测试里明确不要同步;传入 seed 则每次都同步)。
   if (opts.seed !== null && (opts.seed || !seedSynced)) {
     syncBoardsSeed(db, opts.seed ?? DEFAULT_SEED);
