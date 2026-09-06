@@ -8,6 +8,8 @@ export type Origin = "seed" | "url" | "directory" | "builtin" | "manual";
 export const TIERS: Tier[] = ["core", "longtail", "dormant", "muted"];
 export const CADENCE_MS: Record<Exclude<Tier, "muted">, number> = { core: 3600_000, longtail: 24 * 3600_000, dormant: 7 * 24 * 3600_000 };
 export const MAX_404_STREAK = 5;
+// 有些家族问一次很贵或对方敏感,同一层级下把周期拉长:Workday 一次要几十上百个请求、iCIMS 是网页、LinkedIn 要保守。
+export const FAMILY_CADENCE_MULTIPLIER: Partial<Record<Family, number>> = { workday: 3, icims: 3, linkedin: 2 };
 
 export interface BoardRow {
   id: number; key: string; family: Family; ident: string; company: string | null; origin: Origin; tier: Tier;
@@ -95,11 +97,12 @@ export function dueBoards(db: DB, o: DueOpts): BoardRow[] {
   ).all(...params) as BoardRow[];
 }
 
-export function nextDueAfter(tier: Tier, failCount: number, now: Date, rand: () => number = Math.random): string | null {
+export function nextDueAfter(tier: Tier, failCount: number, now: Date, rand: () => number = Math.random, family?: Family): string | null {
   if (tier === "muted") return null;
   const jitter = 0.9 + rand() * 0.2;                       // ±10%,让几百个核心板块别挤在同一分钟
   const backoff = failCount > 0 ? 2 ** Math.min(failCount, 3) : 1;
-  return iso(new Date(now.getTime() + CADENCE_MS[tier] * jitter * backoff));
+  const mult = (family && FAMILY_CADENCE_MULTIPLIER[family]) || 1;
+  return iso(new Date(now.getTime() + CADENCE_MS[tier] * mult * jitter * backoff));
 }
 
 export interface PollOutcome { ok: boolean; error?: string; httpStatus?: number | null; now: Date; rand?: () => number; }
@@ -109,7 +112,7 @@ export function markBoardResult(db: DB, key: string, o: PollOutcome): void {
   const now = iso(o.now);
   if (o.ok) {
     db.prepare("UPDATE boards SET fail_count=0, last_polled_at=?, last_ok_at=?, last_error=NULL, next_due_at=?, updated_at=datetime('now') WHERE key=?")
-      .run(now, now, nextDueAfter(b.tier, 0, o.now, o.rand), key);
+      .run(now, now, nextDueAfter(b.tier, 0, o.now, o.rand, b.family), key);
     return;
   }
   const failCount = b.fail_count + 1;
@@ -117,7 +120,7 @@ export function markBoardResult(db: DB, key: string, o: PollOutcome): void {
   const streak404 = is404 && (b.fail_count === 0 || /HTTP 404/.test(b.last_error ?? ""));
   const mute = streak404 && failCount >= MAX_404_STREAK && b.tier_locked === 0 && b.tier !== "muted";
   // 429 = 对方限流:今天别再问了。其余失败按 2^n 退避(封顶 8 倍)。
-  const nextDue = mute ? null : o.httpStatus === 429 ? iso(new Date(o.now.getTime() + 24 * 3600_000)) : nextDueAfter(b.tier, failCount, o.now, o.rand);
+  const nextDue = mute ? null : o.httpStatus === 429 ? iso(new Date(o.now.getTime() + 24 * 3600_000)) : nextDueAfter(b.tier, failCount, o.now, o.rand, b.family);
   db.prepare("UPDATE boards SET fail_count=?, last_polled_at=?, last_error=?, next_due_at=?, tier=?, tier_reason=?, updated_at=datetime('now') WHERE key=?")
     .run(failCount, now, (o.error ?? "error").slice(0, 300), nextDue, mute ? "muted" : b.tier, mute ? `404 x${failCount}` : b.tier_reason, key);
   if (mute) logEvent(db, "board_retier", { entity: "board", entityId: b.id, payload: { key, from: b.tier, to: "muted", reason: `404 x${failCount}` } });

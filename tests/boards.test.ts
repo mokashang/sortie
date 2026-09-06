@@ -62,6 +62,9 @@ describe("boards", () => {
     expect(nextDueAfter("core", 0, NOW, () => 0)).toBe(iso(new Date(NOW.getTime() + 3600_000 * 0.9)));
     expect(nextDueAfter("core", 0, NOW, () => 1)).toBe(iso(new Date(NOW.getTime() + 3600_000 * 1.1)));
     expect(nextDueAfter("muted", 0, NOW)).toBeNull();
+    // 贵/敏感的家族周期拉长:workday ×3、linkedin ×2
+    expect(nextDueAfter("core", 0, NOW, () => 0.5, "workday")).toBe(iso(new Date(NOW.getTime() + 3 * 3600_000)));
+    expect(nextDueAfter("core", 0, NOW, () => 0.5, "linkedin")).toBe(iso(new Date(NOW.getTime() + 2 * 3600_000)));
   });
 
   it("aggregates yield stats per board from jobs × matches", () => {

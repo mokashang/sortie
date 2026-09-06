@@ -72,7 +72,7 @@ key 例子:`greenhouse:stripe`、`lever:palantir`、`ashby:openai`、`workday:nv
 
 | tier | 周期 | 进入条件 |
 |---|---|---|
-| core | 1 小时 | origin=seed;或近 90 天该板块出过 ≥1 个 ≥75 分岗;或 ≥3 个 ≥60 分岗 |
+| core | 1 小时(Workday、iCIMS ×3,LinkedIn ×2) | origin=seed;或近 90 天该板块出过 ≥1 个 ≥75 分岗;或 ≥3 个 ≥60 分岗 |
 | longtail | 24 小时 | url 发现、目录导入的默认层;core 连续 90 天无 ≥75 也回到这里 |
 | dormant | 7 天 | longtail 连续 30 天有轮询记录且零 ≥60 分岗 |
 | muted | 不轮询 | 用户手动;或连续 5 次 404 自动静音(tier_reason 记 `404 x5`,可一键恢复) |

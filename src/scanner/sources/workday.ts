@@ -18,7 +18,7 @@ export async function fetchWorkday(board: BoardRow, ctx: FetchCtx): Promise<RawJ
   if (!tenant || !wd || !site) throw new Error(`workday ${board.ident}: bad ident`);
   const base = `https://${tenant}.${wd}.myworkdayjobs.com`;
   const cxs = `${base}/wday/cxs/${tenant}/${site}`;
-  const maxPages = ctx.depth === "core" ? 25 : 5;
+  const maxPages = ctx.depth === "core" ? 15 : 5;   // 每词最多 300 / 100 条
   const seen = new Map<string, Posting>();
   for (const kw of KEYWORDS) {
     for (let page = 0; page < maxPages; page++) {
