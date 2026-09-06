@@ -22,28 +22,31 @@ interface CardOutreach {
   channel: string;
   status: string;
   draft: string | null;
+  draftNote: string | null;
   sentAt: string | null;
 }
 interface Card {
   company: string;
   jobs: CardJob[];
-  outreach: CardOutreach | null;
+  outreaches: CardOutreach[];
   daysWaiting: number | null;
   overdue: boolean;
 }
 
+const NOTE_MAX = 280;
 const RELATION: Record<string, string> = { alum: "校友", recruiter: "招聘方", hiring_manager: "用人经理", engineer: "工程师", other: "其他" };
 const OUTREACH_STATUS: Record<string, string> = {
-  draft: "草稿待你批准",
+  draft: "待你批准",
   pending_send: "已批准,等值守会话发送",
   sent: "已发出,等回复",
   replied: "已回复",
   referral_won: "已拿到内推",
   no_response: "无回应",
-  archived: "草稿已作废",
+  archived: "已作废",
 };
 
 type WonForm = { company: string; jobIds: number[]; personName: string; source: string; link: string; code: string; note: string };
+type Edited = { draft: string; note: string };
 
 async function post(url: string, body: unknown) {
   const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -56,11 +59,13 @@ async function put(url: string, body: unknown) {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
-// /apply's 内推进行中 board (spec §4.4): one card per company. Polls /api/referral/board every
-// 5s so a card advances on its own as the attended session finds people / sends messages.
+// /apply's 内推进行中 board (spec §4.4 + follow-up): one card per company, several contacts per
+// card (the session casts a net of up to 3 people). Each contact carries two approved texts — the
+// full DM and a ≤280-char connection note — and the session picks the one the person's LinkedIn
+// reachability allows. Polls /api/referral/board every 5s.
 export function ReferralPanel() {
   const [cards, setCards] = useState<Card[]>([]);
-  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [edits, setEdits] = useState<Record<number, Edited>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -73,9 +78,9 @@ export function ReferralPanel() {
       const j = await r.json();
       const next: Card[] = j.cards ?? [];
       setCards(next);
-      setDrafts((prev) => {
+      setEdits((prev) => {
         const d = { ...prev };
-        for (const c of next) if (c.outreach && !(c.outreach.id in d)) d[c.outreach.id] = c.outreach.draft ?? "";
+        for (const c of next) for (const o of c.outreaches) if (!(o.id in d)) d[o.id] = { draft: o.draft ?? "", note: o.draftNote ?? "" };
         return d;
       });
     } catch {
@@ -108,13 +113,20 @@ export function ReferralPanel() {
     }
   }
 
+  // Saves any edits, then approves. Used per contact and by the card-level 全部批准.
+  async function approveOne(o: CardOutreach): Promise<{ autoStarted?: boolean; runId?: number }> {
+    const e = edits[o.id] ?? { draft: o.draft ?? "", note: o.draftNote ?? "" };
+    if (e.draft !== (o.draft ?? "") || e.note !== (o.draftNote ?? "")) {
+      await put("/api/network/outreach", { outreachId: o.id, draft: e.draft, draftNote: e.note || null });
+    }
+    return post("/api/network/decide", { outreachId: o.id, decision: "approve" });
+  }
+
   async function approveDraft(o: CardOutreach) {
     setBusy(`approve-${o.id}`);
     setError("");
     try {
-      const edited = drafts[o.id] ?? o.draft ?? "";
-      if (edited !== (o.draft ?? "")) await put("/api/network/outreach", { outreachId: o.id, draft: edited });
-      const j = await post("/api/network/decide", { outreachId: o.id, decision: "approve" });
+      const j = await approveOne(o);
       setNotice(j.autoStarted ? `已批准,已入队 run #${j.runId} 等值守会话发送` : "已批准,值守会话会发送");
       await refresh();
     } catch (e) {
@@ -124,14 +136,31 @@ export function ReferralPanel() {
     }
   }
 
-  // pending_send → draft: lets the user shorten/edit an approved message before the session
-  // sends it (a LinkedIn connection note is capped at 280 characters).
+  async function approveAll(c: Card) {
+    setBusy(`approve-all-${c.company}`);
+    setError("");
+    try {
+      let started: { autoStarted?: boolean; runId?: number } = {};
+      for (const o of c.outreaches) {
+        if (o.status !== "draft") continue;
+        const j = await approveOne(o);
+        if (j.autoStarted) started = j;
+      }
+      setNotice(started.autoStarted ? `已全部批准,已入队 run #${started.runId} 等值守会话发送` : "已全部批准,值守会话会发送");
+      await refresh();
+    } catch (e) {
+      setError(`批准失败:${e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function unapproveDraft(o: CardOutreach) {
     setBusy(`unapprove-${o.id}`);
     setError("");
     try {
       await post("/api/network/decide", { outreachId: o.id, decision: "unapprove" });
-      setDrafts((p) => {
+      setEdits((p) => {
         const n = { ...p };
         delete n[o.id];
         return n;
@@ -172,10 +201,16 @@ export function ReferralPanel() {
       {error && <p className="text-accent">{error}</p>}
       {cards.map((c) => {
         const ids = c.jobs.map((j) => j.jobId);
-        const o = c.outreach;
         const ready = c.jobs.some((j) => j.status === "referral_ready");
         const readyInfo = c.jobs.find((j) => j.referralInfo)?.referralInfo ?? null;
         const noContact = c.jobs.find((j) => j.noContactReason)?.noContactReason ?? null;
+        const counts = c.outreaches.reduce<Record<string, number>>((m, o) => ({ ...m, [o.status]: (m[o.status] ?? 0) + 1 }), {});
+        const summary = Object.entries(counts)
+          .map(([s, n]) => `${n} ${OUTREACH_STATUS[s] ?? s}`)
+          .join(" · ");
+        const drafts = c.outreaches.filter((o) => o.status === "draft");
+        const anyOut = c.outreaches.some((o) => o.status === "sent" || o.status === "replied");
+        const replied = c.outreaches.find((o) => o.status === "replied" || o.status === "sent");
         return (
           <div key={c.company} className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
@@ -183,8 +218,8 @@ export function ReferralPanel() {
               <span className="text-sub" style={{ fontSize: 13 }}>
                 {ready ? (
                   <span className="text-good">有内推 · 待投</span>
-                ) : o ? (
-                  OUTREACH_STATUS[o.status] ?? o.status
+                ) : c.outreaches.length > 0 ? (
+                  `${c.outreaches.length} 人:${summary}`
                 ) : noContact ? (
                   <span className="text-accent">找不到人:{noContact.replace(/^no contact found: /, "")}</span>
                 ) : (
@@ -221,61 +256,95 @@ export function ReferralPanel() {
                 </li>
               ))}
             </ul>
-            {o && (
-              <div style={{ marginTop: 6 }}>
-                <div className="text-sub" style={{ fontSize: 13 }}>
-                  联系人:<strong>{o.personName}</strong>
-                  {o.relation ? ` · ${RELATION[o.relation] ?? o.relation}` : ""}
-                  {o.linkedinUrl && (
-                    <>
-                      {" · "}
-                      <a href={o.linkedinUrl} target="_blank" rel="noreferrer">
-                        LinkedIn
-                      </a>
-                    </>
-                  )}
-                  {" · "}
-                  {o.channel}
-                </div>
-                {o.status === "draft" ? (
-                  <>
-                    <textarea
-                      value={drafts[o.id] ?? o.draft ?? ""}
-                      onChange={(e) => setDrafts((p) => ({ ...p, [o.id]: e.target.value }))}
-                      rows={6}
-                      style={{ width: "100%", marginTop: 6, fontFamily: "inherit", fontSize: 14, padding: 8 }}
-                    />
-                    <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
-                      <button onClick={() => approveDraft(o)} disabled={busy === `approve-${o.id}`}>
-                        批准发送
-                      </button>
-                      <span className="text-sub" style={{ fontSize: 12 }}>
-                        {(drafts[o.id] ?? o.draft ?? "").trim().length} 字符 · 好友申请留言上限 280,私信不限
-                      </span>
-                      <button className="btn-ghost" onClick={() => rejectDraft(o)} disabled={busy === `reject-${o.id}`}>
-                        拒绝草稿
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, margin: "6px 0", background: "var(--chip-bg)", padding: 8 }}>
-                      {o.draft}
-                    </pre>
-                    {o.status === "pending_send" && (
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <button className="btn-ghost" onClick={() => unapproveDraft(o)} disabled={busy === `unapprove-${o.id}`}>
-                          退回草稿(改文字)
-                        </button>
-                        <span className="text-sub" style={{ fontSize: 12 }}>
-                          {(o.draft ?? "").trim().length} 字符 · 好友申请留言上限 280
-                        </span>
-                      </div>
-                    )}
-                  </>
+
+            {c.outreaches.length > 0 && (
+              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 10 }}>
+                {drafts.length > 1 && (
+                  <div>
+                    <button onClick={() => approveAll(c)} disabled={busy === `approve-all-${c.company}`}>
+                      全部批准({drafts.length} 条)
+                    </button>
+                    <span className="text-sub" style={{ fontSize: 12, marginLeft: 8 }}>
+                      每人两版:完整私信版(对方已是好友时发)与 ≤{NOTE_MAX} 字符留言版(走 Connect 好友申请时发),值守会话按对方可达方式自动选。
+                    </span>
+                  </div>
                 )}
+                {c.outreaches.map((o) => {
+                  const e = edits[o.id] ?? { draft: o.draft ?? "", note: o.draftNote ?? "" };
+                  const noteLen = e.note.trim().length;
+                  return (
+                    <div key={o.id} style={{ borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+                      <div className="text-sub" style={{ fontSize: 13 }}>
+                        <strong style={{ color: "var(--ink)" }}>{o.personName}</strong>
+                        {o.relation ? ` · ${RELATION[o.relation] ?? o.relation}` : ""}
+                        {o.linkedinUrl && (
+                          <>
+                            {" · "}
+                            <a href={o.linkedinUrl} target="_blank" rel="noreferrer">
+                              LinkedIn
+                            </a>
+                          </>
+                        )}
+                        {" · "}
+                        <span className={o.status === "sent" || o.status === "replied" ? "text-good" : ""}>{OUTREACH_STATUS[o.status] ?? o.status}</span>
+                        {o.sentAt ? <span className="mono"> · {o.sentAt.slice(0, 16).replace("T", " ")}</span> : null}
+                      </div>
+                      {o.status === "draft" ? (
+                        <>
+                          <label className="text-sub" style={{ fontSize: 12, display: "block", marginTop: 6 }}>
+                            完整版(私信){" "}
+                            <span className="mono">{e.draft.trim().length} 字符</span>
+                          </label>
+                          <textarea
+                            value={e.draft}
+                            onChange={(ev) => setEdits((p) => ({ ...p, [o.id]: { ...e, draft: ev.target.value } }))}
+                            rows={5}
+                            style={{ width: "100%", fontFamily: "inherit", fontSize: 14, padding: 8 }}
+                          />
+                          <label className="text-sub" style={{ fontSize: 12, display: "block", marginTop: 6 }}>
+                            留言版(Connect 好友申请){" "}
+                            <span className={`mono${noteLen > NOTE_MAX ? " text-accent" : ""}`}>
+                              {noteLen}/{NOTE_MAX} 字符
+                            </span>
+                          </label>
+                          <textarea
+                            value={e.note}
+                            onChange={(ev) => setEdits((p) => ({ ...p, [o.id]: { ...e, note: ev.target.value } }))}
+                            rows={3}
+                            style={{ width: "100%", fontFamily: "inherit", fontSize: 14, padding: 8 }}
+                          />
+                          <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
+                            <button onClick={() => approveDraft(o)} disabled={busy === `approve-${o.id}` || noteLen > NOTE_MAX}>
+                              批准发送
+                            </button>
+                            <button className="btn-ghost" onClick={() => rejectDraft(o)} disabled={busy === `reject-${o.id}`}>
+                              拒绝
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, margin: "6px 0", background: "var(--chip-bg)", padding: 8 }}>
+                            {o.draft}
+                          </pre>
+                          {o.draftNote && o.status === "pending_send" && (
+                            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 12, margin: "0 0 6px", padding: 8, border: "1px dashed var(--line)" }}>
+                              留言版:{o.draftNote}
+                            </pre>
+                          )}
+                          {o.status === "pending_send" && (
+                            <button className="btn-ghost" onClick={() => unapproveDraft(o)} disabled={busy === `unapprove-${o.id}`}>
+                              退回草稿(改文字)
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
+
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
               {ready ? (
                 <button onClick={() => decide(ids, "won", { info: readyInfo })} disabled={!!busy}>
@@ -292,8 +361,8 @@ export function ReferralPanel() {
                       setWon({
                         company: c.company,
                         jobIds: ids,
-                        personName: o?.personName ?? "",
-                        source: o ? (o.channel === "email" ? "email" : "linkedin") : "wechat",
+                        personName: replied?.personName ?? "",
+                        source: replied ? (replied.channel === "email" ? "email" : "linkedin") : "wechat",
                         link: "",
                         code: "",
                         note: "",
@@ -303,9 +372,9 @@ export function ReferralPanel() {
                   >
                     有内推了
                   </button>
-                  {o && (o.status === "sent" || o.status === "replied") && (
+                  {anyOut && (
                     <button className="btn-ghost" onClick={() => decide(ids, "retry")} disabled={!!busy}>
-                      换人再问
+                      再撒网(换人)
                     </button>
                   )}
                   <button

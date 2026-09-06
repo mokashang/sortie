@@ -19,7 +19,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -110,6 +110,11 @@ export function openDb(file?: string): DB {
       for (const r of pending) upd.run(dedupKey(r.company, r.title), jdStatusFor(r.jd_text), r.id);
     });
     tx();
+    // v10 -> v11: outreach gained draft_note — the ≤280-char LinkedIn connection-note variant the
+    // draft engine now produces alongside the full DM text (referral follow-up: the attended
+    // session picks the variant by how the person is reachable, never edits text itself).
+    const outreachCols11 = (db.prepare("PRAGMA table_info(outreach)").all() as { name: string }[]).map((c) => c.name);
+    if (!outreachCols11.includes("draft_note")) db.exec("ALTER TABLE outreach ADD COLUMN draft_note TEXT");
   }
   // New DBs (found === 0) skip the migration block above but still need the index — it can't
   // live in schema.sql's CREATE INDEX IF NOT EXISTS because that runs via db.exec(readSchema())

@@ -79,7 +79,10 @@ describe("takeNextReferral", () => {
     const b = seed(db, { direction: "swe_general", score: 70 });
     seed(db, { company: "Meta", direction: "swe_general", score: 99 }); // other company, must not ride along
     const pid = upsertPerson(db, { name: "Jane", company: "Google", relation: "alum", linkedin_url: "https://li/jane" });
-    createOutreach(db, { personId: pid, playbook: "referral", channel: "linkedin", draft: "x", jobIds: [a] });
+    // "contacted" means a request actually went out (pending_send/sent/...), not a mere draft.
+    const sentOid = createOutreach(db, { personId: pid, playbook: "referral", channel: "linkedin", draft: "x", jobIds: [a] });
+    approveOutreach(db, sentOid);
+    reportSent(db, sentOid);
     upsertPerson(db, { name: "Bob", company: "google", relation: "engineer" });
     const t = takeNextReferral(db, { direction: "ai_infra" }) as ReferralTask;
     expect(t.jobs.map((j) => j.jobId)).toEqual([a, b]);
@@ -110,8 +113,8 @@ describe("outreach → reached → board", () => {
     const cards = referralBoard(db, eightDays);
     expect(cards).toHaveLength(1);
     expect(cards[0].company).toBe("Google");
-    expect(cards[0].outreach?.status).toBe("sent");
-    expect(cards[0].outreach?.personName).toBe("Jane");
+    expect(cards[0].outreaches[0].status).toBe("sent");
+    expect(cards[0].outreaches[0].personName).toBe("Jane");
     expect(cards[0].daysWaiting).toBe(8);
     expect(cards[0].overdue).toBe(true);
     expect(referralBoard(db)[0].overdue).toBe(false);
@@ -124,7 +127,7 @@ describe("outreach → reached → board", () => {
     reportNoContact(db, [a], "no USC alumni or reachable engineers found");
     expect(status(db, a).status).toBe("referral_seeking");
     expect(referralBoard(db)[0].jobs[0].noContactReason).toMatch(/no USC/);
-    expect(referralBoard(db)[0].outreach).toBeNull();
+    expect(referralBoard(db)[0].outreaches).toEqual([]);
   });
 
   it("createReferralOutreach upserts the person, drafts, links jobs", async () => {
@@ -140,7 +143,7 @@ describe("outreach → reached → board", () => {
     });
     expect(outreachJobIds(db, r.outreachId)).toEqual([a]);
     expect(r.draft).toBe("Hi");
-    expect(referralBoard(db)[0].outreach?.status).toBe("draft");
+    expect(referralBoard(db)[0].outreaches[0].status).toBe("draft");
   });
 });
 
@@ -207,5 +210,37 @@ describe("referralDecide", () => {
     expect(status(db, a).status).toBe("archived");
     const plain = seed(db, { company: "Meta" });
     expect(() => referralDecide(db, { jobIds: [plain], action: "direct" })).toThrow(/referral_seeking/);
+  });
+});
+
+describe("several people per company", () => {
+  it("board lists every non-archived outreach; decide acts on all of them; archived drafts do not count as contacted", () => {
+    const db = openDb(":memory:");
+    const a = seed(db);
+    takeNextReferral(db, {});
+    const p1 = upsertPerson(db, { name: "Jane", company: "Google", relation: "alum" });
+    const p2 = upsertPerson(db, { name: "Bob", company: "Google", relation: "engineer" });
+    const p3 = upsertPerson(db, { name: "Old", company: "Google", relation: "recruiter" });
+    const o1 = createOutreach(db, { personId: p1, playbook: "referral", channel: "linkedin", draft: "a", draftNote: "short a", jobIds: [a] });
+    const o2 = createOutreach(db, { personId: p2, playbook: "referral", channel: "linkedin", draft: "b", jobIds: [a] });
+    const o3 = createOutreach(db, { personId: p3, playbook: "referral", channel: "linkedin", draft: "c", jobIds: [a] });
+    db.prepare("UPDATE outreach SET status = 'archived' WHERE id = ?").run(o3);
+    approveOutreach(db, o1);
+    reportSent(db, o1);
+    const card = referralBoard(db)[0];
+    expect(card.outreaches.map((o) => [o.personName, o.status, o.draftNote])).toEqual([
+      ["Bob", "draft", null],
+      ["Jane", "sent", "short a"],
+    ]);
+    // A person whose only outreach was archived is not "contacted" and may be approached again.
+    referralDecide(db, { jobIds: [a], action: "retry" });
+    const t = takeNextReferral(db, { jobIds: [a] }) as ReferralTask;
+    expect(t.knownPeople.map((p) => [p.name, p.contacted])).toEqual([
+      ["Jane", true],
+      ["Bob", false],
+      ["Old", false],
+    ]);
+    const st = (id: number) => (db.prepare("SELECT status FROM outreach WHERE id = ?").get(id) as { status: string }).status;
+    expect([st(o1), st(o2), st(o3)]).toEqual(["no_response", "archived", "archived"]);
   });
 });

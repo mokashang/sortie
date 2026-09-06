@@ -148,6 +148,8 @@ export const OutreachInputSchema = z.object({
   playbook: z.enum(PLAYBOOKS),
   channel: z.enum(CHANNELS),
   draft: z.string().nullable().optional(),
+  // ≤280-char connection-note variant (linkedin channel); generateDraft fills it in.
+  draftNote: z.string().nullable().optional(),
   // Referral-in-apply: one message may cover up to 3 jobs at the same company. Each id gets an
   // outreach_jobs row; job_id (the legacy single link) falls back to the first one.
   jobIds: z.array(z.number().int().positive()).max(3).optional(),
@@ -169,6 +171,7 @@ export interface OutreachRow {
   playbook: string;
   channel: string;
   draft: string | null;
+  draftNote: string | null;
   threadLog: ThreadEntry[];
   status: string;
   outcome: string | null;
@@ -184,6 +187,7 @@ interface OutreachRawRow {
   playbook: string;
   channel: string;
   draft: string | null;
+  draft_note: string | null;
   thread_log: string;
   status: string;
   outcome: string | null;
@@ -206,6 +210,7 @@ function rowToOutreach(r: OutreachRawRow): OutreachRow {
     playbook: r.playbook,
     channel: r.channel,
     draft: r.draft,
+    draftNote: r.draft_note,
     threadLog,
     status: r.status,
     outcome: r.outcome,
@@ -221,10 +226,10 @@ export function createOutreach(db: DB, input: OutreachInput): number {
   return db.transaction(() => {
     const info = db
       .prepare(
-        `INSERT INTO outreach (person_id, job_id, playbook, channel, draft, status)
-         VALUES (?,?,?,?,?, 'draft')`
+        `INSERT INTO outreach (person_id, job_id, playbook, channel, draft, draft_note, status)
+         VALUES (?,?,?,?,?,?, 'draft')`
       )
-      .run(o.personId, primary, o.playbook, o.channel, o.draft ?? null);
+      .run(o.personId, primary, o.playbook, o.channel, o.draft ?? null, o.draftNote ?? null);
     const id = Number(info.lastInsertRowid);
     const link = db.prepare("INSERT OR IGNORE INTO outreach_jobs (outreach_id, job_id) VALUES (?,?)");
     for (const jobId of o.jobIds ?? []) link.run(id, jobId);
@@ -250,6 +255,22 @@ export function outreachForJob(db: DB, jobId: number): OutreachRow | null {
     )
     .get(jobId, jobId) as OutreachRawRow | undefined;
   return row ? rowToOutreach(row) : null;
+}
+
+// Every outreach that covers any of these jobs (referral pipeline: several people per company
+// are contacted in parallel, each with their own row), newest first.
+export function outreachesForJobs(db: DB, jobIds: number[]): OutreachRow[] {
+  if (jobIds.length === 0) return [];
+  const ph = jobIds.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT o.*, p.name as person_name, p.company as person_company
+       FROM outreach o JOIN people p ON p.id = o.person_id
+       WHERE o.job_id IN (${ph}) OR o.id IN (SELECT outreach_id FROM outreach_jobs WHERE job_id IN (${ph}))
+       ORDER BY o.id DESC`
+    )
+    .all(...jobIds, ...jobIds) as OutreachRawRow[];
+  return rows.map(rowToOutreach);
 }
 
 // SQL fragment (alias `o` = outreach): does this outreach belong to the referral pipeline?

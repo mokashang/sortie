@@ -58,12 +58,13 @@ export function rejectOutreach(db: DB, id: number): void {
 // Lets the user (or Task 4's UI) edit the draft text before approving. Only while status='draft'
 // — once approved/sent, the draft is what was (or will be) actually sent and must not silently
 // change out from under an in-flight approval/send.
-export function updateDraft(db: DB, id: number, draft: string): void {
+export function updateDraft(db: DB, id: number, draft: string, draftNote?: string | null): void {
   const row = getStatus(db, id);
   if (row.status !== "draft") {
     throw new Error(`updateDraft: cannot edit draft from status '${row.status}' (must be 'draft')`);
   }
-  db.prepare("UPDATE outreach SET draft = ? WHERE id = ?").run(draft, id);
+  if (draftNote === undefined) db.prepare("UPDATE outreach SET draft = ? WHERE id = ?").run(draft, id);
+  else db.prepare("UPDATE outreach SET draft = ?, draft_note = ? WHERE id = ?").run(draft, draftNote, id);
 }
 
 export interface SendableRow {
@@ -75,6 +76,7 @@ export interface SendableRow {
   channel: string;
   playbook: string;
   draft: string | null;
+  draftNote: string | null; // ≤280-char connection-note variant; the session sends THIS when it has to use Connect
   jobId: number | null;
 }
 
@@ -87,6 +89,7 @@ interface SendableRawRow {
   channel: string;
   playbook: string;
   draft: string | null;
+  draft_note: string | null;
   job_id: number | null;
 }
 
@@ -99,7 +102,7 @@ export function sendables(db: DB, opts: { jobLinked?: boolean } = {}): SendableR
   const rows = db
     .prepare(
       `SELECT o.id, o.person_id, p.name as person_name, p.linkedin_url, p.email,
-              o.channel, o.playbook, o.draft, o.job_id
+              o.channel, o.playbook, o.draft, o.draft_note, o.job_id
        FROM outreach o JOIN people p ON p.id = o.person_id
        WHERE o.status = 'pending_send'${linked}
        ORDER BY o.created_at ASC`
@@ -114,6 +117,7 @@ export function sendables(db: DB, opts: { jobLinked?: boolean } = {}): SendableR
     channel: r.channel,
     playbook: r.playbook,
     draft: r.draft,
+    draftNote: r.draft_note,
     jobId: r.job_id,
   }));
 }

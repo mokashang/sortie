@@ -29,7 +29,27 @@ export interface JobInfo {
 const DraftResponseSchema = z.object({
   message: z.string().min(1),
   subject: z.string().min(1).optional(),
+  note: z.string().min(1).optional(),
 });
+
+// LinkedIn caps a connection-request note at ~300 chars; 280 is the hard limit used everywhere.
+export const NOTE_MAX_CHARS = 280;
+
+// Deterministic fallback when the model's note is missing or too long: keep whole sentences from
+// the front of the full message until the cap; if even the first sentence is over, hard-cut.
+export function trimToNote(message: string, max = NOTE_MAX_CHARS): string {
+  const text = message.replace(/\s*\n+\s*/g, " ").replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const sentences = text.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) ?? [text];
+  let out = "";
+  for (const s of sentences) {
+    if ((out + s).trim().length > max) break;
+    out += s;
+  }
+  out = out.trim();
+  if (out.length === 0) return text.slice(0, max - 1).trimEnd() + "…";
+  return out;
+}
 
 const PLAYBOOK_GUIDANCE: Record<Playbook, string> = {
   referral:
@@ -50,7 +70,8 @@ export function buildDraftPrompt(
   person: Pick<Person, "name" | "company" | "role_title" | "relation">,
   playbook: Playbook,
   job?: JobInfo | JobInfo[],
-  threadTail?: ThreadEntry
+  threadTail?: ThreadEntry,
+  opts: { note?: boolean } = {}
 ): LlmRequest {
   const jobs = job === undefined ? [] : Array.isArray(job) ? job : [job];
   const system = [
@@ -89,9 +110,20 @@ export function buildDraftPrompt(
   if (playbook === "followup" && threadTail) {
     promptParts.push(`Last message in the thread (dir=${threadTail.dir}, at=${threadTail.at}):\n${threadTail.text}`);
   }
-  promptParts.push(
-    'Produce the outreach draft as JSON with this exact shape: {"message": "<message body>", "subject": "<email subject, only if this is an email>"}. Omit "subject" entirely for a non-email channel. Output ONLY the JSON, no commentary.'
-  );
+  if (opts.note) {
+    promptParts.push(
+      `Also produce "note": a self-contained SHORT version of the same message for a LinkedIn connection request, at most ${NOTE_MAX_CHARS} characters INCLUDING spaces (count carefully — shorter is safer). It must still open with the shared USC/Trojan connection when applicable, name the company and the role(s) briefly (no URLs), and end with the actual ask (a referral or a pointer to the right person).`
+    );
+    promptParts.push(
+      'Produce the outreach draft as JSON with this exact shape: {"message": "<full message body>", "note": "<connection-note version, <= ' +
+        NOTE_MAX_CHARS +
+        ' characters>"}. Output ONLY the JSON, no commentary.'
+    );
+  } else {
+    promptParts.push(
+      'Produce the outreach draft as JSON with this exact shape: {"message": "<message body>", "subject": "<email subject, only if this is an email>"}. Omit "subject" entirely for a non-email channel. Output ONLY the JSON, no commentary.'
+    );
+  }
 
   return { system, prompt: promptParts.join("\n\n"), tier: "smart", maxTokens: 600 };
 }
@@ -125,6 +157,8 @@ export interface GenerateDraftOptions {
 export interface GenerateDraftResult {
   outreachId: number;
   draft: string;
+  // linkedin channel only: the ≤280-char connection-note variant (model-written, else trimmed).
+  draftNote: string | null;
 }
 
 interface PersonRow {
@@ -184,12 +218,18 @@ export async function generateDraft(db: DB, opts: GenerateDraftOptions): Promise
     : undefined;
   const threadTail = opts.playbook === "followup" ? lastThreadEntryForPerson(db, opts.personId) : undefined;
 
-  const req = buildDraftPrompt(opts.profile, person, opts.playbook, jobs, threadTail);
+  const wantNote = channel === "linkedin";
+  const req = buildDraftPrompt(opts.profile, person, opts.playbook, jobs, threadTail, { note: wantNote });
   const res = await opts.backend.complete(req);
   const parsed = DraftResponseSchema.parse(extractJson(res.text));
 
   const draft =
     channel === "email" && parsed.subject ? `Subject: ${parsed.subject}\n\n${parsed.message}` : parsed.message;
+  // The note is what actually goes on the wire when the recipient is only reachable via Connect
+  // (2nd/3rd degree). The model's version is used when it respects the cap; otherwise a
+  // deterministic sentence-trim of the full message — the App owns this, never the session.
+  const modelNote = parsed.note?.trim();
+  const draftNote = wantNote ? (modelNote && modelNote.length <= NOTE_MAX_CHARS ? modelNote : trimToNote(draft)) : null;
 
   const outreachId = createOutreach(db, {
     personId: opts.personId,
@@ -197,8 +237,9 @@ export async function generateDraft(db: DB, opts: GenerateDraftOptions): Promise
     playbook: opts.playbook,
     channel,
     draft,
+    draftNote,
     jobIds: opts.jobIds,
   });
 
-  return { outreachId, draft };
+  return { outreachId, draft, draftNote };
 }

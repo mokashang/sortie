@@ -9,6 +9,7 @@ import {
   setOutreachStatus,
   outreachJobIds,
   outreachForJob,
+  outreachesForJobs,
 } from "@/network/crm";
 
 function db(): DB {
@@ -216,5 +217,19 @@ describe("outreach_jobs", () => {
     expect(listOutreach(d, { jobLinked: true }).map((o) => o.id)).toEqual([id]);
     const coffee = createOutreach(d, { personId: pid, playbook: "coffee_chat", channel: "linkedin", draft: "yo" });
     expect(listOutreach(d, { jobLinked: false }).map((o) => o.id)).toEqual([coffee]);
+  });
+});
+
+describe("outreachesForJobs", () => {
+  it("returns every outreach covering any of the jobs, newest first, no duplicates", () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const j1 = seedJob(d, { company: "Google", title: "SWE" });
+    const j2 = seedJob(d, { company: "Google", title: "SRE" });
+    const a = createOutreach(d, { personId: pid, playbook: "referral", channel: "linkedin", draft: "a", jobIds: [j1, j2] });
+    const b = createOutreach(d, { personId: pid, playbook: "referral", channel: "linkedin", draft: "b", jobIds: [j2] });
+    createOutreach(d, { personId: pid, playbook: "coffee_chat", channel: "linkedin", draft: "c" });
+    expect(outreachesForJobs(d, [j1, j2]).map((o) => o.id)).toEqual([b, a]);
+    expect(outreachesForJobs(d, [])).toEqual([]);
   });
 });

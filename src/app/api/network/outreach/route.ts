@@ -32,7 +32,12 @@ export async function GET(req: Request) {
 export async function PUT(req: Request) {
   try {
     const body = await req.json();
-    updateDraft(getDb(), Number(body.outreachId), String(body.draft));
+    updateDraft(
+      getDb(),
+      Number(body.outreachId),
+      String(body.draft),
+      body.draftNote === undefined ? undefined : body.draftNote == null ? null : String(body.draftNote)
+    );
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 400 });

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { openDb, DB } from "@/lib/db";
 import { parseProfile, Profile } from "@/lib/profile";
 import { upsertPerson, createOutreach, appendThread, listOutreach, outreachJobIds } from "@/network/crm";
-import { buildDraftPrompt, generateDraft } from "@/network/draft";
+import { buildDraftPrompt, generateDraft, trimToNote } from "@/network/draft";
 import { LlmBackend, LlmRequest } from "@/llm/types";
 
 const baseYaml = `
@@ -212,5 +212,37 @@ describe("multi-job referral drafts", () => {
     const res = await generateDraft(d, { backend, profile: testProfile(), personId: pid, playbook: "referral", jobIds: [j1, j2] });
     expect(requests[0].prompt).toContain("SRE");
     expect(outreachJobIds(d, res.outreachId)).toEqual([j1, j2]);
+  });
+});
+
+describe("connection-note variant", () => {
+  it("linkedin drafts ask the model for a <=280-char note and store it", async () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const j1 = seedJob(d, { company: "Google", title: "SWE" });
+    const { backend, requests } = fakeBackend({ message: "Long full message. With detail.", note: "Hi Jane, fellow Trojan — open to referring me for SWE at Google?" });
+    const res = await generateDraft(d, { backend, profile: testProfile(), personId: pid, playbook: "referral", jobIds: [j1], channel: "linkedin" });
+    expect(requests[0].prompt).toMatch(/280/);
+    expect(res.draftNote).toBe("Hi Jane, fellow Trojan — open to referring me for SWE at Google?");
+    expect(listOutreach(d, { jobId: j1 })[0].draftNote).toBe(res.draftNote);
+  });
+
+  it("falls back to a sentence-trim when the note is missing or over the cap; email drafts get none", async () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const long = "First sentence here. " + "Second sentence that is fairly long and keeps going on. ".repeat(6) + "Ask at the end?";
+    const { backend } = fakeBackend({ message: long, note: "x".repeat(300) });
+    const res = await generateDraft(d, { backend, profile: testProfile(), personId: pid, playbook: "referral", channel: "linkedin" });
+    expect(res.draftNote!.length).toBeLessThanOrEqual(280);
+    expect(res.draftNote!.startsWith("First sentence here.")).toBe(true);
+    const { backend: eb } = fakeBackend({ message: "hi", subject: "s" });
+    const er = await generateDraft(d, { backend: eb, profile: testProfile(), personId: pid, playbook: "referral", channel: "email" });
+    expect(er.draftNote).toBeNull();
+  });
+
+  it("trimToNote keeps whole sentences and hard-cuts a single overlong sentence", () => {
+    expect(trimToNote("A. B. C.", 4)).toBe("A.");
+    expect(trimToNote("x".repeat(300)).length).toBe(280);
+    expect(trimToNote("Line one\n\nLine two.")).toBe("Line one Line two.");
   });
 });

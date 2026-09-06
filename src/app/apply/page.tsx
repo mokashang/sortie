@@ -39,9 +39,9 @@ export default function ApplyPage() {
   const cards = referralBoard(db);
   const referralJobs = cards.flatMap((c) => c.jobs);
   const referralCounts = {
-    draft: cards.filter((c) => c.outreach?.status === "draft").length,
-    waiting: cards.filter((c) => c.outreach && (c.outreach.status === "sent" || c.outreach.status === "pending_send")).length,
-    noContact: cards.filter((c) => !c.outreach && c.jobs.some((j) => j.noContactReason)).length,
+    draft: cards.filter((c) => c.outreaches.some((o) => o.status === "draft")).length,
+    waiting: cards.filter((c) => c.outreaches.some((o) => o.status === "sent" || o.status === "pending_send")).length,
+    noContact: cards.filter((c) => c.outreaches.length === 0 && c.jobs.some((j) => j.noContactReason)).length,
     ready: cards.filter((c) => c.jobs.some((j) => j.status === "referral_ready")).length,
   };
 

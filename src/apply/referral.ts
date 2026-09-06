@@ -2,7 +2,7 @@ import { DB, logEvent } from "@/lib/db";
 import { Profile } from "@/lib/profile";
 import { LlmBackend } from "@/llm/types";
 import { EFFECTIVE_MODE_SQL } from "@/apply/mode";
-import { upsertPerson, PersonInput, Channel, outreachForJob, outreachJobIds } from "@/network/crm";
+import { upsertPerson, PersonInput, Channel, outreachesForJobs, outreachJobIds } from "@/network/crm";
 import { generateDraft } from "@/network/draft";
 
 // The referral half of the apply pipeline (spec §1.4, §4). A job the user (or Claude) tagged
@@ -13,6 +13,9 @@ import { generateDraft } from "@/network/draft";
 // queue.ts never sees referral_seeking/referral_ready rows, so the two modes can't collide.
 
 export const MAX_SIBLINGS = 2; // 1 primary + 2 siblings = 3 jobs per outreach
+// How many people the attended session contacts per company, in parallel (one person is a coin
+// flip; three cover the usual no-reply/decline cases).
+export const MAX_PEOPLE_PER_COMPANY = 3;
 export const OVERDUE_DAYS = 7;
 
 export interface ReferralTaskJob {
@@ -92,7 +95,8 @@ export function takeNextReferral(db: DB, opts: { direction?: string; jobIds?: nu
     const people = db
       .prepare(
         `SELECT p.id, p.name, p.relation, p.role_title, p.linkedin_url, p.email,
-                EXISTS (SELECT 1 FROM outreach o WHERE o.person_id = p.id AND o.playbook = 'referral') AS contacted
+                EXISTS (SELECT 1 FROM outreach o WHERE o.person_id = p.id AND o.playbook = 'referral'
+                        AND o.status NOT IN ('draft','archived')) AS contacted
          FROM people p WHERE p.company = ? COLLATE NOCASE ORDER BY (p.relation = 'alum') DESC, p.id ASC`
       )
       .all(primary.company) as {
@@ -186,12 +190,14 @@ export interface ReferralCardOutreach {
   channel: string;
   status: string;
   draft: string | null;
+  draftNote: string | null;
   sentAt: string | null;
 }
 export interface ReferralCard {
   company: string;
   jobs: ReferralCardJob[];
-  outreach: ReferralCardOutreach | null;
+  // Every person contacted (or drafted) for this company, newest first — several in parallel.
+  outreaches: ReferralCardOutreach[];
   daysWaiting: number | null;
   overdue: boolean;
 }
@@ -222,17 +228,16 @@ export function referralBoard(db: DB, now: () => number = () => Date.now()): Ref
   }
   const cards: ReferralCard[] = [];
   for (const group of byCompany.values()) {
-    // Latest outreach across the group's jobs (they normally share one).
-    let outreach: ReferralCardOutreach | null = null;
-    for (const r of group) {
-      const o = outreachForJob(db, r.job_id);
-      if (o && (!outreach || o.id > outreach.id)) {
+    // Every outreach across the group's jobs (several people per company), archived ones hidden.
+    const outreaches: ReferralCardOutreach[] = outreachesForJobs(db, group.map((r) => r.job_id))
+      .filter((o) => o.status !== "archived")
+      .map((o) => {
         const person = db.prepare("SELECT relation, linkedin_url FROM people WHERE id = ?").get(o.personId) as {
           relation: string | null;
           linkedin_url: string | null;
         };
         const sent = o.threadLog.find((t) => t.dir === "sent");
-        outreach = {
+        return {
           id: o.id,
           personId: o.personId,
           personName: o.personName,
@@ -241,10 +246,10 @@ export function referralBoard(db: DB, now: () => number = () => Date.now()): Ref
           channel: o.channel,
           status: o.status,
           draft: o.draft,
+          draftNote: o.draftNote,
           sentAt: sent?.at ?? null,
         };
-      }
-    }
+      });
     const reached = group.map((r) => r.referral_reached_at).filter((x): x is string => !!x).sort()[0] ?? null;
     const daysWaiting = reached ? Math.floor((now() - Date.parse(reached.replace(" ", "T") + "Z")) / 86400_000) : null;
     cards.push({
@@ -260,7 +265,7 @@ export function referralBoard(db: DB, now: () => number = () => Date.now()): Ref
         referralInfo: safeJson(r.referral_info),
         referralPersonName: r.referral_person_name,
       })),
-      outreach,
+      outreaches,
       daysWaiting,
       overdue: daysWaiting != null && daysWaiting > OVERDUE_DAYS,
     });
@@ -303,11 +308,7 @@ export function referralDecide(db: DB, input: ReferralDecideInput): ReferralDeci
     }
     return { id, ...r };
   });
-  const outreachIds = new Set<number>();
-  for (const r of rows) {
-    const o = outreachForJob(db, r.id);
-    if (o) outreachIds.add(o.id);
-  }
+  const outreachIds = new Set<number>(outreachesForJobs(db, rows.map((r) => r.id)).map((o) => o.id));
   const setOutreach = (from: string[], to: string) => {
     const stmt = db.prepare(`UPDATE outreach SET status = ? WHERE id = ? AND status IN (${from.map(() => "?").join(",")})`);
     for (const oid of outreachIds) stmt.run(to, oid, ...from);

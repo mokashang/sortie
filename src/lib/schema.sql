@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS outreach (
   playbook TEXT NOT NULL,          -- referral|self_pitch|recruiter|coffee_chat|hidden_opportunity|followup|thanks
   channel TEXT NOT NULL,           -- linkedin | email
   draft TEXT,
+  draft_note TEXT,                 -- ≤280-char LinkedIn connection-note variant of draft (linkedin channel)
   thread_log TEXT NOT NULL DEFAULT '[]',   -- JSON: [{at, dir: sent|received, text}]
   status TEXT NOT NULL DEFAULT 'draft',    -- draft|pending_send|sent|replied|meeting|referral_won|no_response
   outcome TEXT,

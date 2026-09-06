@@ -174,24 +174,33 @@ short, per company:
 1. `POST /api/apply/next {"direction": "<slug>", "mode": "referral"}` → `ReferralTask`
    `{company, jobs:[{jobId,title,applyUrl,direction,score}], knownPeople:[…], skipPersonIds:[…]}`.
    Those jobs are now `referral_seeking`; each one counts toward the entry's `count`.
-2. Find ONE person, in this order, in the user's Chrome (read-only on LinkedIn until the send
-   step): an uncontacted USC alum from `knownPeople` → LinkedIn People search `"<company> USC"`
-   (Education mentions USC / University of Southern California / Trojan) → `"<company> <direction
-   keyword> engineer"` / `"<company> recruiter"`. A person is reachable only if their profile shows
-   a **Connect** or **Message** button. Never contact anyone in `skipPersonIds`. Never guess an
-   email; only use one printed on the profile/company page, and then set `channel: "email"` (the
-   user sends it themself via mailto in the App).
+2. Find up to **THREE** people per company (a net, not a single bet), in this order, in the
+   user's Chrome (read-only on LinkedIn until the send step): uncontacted USC alumni from
+   `knownPeople` → the USC alumni page filtered by company
+   (`linkedin.com/school/university-of-southern-california/people/?keywords=<company>`, then the
+   company toggle under "Where they work") → `"<company> <direction keyword> engineer"` /
+   `"<company> recruiter"` to fill the remaining slots. Reachability is decided by **degree only**:
+   1st degree → DM; 2nd/3rd degree → **Connect** (often under the "…" More menu) with a note.
+   **Never click Message on a 2nd/3rd-degree profile** — it is the Premium InMail paywall. Rank:
+   alumni with Connect (more mutual connections first) > 3rd-degree alumni > engineers >
+   recruiters. Never contact anyone in `skipPersonIds`. Never guess an email; only use one printed
+   on the profile/company page, and then set `channel: "email"` (the user sends it themself via
+   mailto in the App).
 3. Nobody reachable → `POST /api/apply/report {"jobIds":[…],"status":"referral_no_contact","reason":"…"}`
    and take the next company.
-4. `POST /api/referral/outreach {"jobIds":[…],"person":{name,company,role_title,linkedin_url,relation},"channel":"linkedin"}`
-   → `{outreachId, draft}`. You never write the message yourself — the App drafts it and the user
-   edits/approves it on /apply.
-5. Poll `GET /api/referral/pending?outreachId=<id>` every 5s (≤30 min, heartbeat log every ≤5
-   min). `pending_send` → send exactly per network-executor SKILL §2.2 c/d (280-char trim rule,
-   verbatim read-back, double-send guard) → `POST /api/network/report {"outreachId":<id>,"event":"sent","text":"<what went out>"}`.
+4. One outreach per person: `POST /api/referral/outreach {"jobIds":[…],"person":{name,company,role_title,linkedin_url,relation},"channel":"linkedin"}`
+   → `{outreachId, draft, draftNote}`. The App writes BOTH texts — the full DM (`draft`) and a
+   ≤280-char connection note (`draftNote`, auto-trimmed by the App when the model overshoots). You
+   never write or shorten a message yourself; the user edits/approves on /apply (one 全部批准 per
+   card).
+5. Poll `GET /api/referral/pending?outreachId=<id>` for each outreach every 5s (≤30 min, heartbeat
+   log every ≤5 min). `pending_send` → 1st degree: DM `draft`; 2nd/3rd degree: Connect → Add a
+   note → `draft_note`. Verbatim read-back and double-send guard per network-executor SKILL §2.2
+   c/d → `POST /api/network/report {"outreachId":<id>,"event":"sent","text":"<what went out>"}`.
    `archived` → skip. Timeout → leave it; a later approval auto-enqueues a resume run.
-6. ≥30s between companies; ≤10 connection requests and ≤15 DMs per run; stop on any
-   CAPTCHA/rate-limit/verification signal.
+6. ≥30s between people and between companies; ≤10 connection requests and ≤15 DMs per run
+   (three companies × three people is already near the cap — leave the rest for the next run);
+   stop on any CAPTCHA/rate-limit/verification signal.
 
 Resume runs (`options.resume`) must also send `GET /api/network/sendables?jobLinked=true` rows with
 `channel: "linkedin"` the same way, after re-submitting approved fills.
