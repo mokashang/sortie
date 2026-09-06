@@ -1,5 +1,8 @@
 import { RawJob, Fetcher } from "@/scanner/types";
 import { safeIso } from "@/scanner/dates";
+import { BoardRow } from "@/scanner/boards";
+import { FetchCtx } from "@/scanner/sources/types";
+import { parseReadmeTable } from "@/scanner/sources/readme-table";
 
 interface Listing {
   company_name: string;
@@ -21,14 +24,7 @@ function sponsorshipMarker(sponsorship: string | undefined): string {
   return "";
 }
 
-export async function fetchGithubList(
-  rawUrl: string,
-  kind: "newgrad" | "intern",
-  fetcher: Fetcher = fetch
-): Promise<RawJob[]> {
-  const res = await fetcher(rawUrl, { signal: AbortSignal.timeout(20_000) });
-  if (!res.ok) throw new Error(`github list ${rawUrl}: HTTP ${res.status}`);
-  const data = (await res.json()) as Listing[];
+export function mapListings(data: Listing[] | null | undefined, kind: "newgrad" | "intern"): RawJob[] {
   return (data ?? [])
     .filter((l) => l.active !== false && l.is_visible !== false)
     .map((l) => ({
@@ -46,6 +42,17 @@ export async function fetchGithubList(
     }));
 }
 
+export async function fetchGithubList(
+  rawUrl: string,
+  kind: "newgrad" | "intern",
+  fetcher: Fetcher = fetch
+): Promise<RawJob[]> {
+  const res = await fetcher(rawUrl, { signal: AbortSignal.timeout(20_000) });
+  if (!res.ok) throw new Error(`github list ${rawUrl}: HTTP ${res.status}`);
+  const data = (await res.json()) as Listing[];
+  return mapListings(data, kind);
+}
+
 // 默认监控的清单(config 而非硬编码个人信息;Phase B 用户可换)
 export const DEFAULT_LISTS: { url: string; kind: "newgrad" | "intern" }[] = [
   {
@@ -55,9 +62,36 @@ export const DEFAULT_LISTS: { url: string; kind: "newgrad" | "intern" }[] = [
   {
     // Verified live via smoke test on 2026-08-30 (2259 listings). If SimplifyJobs ever
     // renames/retires this repo before the next internship cycle, this URL could start
-    // 404ing — the scan orchestrator (Task 10) tolerates per-source failure, so a stale
-    // URL here only drops this one source rather than blocking the whole scan.
+    // 404ing — the scheduler tolerates per-board failure, so a stale URL here only drops
+    // this one list rather than blocking the whole scan.
     url: "https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/.github/scripts/listings.json",
     kind: "intern",
   },
 ];
+
+// 6 份清单,各是 boards 里的一行(family=github_list,origin=builtin)。前四份有机器可读的 JSON,
+// zapplyjobs 两份只有 README 表格。净增量实测(2026-09-05):vanshb03 +593/+219,zapplyjobs +547/+435。
+export interface ListBoard { key: string; company: string; url: string; kind: "newgrad" | "intern"; format: "json" | "readme"; }
+export const LIST_BOARDS: ListBoard[] = [
+  { key: "github_list:simplify-newgrad", company: "SimplifyJobs/New-Grad-Positions", url: DEFAULT_LISTS[0].url, kind: "newgrad", format: "json" },
+  { key: "github_list:simplify-intern-2027", company: "SimplifyJobs/Summer2027-Internships", url: DEFAULT_LISTS[1].url, kind: "intern", format: "json" },
+  { key: "github_list:vanshb03-newgrad-2027", company: "vanshb03/New-Grad-2027", url: "https://raw.githubusercontent.com/vanshb03/New-Grad-2027/dev/.github/scripts/listings.json", kind: "newgrad", format: "json" },
+  { key: "github_list:vanshb03-intern-2027", company: "vanshb03/Summer2027-Internships", url: "https://raw.githubusercontent.com/vanshb03/Summer2027-Internships/dev/.github/scripts/listings.json", kind: "intern", format: "json" },
+  { key: "github_list:zapply-newgrad-2027", company: "zapplyjobs/New-Grad-Jobs-2027", url: "https://raw.githubusercontent.com/zapplyjobs/New-Grad-Jobs-2027/main/README.md", kind: "newgrad", format: "readme" },
+  { key: "github_list:zapply-intern-2027", company: "zapplyjobs/Internships-2027", url: "https://raw.githubusercontent.com/zapplyjobs/Internships-2027/main/README.md", kind: "intern", format: "readme" },
+];
+
+// 条件请求:上次的 ETag 存在 boards.meta 里,GitHub 没更新就 304,一次握手了事。
+export async function fetchListBoard(board: BoardRow, ctx: FetchCtx): Promise<RawJob[]> {
+  const spec = LIST_BOARDS.find((l) => l.key === board.key);
+  if (!spec) throw new Error(`github_list ${board.ident}: unknown list`);
+  let etag: string | undefined;
+  try { etag = board.meta ? (JSON.parse(board.meta) as { etag?: string }).etag : undefined; } catch { etag = undefined; }
+  const res = await ctx.fetcher(spec.url, { headers: etag ? { "if-none-match": etag } : {}, signal: AbortSignal.timeout(30_000) });
+  if (res.status === 304) return [];
+  if (!res.ok) throw new Error(`github_list ${board.ident}: HTTP ${res.status}`);
+  const newTag = res.headers.get("etag");
+  if (newTag && newTag !== etag) ctx.setMeta?.({ etag: newTag });
+  if (spec.format === "json") return mapListings((await res.json()) as Listing[], spec.kind);
+  return parseReadmeTable(await res.text(), { kind: spec.kind, now: ctx.now });
+}

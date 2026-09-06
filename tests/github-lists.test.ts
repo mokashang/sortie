@@ -51,3 +51,19 @@ describe("github list source", () => {
     expect(baddate.postedAt).toBeNull();
   });
 });
+
+import { fetchListBoard, LIST_BOARDS } from "@/scanner/sources/github-lists";
+import type { BoardRow } from "@/scanner/boards";
+describe("fetchListBoard", () => {
+  it("defines 6 list boards and honors ETag (304 → no rows, 200 → rows + setMeta)", async () => {
+    expect(LIST_BOARDS.map((b) => b.key).sort()).toEqual(["github_list:simplify-intern-2027", "github_list:simplify-newgrad", "github_list:vanshb03-intern-2027", "github_list:vanshb03-newgrad-2027", "github_list:zapply-intern-2027", "github_list:zapply-newgrad-2027"]);
+    const board = { key: "github_list:simplify-newgrad", family: "github_list", ident: "simplify-newgrad", origin: "builtin", tier: "core", meta: JSON.stringify({ etag: "\"abc\"" }) } as BoardRow;
+    const seen: Record<string, unknown>[] = [];
+    const notModified = async (_u: string, init?: RequestInit) => { expect((init?.headers as Record<string, string>)["if-none-match"]).toBe("\"abc\""); return new Response(null, { status: 304 }); };
+    expect(await fetchListBoard(board, { fetcher: notModified, depth: "core", isKnownUrl: () => false, now: new Date(), setMeta: (p) => seen.push(p) })).toEqual([]);
+    const fixture = fs.readFileSync("tests/fixtures/github-listings.json", "utf8");
+    const ok = async () => new Response(fixture, { status: 200, headers: { etag: "\"def\"" } });
+    const rows = await fetchListBoard(board, { fetcher: ok, depth: "core", isKnownUrl: () => false, now: new Date(), setMeta: (p) => seen.push(p) });
+    expect(rows.length).toBeGreaterThan(0); expect(seen).toEqual([{ etag: "\"def\"" }]);
+  });
+});

@@ -11,6 +11,7 @@ import { fetchOracle } from "@/scanner/sources/oracle";
 import { fetchWorkable } from "@/scanner/sources/workable";
 import { fetchIcims } from "@/scanner/sources/icims";
 import { fetchLinkedinGuest } from "@/scanner/sources/linkedin-guest";
+import { fetchListBoard } from "@/scanner/sources/github-lists";
 
 export type { FetchCtx, BoardFetcher, FamilyConfig, Registry } from "@/scanner/sources/types";
 
@@ -29,4 +30,5 @@ export const LIVE_REGISTRY: Registry = {
   workable: { fetch: fetchWorkable, concurrency: 4, minGapMs: 200, gated: true },
   icims: { fetch: fetchIcims, concurrency: 2, minGapMs: 500, gated: true },
   linkedin: { fetch: fetchLinkedinGuest, concurrency: 1, minGapMs: 3000, gated: true },
+  github_list: { fetch: fetchListBoard, concurrency: 3, minGapMs: 0, gated: false },
 };
