@@ -9,6 +9,7 @@
 // core 每小时、longtail 每天、dormant 每周),没到期就什么都不做,所以每分钟敲一次很便宜。
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  if (process.env.SCAN_TICK_DISABLED) { console.log("[jobseeker] scan tick disabled by SCAN_TICK_DISABLED"); return; }
   const g = globalThis as { __jobseekerCron?: boolean };
   if (g.__jobseekerCron) return; // HMR guard: don't stack up timers across dev Fast Refresh
   g.__jobseekerCron = true;

@@ -10,10 +10,18 @@
 
 日常使用也可以用生产模式:`npm run build && npm start`(同样监听 127.0.0.1:3000,行为与 `dev` 一致,但没有热更新开销,适合常驻后台跑扫描)。
 
-## 自动扫描
-`src/instrumentation.ts` 在 dev/start 进程启动时注册一个零依赖的进程内定时器(每 30 秒检查一次系统时间,命中 07:00 / 13:00 整点触发,同一小时不重复);触发时对本机 `/api/scan?trigger=cron` 发起 POST,复用与手动扫描相同的 `runScan` 逻辑。只有当这次扫描确实插入了**新**职位(`inserted > 0`)才会发通知——职位升级(已有记录补全 JD/签证信息)不算新机会,不会触发通知,避免每天误报。
-这个定时器不依赖任何第三方 cron 库,也不在自身模块图里引入 `better-sqlite3` ——这样 `npm run dev` 的 webpack 才不会因为要为 edge runtime 静态打包原生模块而报 `Can't resolve 'fs'`。
-手动:UI"立即扫描"按钮(不带 `trigger` 参数,不触发通知)或 `npm run scan`。
+## 自动扫描(信息源层,2026-09-06 起)
+**来源注册表 `boards`**:凡是被轮询的东西都是一行——公司在某个招聘系统上的板块(`greenhouse:stripe`、`workday:nvidia.wd5/NVIDIAExternalCareerSite`、`smartrecruiters:ServiceNow`、`oracle:<host>/<site>`、`icims:<host>`、`workable:<acct>`)、6 份 GitHub 清单、字节/TikTok 两个门户、Amazon、LinkedIn 游客接口,以及 Chrome 通道的三个站点。板块从三处进来:种子 `config/boards.seed.json`;每个入库岗位的 apply_url 自动解析出它所属的板块(`src/scanner/board-key.ts`);开源公司目录一次性导入(/sources 页「导入开源目录」或 `npm run import-directory`,约 4700 家)。
+
+**调度**:`src/instrumentation.ts` 每 60 秒 `POST /api/scan/tick`(设 `SCAN_TICK_DISABLED=1` 可关掉,例如本地调试 UI 时)。tick 从 boards 里挑到期的板块(一次最多 300 个 / 90 秒),按招聘系统家族分组并发问(Workday 4 路、iCIMS 2 路、LinkedIn 1 路),统一入库(`src/scanner/upsert.ts`),再回拨下次时间:**core 每小时、longtail 每天、dormant 每周、muted 不问**(Workday/iCIMS 周期 ×3,LinkedIn ×2;失败按 2^n 退避,429 推到明天,连续 5 次 404 自动静音)。层级每天 03:xx 按过去 90 天产出重算(`src/scanner/retier.ts`:出过 ≥75 分升 core,90 天没有回 longtail,30 天零 ≥60 进 dormant);匹配器一写入 ≥75 分立即把该板块升 core。用户在 /sources 手动改过的层级不再自动动。
+
+**适配器**(`src/scanner/sources/`):greenhouse / lever / ashby(公开 JSON)、workday(站点自己的 CXS 接口,8 个关键词逐个搜,新岗再拉详情拿 JD)、bytedance(同一接口切 `website-path` 拿 TikTok 和 ByteDance,城市白名单筛美国)、smartrecruiters、oracle(HCM REST)、icims(HTML 解析)、workable、amazon(search.json)、linkedin 游客接口(免登录,有 JD 没外链,3 秒一次)、github_list(Simplify ×2、vanshb03 ×2 有 JSON;zapplyjobs ×2 解析 README 表格;带 ETag 条件请求)。非精选来源(目录板块、Workday、SmartRecruiters、Oracle、iCIMS、Workable、LinkedIn、Amazon)先过一道很宽的工程标题门,清单和种子公司不设门。
+
+**入库后**不变:去重整合 → Claude 打分(每小时最多 `MATCH_HOURLY_CAP`=1500 个)→ 内推建议 → jd_review 补正文接力(`src/scanner/relay.ts`)。扫描**不再发通知**——结果直接进 /queue,每行显示发布时间,默认按综合分(Claude 分数 − 时间惩罚:7 天内不扣,之后每 4 天扣 1,封顶 15;无日期按 35 天)排序,`src/apply/rank.ts`。
+
+手动:/queue 或 /sources 的「立即扫描」= 核心层 + 清单立刻问一遍(`npm run scan` 同);/sources 每个板块可「问一次」「静音」「改层级」;`npm run retier` 手动重算分级。
+
+**Chrome 扫描(值守)**:/sources 页「Chrome 扫描」排一个 `scan` run,值守会话按 `.claude/skills/scan-executor/SKILL.md` 在你登录的 Chrome 里只读地搜 LinkedIn / Handshake / Tesla,经 `POST /api/scan/ingest` 入库(`GET /api/scan/known` 跳过已有的)。只读:不点 Apply、不发消息。
 
 ## 匹配打分
 每个职位由 Claude(经你的订阅,无 API 费)按 profile 的 12 方向打分(0-100),写入 `matches` 表并推进申请状态(`matched` / `archived`)。
