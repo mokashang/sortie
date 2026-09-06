@@ -33,7 +33,7 @@ interface Card {
   overdue: boolean;
 }
 
-const NOTE_MAX = 280;
+const NOTE_MAX = 200;
 const RELATION: Record<string, string> = { alum: "校友", recruiter: "招聘方", hiring_manager: "用人经理", engineer: "工程师", other: "其他" };
 const OUTREACH_STATUS: Record<string, string> = {
   draft: "待你批准",
@@ -61,7 +61,7 @@ async function put(url: string, body: unknown) {
 
 // /apply's 内推进行中 board (spec §4.4 + follow-up): one card per company, several contacts per
 // card (the session casts a net of up to 3 people). Each contact carries two approved texts — the
-// full DM and a ≤280-char connection note — and the session picks the one the person's LinkedIn
+// full DM and a ≤200-char connection note — and the session picks the one the person's LinkedIn
 // reachability allows. Polls /api/referral/board every 5s.
 export function ReferralPanel() {
   const [cards, setCards] = useState<Card[]>([]);
