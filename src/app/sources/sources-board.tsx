@@ -31,6 +31,17 @@ export function SourcesBoard() {
   const [data, setData] = useState<Data | null>(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
+  // Chrome 扫描 run(kind=scan,仅值守会话):是否已有排队/运行中的,决定按钮能不能点。
+  const [scanRun, setScanRun] = useState<{ id: number; status: string; summary: string | null } | null>(null);
+  const loadScanRun = useCallback(async () => {
+    try {
+      const r = await fetch("/api/executor/status");
+      if (!r.ok) return;
+      const j = (await r.json()) as { runs?: { id: number; kind: string; status: string; summary: string | null }[] };
+      setScanRun((j.runs ?? []).find((x) => x.kind === "scan") ?? null);
+    } catch { /* 状态拉不到不影响页面 */ }
+  }, []);
+  useEffect(() => { void loadScanRun(); const t = setInterval(loadScanRun, 10_000); return () => clearInterval(t); }, [loadScanRun]);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page) });
@@ -51,6 +62,7 @@ export function SourcesBoard() {
       if (!r.ok) setMsg(`${label}失败:${String(j.error ?? r.status)}`);
       else if (label === "导入开源目录") setMsg(`目录导入完成:新增 ${j.inserted} 个板块,已有 ${j.skipped} 个,三天内自动铺开。`);
       else if (label === "立即扫描") setMsg(`扫描完成:新增 ${j.inserted} 个岗位,${(j.sourceErrors as unknown[] | undefined)?.length ?? 0} 个来源出错。`);
+      else if (label === "Chrome 扫描") setMsg("已排队。值守会话(桌面 App 里连着 Chrome 扩展的 Claude 会话)接单后会在你的 Chrome 里开始找岗。");
       else if (label === "问一次") setMsg(`问过了:新增 ${j.inserted} 个岗位${(j.errors as unknown[] | undefined)?.length ? ",有错误,见板块行" : ""}。`);
       await load();
     } finally { setBusy(""); }
@@ -66,9 +78,19 @@ export function SourcesBoard() {
           <button className="btn-ghost" onClick={() => act("导入开源目录", () => fetch("/api/sources/import-directory", { method: "POST" }))} disabled={!!busy} title="一次性把开源目录里 4700 多家公司加为长尾板块;再点只补新增">
             {busy === "导入开源目录" ? "导入中…" : "导入开源目录"}
           </button>
-          <span id="chrome-scan-slot" />
+          <button
+            className="btn-ghost"
+            disabled={!!busy || scanRun?.status === "queued" || scanRun?.status === "running"}
+            title="排一个 Chrome 扫描 run:值守会话在你登录的 Chrome 里只读地搜 LinkedIn / Handshake / Tesla,把新岗抄回来入库;不点 Apply、不发消息"
+            onClick={() => act("Chrome 扫描", async () => { const r = await fetch("/api/executor/start", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "scan", channel: "user_chrome", options: {} }) }); await loadScanRun(); return r; })}
+          >
+            {scanRun?.status === "queued" ? `Chrome 扫描:排队中(run #${scanRun.id})` : scanRun?.status === "running" ? `Chrome 扫描:运行中(run #${scanRun.id})` : "Chrome 扫描(LinkedIn / Handshake / Tesla)"}
+          </button>
         </div>
         {msg && <p className="text-sub" style={{ marginBottom: 8 }}>{msg}</p>}
+        {scanRun && scanRun.status !== "queued" && scanRun.status !== "running" && scanRun.summary && (
+          <p className="text-sub" style={{ marginBottom: 8 }}>上次 Chrome 扫描(run #{scanRun.id},{scanRun.status}):{scanRun.summary}</p>
+        )}
         {data?.lastTick && (
           <p className="text-sub" style={{ marginBottom: 8 }}>
             上次检查 {ago(data.lastTick.at)}:问了 {data.lastTick.payload.boards} 个板块,新增 {data.lastTick.payload.inserted} 个岗位,{data.lastTick.payload.errors?.length ?? 0} 个出错。
