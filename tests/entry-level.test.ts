@@ -18,3 +18,13 @@ describe("isEntryLevelTitle", () => {
     expect(isEntryLevelTitle("Software Engineer II")).toBe(true);
   });
 });
+
+import { isEngineeringTitle } from "@/scanner/entry-level";
+describe("isEngineeringTitle", () => {
+  it("passes engineering-ish titles and rejects retail/ops noise", () => {
+    for (const t of ["Software Engineer", "Firmware Engineer II", "Quantitative Researcher", "Data Scientist", "GPU Kernel Developer", "Security Analyst", "Robotics Perception Intern", "Machine Learning Engineer", "SRE", "Technical Program Manager"])
+      expect(isEngineeringTitle(t), t).toBe(true);
+    for (const t of ["Fulfillment Associate", "Tax Intern", "Sales & Operations Advisor in Training", "Registered Nurse", "Store Manager", "Marketing Coordinator"])
+      expect(isEngineeringTitle(t), t).toBe(false);
+  });
+});

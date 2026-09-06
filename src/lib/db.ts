@@ -5,6 +5,7 @@ import { dedupKey } from "@/scanner/fingerprint";
 import { jdStatusFor } from "@/scanner/jd-status";
 import { parseBoard, atsFromUrl } from "@/scanner/board-key";
 import { discoverBoardsFromJobs } from "@/scanner/boards";
+import { retierAll } from "@/scanner/retier";
 
 export type DB = Database.Database;
 
@@ -133,6 +134,8 @@ export function openDb(file?: string): DB {
         }
       })();
       discoverBoardsFromJobs(db);
+      // 已经出过高分岗的板块直接成为 core,不用等第二天凌晨的重算。
+      retierAll(db);
     }
   }
   // New DBs (found === 0) skip the migration block above but still need the index — it can't
