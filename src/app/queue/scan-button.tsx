@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { ChromeScanButton } from "@/app/components/chrome-scan-button";
 
 export function ScanButton() {
   const [busy, setBusy] = useState(false);
@@ -24,7 +25,8 @@ export function ScanButton() {
   }
   return (
     <p style={{ margin: "12px 0" }}>
-      <button onClick={scan} disabled={busy}>立即扫描</button> <span className="text-sub">{msg}</span>
+      <button onClick={scan} disabled={busy}>立即扫描</button> <span className="text-sub">{msg}</span>{" "}
+      <ChromeScanButton />
     </p>
   );
 }

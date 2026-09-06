@@ -19,9 +19,9 @@
 
 **入库后**不变:去重整合 → Claude 打分(每小时最多 `MATCH_HOURLY_CAP`=1500 个)→ 内推建议 → jd_review 补正文接力(`src/scanner/relay.ts`)。扫描**不再发通知**——结果直接进 /queue,每行显示发布时间,默认按综合分(Claude 分数 − 时间惩罚:7 天内不扣,之后每 4 天扣 1,封顶 15;无日期按 35 天)排序,`src/apply/rank.ts`。
 
-手动:/queue 或 /sources 的「立即扫描」= 核心层 + 清单立刻问一遍(`npm run scan` 同);/sources 每个板块可「问一次」「静音」「改层级」;`npm run retier` 手动重算分级。
+手动:/queue 的「立即扫描」= 核心层 + 清单立刻问一遍(`npm run scan` 同)。`/sources` 是**不在导航里的排查页**(直接访问):每个板块可「问一次」「静音」「改层级」,能看各家族产出和错误;`npm run retier` 手动重算分级。
 
-**Chrome 扫描(值守)**:/sources 页「Chrome 扫描」排一个 `scan` run,值守会话按 `.claude/skills/scan-executor/SKILL.md` 在你登录的 Chrome 里只读地搜 LinkedIn / Handshake / Tesla,经 `POST /api/scan/ingest` 入库(`GET /api/scan/known` 跳过已有的)。只读:不点 Apply、不发消息。
+**Chrome 扫描(值守)**:/queue「立即扫描」旁的「Chrome 扫描」排一个 `scan` run,值守会话按 `.claude/skills/scan-executor/SKILL.md` 在你登录的 Chrome 里只读地搜 LinkedIn / Handshake / Tesla,经 `POST /api/scan/ingest` 入库(`GET /api/scan/known` 跳过已有的)。只读:不点 Apply、不发消息。
 
 ## 匹配打分
 每个职位由 Claude(经你的订阅,无 API 费)按 profile 的 12 方向打分(0-100),写入 `matches` 表并推进申请状态(`matched` / `archived`)。
