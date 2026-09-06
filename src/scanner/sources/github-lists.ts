@@ -90,8 +90,9 @@ export async function fetchListBoard(board: BoardRow, ctx: FetchCtx): Promise<Ra
   const res = await ctx.fetcher(spec.url, { headers: etag ? { "if-none-match": etag } : {}, signal: AbortSignal.timeout(30_000) });
   if (res.status === 304) return [];
   if (!res.ok) throw new Error(`github_list ${board.ident}: HTTP ${res.status}`);
+  const rows = spec.format === "json" ? mapListings((await res.json()) as Listing[], spec.kind) : parseReadmeTable(await res.text(), { kind: spec.kind, now: ctx.now });
+  // ETag 只在成功解析之后才记:否则解析抛错后下次直接 304,这份清单就永远读不到了。
   const newTag = res.headers.get("etag");
   if (newTag && newTag !== etag) ctx.setMeta?.({ etag: newTag });
-  if (spec.format === "json") return mapListings((await res.json()) as Listing[], spec.kind);
-  return parseReadmeTable(await res.text(), { kind: spec.kind, now: ctx.now });
+  return rows;
 }

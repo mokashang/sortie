@@ -21,9 +21,11 @@ export async function POST() {
       lastRetierDay = day;
       retier = retierAll(db, now);
     }
-    const summary = await runTick(db, { now });
+    // 先让打分动起来:有积压就立刻接力,不等这一跳(首次铺开时一跳可能跑几分钟)结束。
     let pipeline = false;
-    if ((summary.inserted > 0 || unscoredBacklog(db) > 0) && matchBudget(db) > 0) pipeline = startPostScanPipeline(db);
+    if (unscoredBacklog(db) > 0 && matchBudget(db) > 0) pipeline = startPostScanPipeline(db);
+    const summary = await runTick(db, { now });
+    if (!pipeline && summary.inserted > 0 && matchBudget(db) > 0) pipeline = startPostScanPipeline(db);
     return NextResponse.json({ ...summary, pipeline, retier });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
