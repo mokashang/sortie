@@ -43,7 +43,7 @@ export function pickCanonical(db: DB, ids: number[]): number {
     IN_FLIGHT.has(r.status) ? 0 : 1,
     rankLocation(r.location),
     isRich(r.jd_text) ? 0 : 1,
-    r.source === "github_list" ? 1 : 0,
+    r.source === "github_list" || r.source === "linkedin" ? 1 : 0, // 清单行和 LinkedIn 行(无外部申请链接)让位给直连行
     r.id,
   ];
   rows.sort((a, b) => { const sa = score(a), sb = score(b); for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return sa[i] - sb[i]; return 0; });

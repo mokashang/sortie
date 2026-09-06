@@ -1,0 +1,568 @@
+[
+  {
+    "key": "greenhouse:anthropic",
+    "company": "Anthropic",
+    "directions": [
+      "ai_infra",
+      "mle",
+      "swe_general"
+    ]
+  },
+  {
+    "key": "greenhouse:stripe",
+    "company": "Stripe",
+    "directions": [
+      "swe_backend",
+      "swe_general"
+    ]
+  },
+  {
+    "key": "greenhouse:databricks",
+    "company": "Databricks",
+    "directions": [
+      "ai_infra",
+      "swe_backend"
+    ]
+  },
+  {
+    "key": "greenhouse:datadog",
+    "company": "Datadog",
+    "directions": [
+      "swe_backend",
+      "sre_infra"
+    ]
+  },
+  {
+    "key": "greenhouse:cloudflare",
+    "company": "Cloudflare",
+    "directions": [
+      "systems_perf",
+      "swe_backend"
+    ]
+  },
+  {
+    "key": "greenhouse:figma",
+    "company": "Figma",
+    "directions": [
+      "swe_general"
+    ]
+  },
+  {
+    "key": "greenhouse:coinbase",
+    "company": "Coinbase",
+    "directions": [
+      "swe_backend"
+    ]
+  },
+  {
+    "key": "greenhouse:robinhood",
+    "company": "Robinhood",
+    "directions": [
+      "swe_backend"
+    ]
+  },
+  {
+    "key": "greenhouse:pinterest",
+    "company": "Pinterest",
+    "directions": [
+      "swe_general",
+      "mle"
+    ]
+  },
+  {
+    "key": "greenhouse:reddit",
+    "company": "Reddit",
+    "directions": [
+      "swe_general"
+    ]
+  },
+  {
+    "key": "greenhouse:roblox",
+    "company": "Roblox",
+    "directions": [
+      "swe_general",
+      "systems_perf"
+    ]
+  },
+  {
+    "key": "greenhouse:samsara",
+    "company": "Samsara",
+    "directions": [
+      "swe_general",
+      "embedded"
+    ]
+  },
+  {
+    "key": "greenhouse:duolingo",
+    "company": "Duolingo",
+    "directions": [
+      "swe_general",
+      "mle"
+    ]
+  },
+  {
+    "key": "greenhouse:brex",
+    "company": "Brex",
+    "directions": [
+      "swe_backend"
+    ]
+  },
+  {
+    "key": "greenhouse:gusto",
+    "company": "Gusto",
+    "directions": [
+      "swe_general"
+    ]
+  },
+  {
+    "key": "greenhouse:scaleai",
+    "company": "Scale AI",
+    "directions": [
+      "ai_infra",
+      "mle"
+    ]
+  },
+  {
+    "key": "greenhouse:wehrtyou",
+    "company": "Hudson River Trading",
+    "directions": [
+      "quant",
+      "systems_perf"
+    ]
+  },
+  {
+    "key": "greenhouse:jumptrading",
+    "company": "Jump Trading",
+    "directions": [
+      "quant",
+      "systems_perf"
+    ]
+  },
+  {
+    "key": "greenhouse:drweng",
+    "company": "DRW",
+    "directions": [
+      "quant"
+    ]
+  },
+  {
+    "key": "greenhouse:imc",
+    "company": "IMC Trading",
+    "directions": [
+      "quant"
+    ]
+  },
+  {
+    "key": "lever:palantir",
+    "company": "Palantir",
+    "directions": [
+      "swe_general",
+      "swe_backend"
+    ]
+  },
+  {
+    "key": "lever:voleon",
+    "company": "Voleon",
+    "directions": [
+      "quant",
+      "mle"
+    ]
+  },
+  {
+    "key": "ashby:openai",
+    "company": "OpenAI",
+    "directions": [
+      "ai_infra",
+      "mle",
+      "swe_general"
+    ]
+  },
+  {
+    "key": "ashby:ramp",
+    "company": "Ramp",
+    "directions": [
+      "swe_backend"
+    ]
+  },
+  {
+    "key": "ashby:linear",
+    "company": "Linear",
+    "directions": [
+      "swe_general"
+    ]
+  },
+  {
+    "key": "ashby:notion",
+    "company": "Notion",
+    "directions": [
+      "swe_general"
+    ]
+  },
+  {
+    "key": "ashby:cursor",
+    "company": "Anysphere (Cursor)",
+    "directions": [
+      "swe_general",
+      "ai_infra"
+    ]
+  },
+  {
+    "key": "ashby:perplexity",
+    "company": "Perplexity",
+    "directions": [
+      "ai_infra",
+      "mle"
+    ]
+  },
+  {
+    "key": "workday:nvidia.wd5/NVIDIAExternalCareerSite",
+    "company": "NVIDIA",
+    "directions": [
+      "gpu_cuda",
+      "ai_infra",
+      "systems_perf"
+    ]
+  },
+  {
+    "key": "greenhouse:janestreet",
+    "company": "Jane Street",
+    "directions": [
+      "quant"
+    ]
+  },
+  {
+    "key": "greenhouse:waymo",
+    "company": "Waymo",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "ashby:cerebras",
+    "company": "Cerebras",
+    "directions": [
+      "gpu_cuda",
+      "ai_infra"
+    ]
+  },
+  {
+    "key": "ashby:etched",
+    "company": "Etched",
+    "directions": [
+      "gpu_cuda",
+      "ai_infra"
+    ]
+  },
+  {
+    "key": "greenhouse:togetherai",
+    "company": "Together AI",
+    "directions": [
+      "ai_infra",
+      "gpu_cuda"
+    ]
+  },
+  {
+    "key": "ashby:baseten",
+    "company": "Baseten",
+    "directions": [
+      "ai_infra"
+    ]
+  },
+  {
+    "key": "greenhouse:sambanovasystems",
+    "company": "SambaNova Systems",
+    "directions": [
+      "gpu_cuda",
+      "ai_infra"
+    ]
+  },
+  {
+    "key": "greenhouse:lightmatter",
+    "company": "Lightmatter",
+    "directions": [
+      "gpu_cuda",
+      "embedded"
+    ]
+  },
+  {
+    "key": "workday:crowdstrike.wd5/crowdstrikecareers",
+    "company": "CrowdStrike",
+    "directions": [
+      "security"
+    ]
+  },
+  {
+    "key": "greenhouse:sentinellabs",
+    "company": "SentinelOne",
+    "directions": [
+      "security"
+    ]
+  },
+  {
+    "key": "greenhouse:wizinc",
+    "company": "Wiz",
+    "directions": [
+      "security"
+    ]
+  },
+  {
+    "key": "greenhouse:okta",
+    "company": "Okta",
+    "directions": [
+      "security"
+    ]
+  },
+  {
+    "key": "greenhouse:abnormalsecurity",
+    "company": "Abnormal Security",
+    "directions": [
+      "security"
+    ]
+  },
+  {
+    "key": "greenhouse:tailscale",
+    "company": "Tailscale",
+    "directions": [
+      "security",
+      "sre_infra"
+    ]
+  },
+  {
+    "key": "greenhouse:andurilindustries",
+    "company": "Anduril",
+    "directions": [
+      "robotics",
+      "embedded"
+    ]
+  },
+  {
+    "key": "ashby:applied",
+    "company": "Applied Intuition",
+    "directions": [
+      "robotics",
+      "swe_general"
+    ]
+  },
+  {
+    "key": "lever:zoox",
+    "company": "Zoox",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:nuro",
+    "company": "Nuro",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:motional",
+    "company": "Motional",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:kodiak",
+    "company": "Kodiak Robotics",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:figureai",
+    "company": "Figure AI",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "ashby:physicalintelligence",
+    "company": "Physical Intelligence",
+    "directions": [
+      "robotics",
+      "mle"
+    ]
+  },
+  {
+    "key": "ashby:1x",
+    "company": "1X",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:agilityrobotics",
+    "company": "Agility Robotics",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "workday:bostondynamics.wd1/Boston_Dynamics",
+    "company": "Boston Dynamics",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:wayve",
+    "company": "Wayve",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:maymobility",
+    "company": "May Mobility",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:torcrobotics",
+    "company": "Torc Robotics",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "lever:dexterity",
+    "company": "Dexterity",
+    "directions": [
+      "robotics"
+    ]
+  },
+  {
+    "key": "greenhouse:spacex",
+    "company": "SpaceX",
+    "directions": [
+      "embedded",
+      "systems_perf"
+    ]
+  },
+  {
+    "key": "greenhouse:neuralink",
+    "company": "Neuralink",
+    "directions": [
+      "embedded"
+    ]
+  },
+  {
+    "key": "greenhouse:verkada",
+    "company": "Verkada",
+    "directions": [
+      "embedded",
+      "swe_general"
+    ]
+  },
+  {
+    "key": "greenhouse:formlabs",
+    "company": "Formlabs",
+    "directions": [
+      "embedded"
+    ]
+  },
+  {
+    "key": "greenhouse:astranis",
+    "company": "Astranis",
+    "directions": [
+      "embedded"
+    ]
+  },
+  {
+    "key": "lever:hermeus",
+    "company": "Hermeus",
+    "directions": [
+      "embedded"
+    ]
+  },
+  {
+    "key": "greenhouse:relativity",
+    "company": "Relativity Space",
+    "directions": [
+      "embedded"
+    ]
+  },
+  {
+    "key": "workday:analogdevices.wd1/External",
+    "company": "Analog Devices",
+    "directions": [
+      "embedded"
+    ]
+  },
+  {
+    "key": "workday:nxp.wd3/careers",
+    "company": "NXP",
+    "directions": [
+      "embedded"
+    ]
+  },
+  {
+    "key": "github_list:simplify-newgrad",
+    "company": "SimplifyJobs/New-Grad-Positions",
+    "builtin": true
+  },
+  {
+    "key": "github_list:simplify-intern-2027",
+    "company": "SimplifyJobs/Summer2027-Internships",
+    "builtin": true
+  },
+  {
+    "key": "github_list:vanshb03-newgrad-2027",
+    "company": "vanshb03/New-Grad-2027",
+    "builtin": true
+  },
+  {
+    "key": "github_list:vanshb03-intern-2027",
+    "company": "vanshb03/Summer2027-Internships",
+    "builtin": true
+  },
+  {
+    "key": "github_list:zapply-newgrad-2027",
+    "company": "zapplyjobs/New-Grad-Jobs-2027",
+    "builtin": true
+  },
+  {
+    "key": "github_list:zapply-intern-2027",
+    "company": "zapplyjobs/Internships-2027",
+    "builtin": true
+  },
+  {
+    "key": "bytedance:tiktok",
+    "company": "TikTok",
+    "builtin": true
+  },
+  {
+    "key": "bytedance:bytedance",
+    "company": "ByteDance",
+    "builtin": true
+  },
+  {
+    "key": "amazon:us",
+    "company": "Amazon",
+    "builtin": true
+  },
+  {
+    "key": "linkedin:guest",
+    "company": "LinkedIn(游客接口)",
+    "builtin": true
+  },
+  {
+    "key": "chrome:linkedin",
+    "company": "LinkedIn(Chrome 登录态)",
+    "builtin": true
+  },
+  {
+    "key": "chrome:handshake",
+    "company": "Handshake(USC)",
+    "builtin": true
+  },
+  {
+    "key": "chrome:tesla",
+    "company": "Tesla(Chrome)",
+    "builtin": true
+  }
+]

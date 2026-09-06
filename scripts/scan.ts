@@ -1,11 +1,9 @@
 import { getDb } from "../src/lib/db";
-import { syncWatchlist } from "../src/scanner/watchlist";
 import { runScan } from "../src/scanner/run";
-import seed from "../config/watchlist.seed.json";
 
+// 手动扫描:核心层 + 清单立刻问一遍(与 App 的「立即扫描」相同)。
 async function main() {
   const db = getDb();
-  syncWatchlist(db, seed);
   const s = await runScan(db);
   console.log(
     `scan done: +${s.inserted} new, ${s.upgraded} upgraded, ${s.duplicates} dup, ${s.visaSkipped} visa-flagged, ${s.locSkipped} non-US, ${s.sourceErrors.length} source errors (${s.durationMs}ms)`
