@@ -6,7 +6,7 @@ import { ScanButton } from "./scan-button";
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 25;
-const VALID_SORTS: QueueSort[] = ["score", "fresh", "company"];
+const VALID_SORTS: QueueSort[] = ["composite", "score", "fresh", "company"];
 
 // The single "职位" section: the old /jobs page (funnel counts, scan button, raw listing) merged
 // into the direction-tabbed apply queue. The raw listing lives on as the trailing "全部入库" tab.
@@ -44,8 +44,8 @@ export default async function QueuePage({
       : (tabs[0]?.direction ?? ALL_JOBS_DIRECTION);
 
   const page = Math.max(1, Number(sp.page) || 1);
-  // The raw listing defaults to scan order (what the old /jobs page showed); queue tabs to score.
-  const defaultSort: QueueSort = resolvedDirection === ALL_JOBS_DIRECTION ? "fresh" : "score";
+  // The raw listing defaults to scan order (what the old /jobs page showed); queue tabs to the composite (freshness-aware) rank.
+  const defaultSort: QueueSort = resolvedDirection === ALL_JOBS_DIRECTION ? "fresh" : "composite";
   const sort: QueueSort = VALID_SORTS.includes(sp.sort as QueueSort) ? (sp.sort as QueueSort) : defaultSort;
 
   const result =

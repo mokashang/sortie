@@ -4,7 +4,7 @@ import { directionLabel } from "@/matcher/directions";
 import { ALL_JOBS_DIRECTION } from "@/apply/queue";
 import { ModeFilter, ModeFilterValue } from "@/app/components/mode-filter";
 
-export type QueueSort = "score" | "fresh" | "company";
+export type QueueSort = "composite" | "score" | "fresh" | "company";
 
 interface TabInfo {
   direction: string;
@@ -37,6 +37,14 @@ interface QueueRow {
   // currently in the apply queue (pin/skip only apply to those).
   created_at?: string;
   in_queue?: number;
+}
+
+// 发布时间的相对显示:今天 / 昨天 / N 天前;≤3 天标「新」。排序用的综合分在 src/apply/rank.ts。
+function relDays(iso: string | null): { label: string; fresh: boolean } {
+  if (!iso) return { label: "—", fresh: false };
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (Number.isNaN(d)) return { label: "—", fresh: false };
+  return { label: d <= 0 ? "今天" : d === 1 ? "昨天" : `${d} 天前`, fresh: d <= 3 };
 }
 
 interface PagedResult {
@@ -167,8 +175,8 @@ export function QueueBoard({
     if (d === direction) return;
     // Each side has its own natural default (queue: score; raw listing: scan time) — only swap
     // when the user is still on the previous side's default, so an explicit choice sticks.
-    const wasDefault = sort === (direction === ALL_JOBS_DIRECTION ? "fresh" : "score");
-    const nextSort: QueueSort = wasDefault ? (d === ALL_JOBS_DIRECTION ? "fresh" : "score") : sort;
+    const wasDefault = sort === (direction === ALL_JOBS_DIRECTION ? "fresh" : "composite");
+    const nextSort: QueueSort = wasDefault ? (d === ALL_JOBS_DIRECTION ? "fresh" : "composite") : sort;
     setDirection(d);
     setSort(nextSort);
     setPage(1);
@@ -385,6 +393,7 @@ export function QueueBoard({
         <label style={{ fontSize: 13, color: "var(--sub)" }}>
           排序{" "}
           <select value={sort} onChange={(e) => changeSort(e.target.value as QueueSort)} disabled={loading}>
+            {!isAllTab && <option value="composite">综合</option>}
             <option value="score">分数</option>
             <option value="fresh">{isAllTab ? "入库时间" : "新鲜度"}</option>
             <option value="company">公司名</option>
@@ -421,6 +430,7 @@ export function QueueBoard({
               <th>公司</th>
               <th>标题</th>
               <th>地点</th>
+              {!isAllTab && <th>发布</th>}
               {isAllTab && <th>入库</th>}
               <th></th>
             </tr>
@@ -461,6 +471,15 @@ export function QueueBoard({
                       {r.jd_status === "login_wall" && <span className="chip" style={{ marginLeft: 6 }}>登录墙</span>}
                       {r.jd_status === "unreachable" && <span className="chip" style={{ marginLeft: 6 }}>打不开</span>}
                     </td>
+                    {!isAllTab && (() => {
+                      const rel = relDays(r.posted_at);
+                      return (
+                        <td className="mono" style={{ whiteSpace: "nowrap" }} title={r.posted_at ?? "来源未给发布日期"}>
+                          {rel.label}
+                          {rel.fresh && <span className="chip text-good" style={{ marginLeft: 4 }}>新</span>}
+                        </td>
+                      );
+                    })()}
                     {isAllTab && (
                       <td className="mono" style={{ whiteSpace: "nowrap" }}>
                         {r.created_at?.slice(0, 16) ?? "—"}
@@ -501,7 +520,7 @@ export function QueueBoard({
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={isAllTab ? 6 : 5} style={{ padding: 0, borderBottom: "1px solid var(--line)" }}>
+                      <td colSpan={6} style={{ padding: 0, borderBottom: "1px solid var(--line)" }}>
                         <div className="jd-drawer">
                           {!jd || jd.status === "loading" ? (
                             <p className="text-sub">加载中…</p>

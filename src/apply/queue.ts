@@ -1,4 +1,5 @@
 import { DB } from "@/lib/db";
+import { QUEUE_ORDER_SQL } from "@/apply/rank";
 import { Profile } from "@/lib/profile";
 import { buildAnswerPack, AnswerPack, AnswerPackReferral } from "@/apply/answers";
 import { EFFECTIVE_MODE_SQL, ApplyMode } from "@/apply/mode";
@@ -105,7 +106,7 @@ export function takeNextApplication(
          JOIN matches m ON m.job_id = j.id
          LEFT JOIN people p ON p.id = a.referral_person_id
          WHERE ${where}
-         ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+         ORDER BY a.pinned DESC, ${QUEUE_ORDER_SQL}
          LIMIT 1`
       )
       .get(...params) as CandidateRow | undefined;
@@ -408,7 +409,7 @@ export function pendingConfirmations(db: DB): PendingRow[] {
        JOIN matches m ON m.job_id = j.id
        LEFT JOIN people p ON p.id = a.referral_person_id
        WHERE a.status = 'awaiting_confirm'
-       ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC`
+       ORDER BY ${QUEUE_ORDER_SQL}`
     )
     .all() as PendingRawRow[];
 
@@ -662,7 +663,7 @@ export function setPinned(db: DB, jobId: number, pinned: boolean): void {
   if (result.changes === 0) throw new Error(`setPinned: no application for job ${jobId}`);
 }
 
-export type QueueSort = "score" | "fresh" | "company";
+export type QueueSort = "composite" | "score" | "fresh" | "company";
 
 export interface PagedQueueOpts {
   direction: string;
@@ -734,7 +735,9 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
       ? "j.company COLLATE NOCASE ASC, j.title ASC"
       : opts.sort === "fresh"
       ? "(j.posted_at IS NULL) ASC, j.posted_at DESC, j.created_at DESC"
-      : "COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC";
+      : opts.sort === "score"
+      ? "COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC"
+      : QUEUE_ORDER_SQL; // composite(默认):方向优先级 → 综合分(分数减时间惩罚)→ 原始分
 
   const rows = db
     .prepare(

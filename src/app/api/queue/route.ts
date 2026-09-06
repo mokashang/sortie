@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { pagedQueue, pagedAllJobs, ALL_JOBS_DIRECTION, QueueSort, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { isApplyMode } from "@/apply/mode";
+import { QUEUE_ORDER_SQL } from "@/apply/rank";
 
-const VALID_SORTS: QueueSort[] = ["score", "fresh", "company"];
+const VALID_SORTS: QueueSort[] = ["composite", "score", "fresh", "company"];
 
 // 申请队列:已匹配(未归档)的职位,按 梯队 × 分数 × 新鲜度 排序。
-// 排序键:tier 越小越优先(tier 1 = 最想去);同 tier 内 score 高者先;再按入库时间新者先。
+// 排序键:tier 越小越优先(tier 1 = 最想去);同 tier 内按综合分(分数减时间惩罚,src/apply/rank.ts)高者先;再按入库时间新者先。
 //
 // ?direction= (a direction slug, 未分类, or __all__) switches this endpoint into the interactive /queue page's paged mode (delegates to
 // pagedQueue — {rows,total,pages}, honoring ?page=/?pageSize=/?sort= too). Without ?direction=
@@ -19,8 +20,8 @@ export async function GET(req: Request) {
   if (direction) {
     const page = Number(url.searchParams.get("page") ?? "1") || 1;
     const pageSize = Number(url.searchParams.get("pageSize") ?? "25") || 25;
-    const sortParam = url.searchParams.get("sort") ?? "score";
-    const sort: QueueSort = VALID_SORTS.includes(sortParam as QueueSort) ? (sortParam as QueueSort) : "score";
+    const sortParam = url.searchParams.get("sort") ?? "composite";
+    const sort: QueueSort = VALID_SORTS.includes(sortParam as QueueSort) ? (sortParam as QueueSort) : "composite";
     // ?mode=referral|direct — the /queue 全部/建议内推/海投 filter (direction tabs only).
     const modeParam = url.searchParams.get("mode");
     const mode = isApplyMode(modeParam) ? modeParam : undefined;
@@ -43,7 +44,7 @@ export async function GET(req: Request) {
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
        WHERE a.status = 'matched' AND ${QUEUE_ELIGIBLE_SQL} AND m.score >= ?
-       ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+       ORDER BY ${QUEUE_ORDER_SQL}
        LIMIT 1000`
     )
     .all(minScore);
