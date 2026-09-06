@@ -1,0 +1,127 @@
+/* ==========================================================================
+   Sortie design tokens — "制版间 / Editorial Paper".
+   Every colour in the app comes from here. Light is the default; dark ("墨纸") applies when the
+   system prefers it and the user hasn't forced light, or when the user forced dark.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  --bg: #f6f3ec;
+  --surface: #fcfaf5;
+  --surface-2: #efeae0;
+  --surface-3: #e5dfd2;
+  --ink: #171512;
+  --ink-2: #3f3a33;
+  --sub: #6b665c;
+  --line: #e0dbcf;
+  --line-strong: #171512;
+
+  --accent: #8a1f11;
+  --accent-hover: #741a0e;
+  --accent-soft: #f3e2dd;
+  --accent-ink: #faf8f4;
+
+  --good: #3d6b35;
+  --good-soft: #e2ecdc;
+  --warn: #8a6d1f;
+  --warn-soft: #f2e9cb;
+  --danger: #8a1f11;
+  --danger-soft: #f3e2dd;
+  --info: #2f4f6f;
+  --info-soft: #dfe7ee;
+
+  --focus: #8a1f11;
+  --backdrop: rgba(23, 21, 18, 0.32);
+
+  --shadow-1: 0 1px 2px rgba(23, 21, 18, 0.06), 0 1px 0 rgba(23, 21, 18, 0.03);
+  --shadow-2: 0 12px 32px rgba(23, 21, 18, 0.18), 0 2px 6px rgba(23, 21, 18, 0.08);
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 48px;
+
+  --t-xs: 11px;
+  --t-sm: 12px;
+  --t-base: 14px;
+  --t-md: 15px;
+  --t-lg: 18px;
+  --t-xl: 24px;
+  --t-2xl: 32px;
+
+  --r: 0;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 160ms;
+
+  --sidebar-w: 224px;
+  --content-max: 1180px;
+
+  --font-serif: var(--font-newsreader), "Newsreader", "Songti SC", "Noto Serif SC", Georgia, serif;
+  --font-sans: var(--font-plex-sans), "IBM Plex Sans", "PingFang SC", "Noto Sans SC", -apple-system, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", "PingFang SC", ui-monospace, SFMono-Regular, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #171410;
+    --surface: #1e1a15;
+    --surface-2: #2a241c;
+    --surface-3: #352e24;
+    --ink: #ece7dc;
+    --ink-2: #cfc8ba;
+    --sub: #9a9281;
+    --line: #353026;
+    --line-strong: #ece7dc;
+    --accent: #c9553e;
+    --accent-hover: #d96a54;
+    --accent-soft: #3a221c;
+    --accent-ink: #171410;
+    --good: #7da36a;
+    --good-soft: #243120;
+    --warn: #c9a94e;
+    --warn-soft: #362d15;
+    --danger: #c9553e;
+    --danger-soft: #3a221c;
+    --info: #7fa3c2;
+    --info-soft: #1f2b36;
+    --focus: #c9553e;
+    --backdrop: rgba(0, 0, 0, 0.55);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #171410;
+  --surface: #1e1a15;
+  --surface-2: #2a241c;
+  --surface-3: #352e24;
+  --ink: #ece7dc;
+  --ink-2: #cfc8ba;
+  --sub: #9a9281;
+  --line: #353026;
+  --line-strong: #ece7dc;
+  --accent: #c9553e;
+  --accent-hover: #d96a54;
+  --accent-soft: #3a221c;
+  --accent-ink: #171410;
+  --good: #7da36a;
+  --good-soft: #243120;
+  --warn: #c9a94e;
+  --warn-soft: #362d15;
+  --danger: #c9553e;
+  --danger-soft: #3a221c;
+  --info: #7fa3c2;
+  --info-soft: #1f2b36;
+  --focus: #c9553e;
+  --backdrop: rgba(0, 0, 0, 0.55);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 16px 40px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
