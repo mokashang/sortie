@@ -25,12 +25,14 @@ export async function GET(req: Request) {
     // ?mode=referral|direct — the /queue 全部/建议内推/海投 filter (direction tabs only).
     const modeParam = url.searchParams.get("mode");
     const mode = isApplyMode(modeParam) ? modeParam : undefined;
+    // ?q= — company/title search (both the direction tabs and the 全部入库 tab).
+    const q = url.searchParams.get("q")?.trim() || undefined;
     // ALL_JOBS_DIRECTION is the merged /queue page's "全部入库" tab: every visible job, scored or
     // not — same {rows,total,pages} shape, rows additionally carry source/created_at/in_queue.
     const result =
       direction === ALL_JOBS_DIRECTION
-        ? pagedAllJobs(getDb(), { page, pageSize, sort })
-        : pagedQueue(getDb(), { direction, page, pageSize, sort, mode });
+        ? pagedAllJobs(getDb(), { page, pageSize, sort, q })
+        : pagedQueue(getDb(), { direction, page, pageSize, sort, mode, q });
     return NextResponse.json(result);
   }
 

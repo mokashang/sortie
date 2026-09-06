@@ -672,6 +672,8 @@ export interface PagedQueueOpts {
   sort: QueueSort;
   // /queue's 全部/建议内推/海投 filter — by *effective* mode (override, else suggestion).
   mode?: ApplyMode;
+  // Free-text search: company or title contains q (case-insensitive). Blank = no filter.
+  q?: string;
 }
 
 export interface PagedQueueRow {
@@ -704,6 +706,14 @@ export interface PagedQueueResult {
 // as queueByDirection/takeNextApplication's undirected picker (status='matched', not parked, not
 // loc-flagged), scoped to one direction, with pinned rows always first (see takeNextApplication's
 // a.pinned DESC comment above) and then the user's chosen secondary sort.
+// "AND (j.company LIKE ? OR j.title LIKE ?)" plus its two params, or nothing for a blank query.
+function searchFilter(q: string | undefined): { sql: string; params: string[] } {
+  const term = q?.trim();
+  if (!term) return { sql: "", params: [] };
+  const like = `%${term}%`;
+  return { sql: " AND (j.company LIKE ? OR j.title LIKE ?)", params: [like, like] };
+}
+
 export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
   // UNCLASSIFIED_DIRECTION is a display sentinel for a NULL matches.direction (see
   // queueByDirection) — it never appears as an actual column value, so the filter below must
@@ -712,6 +722,8 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
   const directionParams: unknown[] = opts.direction === UNCLASSIFIED_DIRECTION ? [] : [opts.direction];
   const modeFilter = opts.mode ? ` AND ${EFFECTIVE_MODE_SQL} = ?` : "";
   if (opts.mode) directionParams.push(opts.mode);
+  const search = searchFilter(opts.q);
+  directionParams.push(...search.params);
 
   const total = (
     db
@@ -721,7 +733,7 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
          JOIN jobs j ON j.id = a.job_id
          JOIN matches m ON m.job_id = j.id
          WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
-           AND ${directionFilter}${modeFilter}`
+           AND ${directionFilter}${modeFilter}${search.sql}`
       )
       .get(...directionParams) as { n: number }
   ).n;
@@ -750,7 +762,7 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
        JOIN jobs j ON j.id = a.job_id
        JOIN matches m ON m.job_id = j.id
        WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
-         AND ${directionFilter}${modeFilter}
+         AND ${directionFilter}${modeFilter}${search.sql}
        ORDER BY a.pinned DESC, ${secondarySort}
        LIMIT ? OFFSET ?`
     )
@@ -782,8 +794,9 @@ export interface PagedAllJobsResult {
 // same paged/sorted shape as pagedQueue so the /queue board can render both from one table.
 // matches/applications are LEFT JOINed: an unscored job still shows up with score NULL.
 export function pagedAllJobs(db: DB, opts: Omit<PagedQueueOpts, "direction">): PagedAllJobsResult {
-  const where = "j.visa_flag IS NULL AND j.loc_flag IS NULL";
-  const total = (db.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${where}`).get() as { n: number }).n;
+  const search = searchFilter(opts.q);
+  const where = `j.visa_flag IS NULL AND j.loc_flag IS NULL${search.sql}`;
+  const total = (db.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${where}`).get(...search.params) as { n: number }).n;
 
   const pages = total === 0 ? 1 : Math.max(1, Math.ceil(total / opts.pageSize));
   const page = Math.min(Math.max(1, opts.page), pages);
@@ -812,7 +825,7 @@ export function pagedAllJobs(db: DB, opts: Omit<PagedQueueOpts, "direction">): P
        ORDER BY ${orderBy}
        LIMIT ? OFFSET ?`
     )
-    .all(opts.pageSize, offset) as PagedAllJobsRow[];
+    .all(...search.params, opts.pageSize, offset) as PagedAllJobsRow[];
 
   return { rows, total, pages };
 }
