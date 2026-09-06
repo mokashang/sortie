@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   role_kind TEXT,                  -- NULL | eng | non_tech
   elig_source TEXT,                -- NULL | match_llm | jd_review | executor_live
   jd_status TEXT,                  -- NULL(ATS 自带正文) | missing | reviewed | login_wall | unreachable | closed
+  board_key TEXT,                  -- 所属轮询板块 family:ident(由 apply_url 解析,所有来源都算)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -158,6 +159,29 @@ CREATE TABLE IF NOT EXISTS executor_runs (
   claimed_at TEXT,               -- user_chrome only: when an attended session claimed a queued row
   ended_at TEXT
 );
+
+-- 信息源注册表:凡是被轮询的东西都是一行(spec 2026-09-06 job-sources §1)。
+CREATE TABLE IF NOT EXISTS boards (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT NOT NULL UNIQUE,              -- family:ident
+  family TEXT NOT NULL,                  -- greenhouse|lever|ashby|workday|bytedance|smartrecruiters|oracle|icims|workable|amazon|linkedin|github_list|chrome
+  ident TEXT NOT NULL,
+  company TEXT,
+  origin TEXT NOT NULL,                  -- seed | url | directory | builtin | manual
+  tier TEXT NOT NULL DEFAULT 'longtail', -- core(每小时) | longtail(每天) | dormant(每周) | muted
+  tier_reason TEXT,
+  tier_locked INTEGER NOT NULL DEFAULT 0,
+  directions TEXT,                       -- JSON 数组,种子给的方向提示
+  meta TEXT,                             -- JSON,适配器附加信息(如清单 ETag)
+  next_due_at TEXT,                      -- NULL = 立刻到期
+  last_polled_at TEXT,
+  last_ok_at TEXT,
+  last_error TEXT,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_boards_due ON boards(tier, next_due_at);
 
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at);

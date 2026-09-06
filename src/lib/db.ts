@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import { dedupKey } from "@/scanner/fingerprint";
 import { jdStatusFor } from "@/scanner/jd-status";
+import { parseBoard, atsFromUrl } from "@/scanner/board-key";
+import { discoverBoardsFromJobs } from "@/scanner/boards";
 
 export type DB = Database.Database;
 
@@ -19,7 +21,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -115,6 +117,23 @@ export function openDb(file?: string): DB {
     // session picks the variant by how the person is reachable, never edits text itself).
     const outreachCols11 = (db.prepare("PRAGMA table_info(outreach)").all() as { name: string }[]).map((c) => c.name);
     if (!outreachCols11.includes("draft_note")) db.exec("ALTER TABLE outreach ADD COLUMN draft_note TEXT");
+    // v11 -> v12: boards 注册表 + jobs.board_key(spec 2026-09-06 job-sources §1)。boards 表由上面的
+    // CREATE TABLE IF NOT EXISTS 建好;这里给老 jobs 加列、按 apply_url 回填 board_key/ats,并把解析出的
+    // 板块登记进 boards(origin=url)。只处理 board_key 仍为空的行 —— 可重跑。
+    const jobCols12 = (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name);
+    if (!jobCols12.includes("board_key")) db.exec("ALTER TABLE jobs ADD COLUMN board_key TEXT");
+    // 测试里手工搭的更老的 jobs 表可能连 apply_url/ats 都没有;真实库一定有。没有就只加列不回填。
+    if (jobCols12.includes("apply_url") && jobCols12.includes("ats")) {
+      const need12 = db.prepare("SELECT id, apply_url, ats FROM jobs WHERE board_key IS NULL AND apply_url IS NOT NULL").all() as { id: number; apply_url: string; ats: string | null }[];
+      const upd12 = db.prepare("UPDATE jobs SET board_key = ?, ats = COALESCE(ats, ?) WHERE id = ?");
+      db.transaction(() => {
+        for (const r of need12) {
+          const b = parseBoard(r.apply_url);
+          upd12.run(b?.key ?? null, r.ats ?? atsFromUrl(r.apply_url), r.id);
+        }
+      })();
+      discoverBoardsFromJobs(db);
+    }
   }
   // New DBs (found === 0) skip the migration block above but still need the index — it can't
   // live in schema.sql's CREATE INDEX IF NOT EXISTS because that runs via db.exec(readSchema())
@@ -122,6 +141,7 @@ export function openDb(file?: string): DB {
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_dedup_key ON jobs(dedup_key)");
   // Same reasoning as idx_jobs_dedup_key above: created here so both old and new DBs get it.
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_duplicate_of ON jobs(duplicate_of)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_board_key ON jobs(board_key)");
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 
   return db;

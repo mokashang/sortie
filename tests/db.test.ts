@@ -61,7 +61,7 @@ describe("db", () => {
 
   it("sets user_version as a migration hook for future plans", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(11);
+    expect(db.pragma("user_version", { simple: true })).toBe(12);
   });
 
   it("reads user_version before stamping it (read-then-stamp, not a blind unconditional write)", () => {
@@ -70,7 +70,7 @@ describe("db", () => {
       openDb(":memory:");
       const calls = spy.mock.calls.map((c) => c[0]);
       const readIdx = calls.indexOf("user_version");
-      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*11$/.test(c));
+      const writeIdx = calls.findIndex((c) => typeof c === "string" && /^user_version\s*=\s*12$/.test(c));
       expect(readIdx).toBeGreaterThanOrEqual(0);
       expect(writeIdx).toBeGreaterThan(readIdx);
     } finally {
@@ -142,7 +142,7 @@ describe("db", () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_jobs_duplicate_of'")
       .get();
     expect(dupIdx).toBeTruthy();
-    expect(db.pragma("user_version", { simple: true })).toBe(11);
+    expect(db.pragma("user_version", { simple: true })).toBe(12);
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
@@ -186,7 +186,7 @@ describe("db v8 migration", () => {
       expect(aCols).toContain("referral_reached_at");
       const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map((t) => t.name);
       expect(tables).toContain("outreach_jobs");
-      expect(db.pragma("user_version", { simple: true })).toBe(11);
+      expect(db.pragma("user_version", { simple: true })).toBe(12);
       db.close();
     }
   });
