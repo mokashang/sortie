@@ -18,7 +18,7 @@ import {
 // executorStatus() to show progress until the process exits.
 
 // scan = Chrome 扫描 run(值守会话在用户 Chrome 里找岗:LinkedIn 登录态 / Handshake / Tesla,只读,经 /api/scan/ingest 入库)。仅 user_chrome。
-export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review" | "scan";
+export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review" | "scan" | "referral_check";
 
 // headless: this module spawns a detached `claude -p` process itself (unchanged path).
 // user_chrome: the "值守会话" (attended session) channel — no process is spawned here. A row is
@@ -104,6 +104,8 @@ function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
       return buildJdReviewPrompt({ limit: options.limit });
     case "scan":
       throw new Error("scan runs are attended-only (user_chrome); no headless prompt exists");
+    case "referral_check":
+      throw new Error("referral_check runs are attended-only (user_chrome); no headless prompt exists");
     default:
       throw new Error(`startExecutor: unknown kind '${kind satisfies never}'`);
   }
@@ -366,10 +368,13 @@ export interface ClaimedRun {
 // `AND status='queued'` guard means a race between two attended sessions polling at once loses
 // gracefully — the loser's UPDATE affects 0 rows and it gets null back, not someone else's run).
 // Returns null when there's nothing queued.
-export function claimNextRun(db: DB, channel: ExecutorChannel = "user_chrome"): ClaimedRun | null {
+// `kinds` (optional) restricts which run kinds this claimer takes — an attended session that only
+// knows the apply/referral protocols must not swallow a queued 'scan' run meant for another.
+export function claimNextRun(db: DB, channel: ExecutorChannel = "user_chrome", kinds?: ExecutorKind[]): ClaimedRun | null {
+  const kindFilter = kinds && kinds.length > 0 ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
   const row = db
-    .prepare("SELECT id, kind, options, log_path FROM executor_runs WHERE channel=? AND status='queued' ORDER BY id ASC LIMIT 1")
-    .get(channel) as { id: number; kind: string; options: string; log_path: string | null } | undefined;
+    .prepare(`SELECT id, kind, options, log_path FROM executor_runs WHERE channel=? AND status='queued'${kindFilter} ORDER BY id ASC LIMIT 1`)
+    .get(channel, ...(kinds ?? [])) as { id: number; kind: string; options: string; log_path: string | null } | undefined;
   if (!row) return null;
 
   const result = db

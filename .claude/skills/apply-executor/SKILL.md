@@ -210,6 +210,19 @@ short, per company:
 Resume runs (`options.resume`) must also send `GET /api/network/sendables?jobLinked=true` rows with
 `channel: "linkedin"` the same way, after re-submitting approved fills.
 
+## 2c. Referral conversation check (`kind: "referral_check"` runs, and before every other run)
+
+Read-only. `GET /api/referral/checklist` → `{checklist:[{outreachId, status, personName, linkedinUrl,
+company, lastEntryAt, sentText}]}`. For each row: open the profile; **accepted** = the top card no
+longer shows "Pending" (a 1st-degree profile shows Message without Pending). If accepted, click
+Message (free for 1st degree), read the whole thread, and collect every message as
+`{dir: "sent"|"received", at?: ISO, text}` (yours = sent, theirs = received; copy text verbatim).
+Then `POST /api/referral/harvest {"outreachId", "accepted", "messages"}` — the App dedupes, moves
+status, and has Claude label the stage. Report `accepted:false` with no messages when nothing
+changed so the card's "上次检查" timestamp moves. Never click Connect, Send, or type anything in
+this mode. ≥10s between people. A referred/will_refer stage is only ever *shown* — the user
+confirms via 「有内推了」.
+
 ## 3. Tiered fill strategy
 
 First, determine which ATS you're on from `task.ats` (already detected by the App from the job

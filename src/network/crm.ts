@@ -35,6 +35,7 @@ export const OUTREACH_STATUSES = [
   "referral_won",
   "no_response",
   "archived",
+  "accepted", // connection request accepted, nothing said yet (referral monitor, harvest.ts)
 ] as const;
 export type OutreachStatus = (typeof OUTREACH_STATUSES)[number];
 
@@ -172,6 +173,11 @@ export interface OutreachRow {
   channel: string;
   draft: string | null;
   draftNote: string | null;
+  referralStage: string | null;
+  stageSummary: string | null;
+  stageAction: string | null;
+  stageLink: string | null;
+  lastCheckedAt: string | null;
   threadLog: ThreadEntry[];
   status: string;
   outcome: string | null;
@@ -188,6 +194,11 @@ interface OutreachRawRow {
   channel: string;
   draft: string | null;
   draft_note: string | null;
+  referral_stage: string | null;
+  stage_summary: string | null;
+  stage_action: string | null;
+  stage_link: string | null;
+  last_checked_at: string | null;
   thread_log: string;
   status: string;
   outcome: string | null;
@@ -211,6 +222,11 @@ function rowToOutreach(r: OutreachRawRow): OutreachRow {
     channel: r.channel,
     draft: r.draft,
     draftNote: r.draft_note,
+    referralStage: r.referral_stage,
+    stageSummary: r.stage_summary,
+    stageAction: r.stage_action,
+    stageLink: r.stage_link,
+    lastCheckedAt: r.last_checked_at,
     threadLog,
     status: r.status,
     outcome: r.outcome,

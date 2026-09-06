@@ -16,6 +16,8 @@ export async function register() {
   const port = process.env.PORT || "3000";
   setInterval(() => {
     fetch(`http://127.0.0.1:${port}/api/scan/tick`, { method: "POST" }).catch((e) => console.error("[scan tick]", e));
+    // Referral-conversation monitor: the route itself only acts at 09:xx / 18:xx local.
+    fetch(`http://127.0.0.1:${port}/api/referral/tick`, { method: "POST" }).catch((e) => console.error("[referral tick]", e));
   }, 60_000);
   console.log("[jobseeker] scheduler registered: scan tick every 60s (in-process timer)");
 }

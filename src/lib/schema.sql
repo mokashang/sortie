@@ -83,7 +83,12 @@ CREATE TABLE IF NOT EXISTS outreach (
   playbook TEXT NOT NULL,          -- referral|self_pitch|recruiter|coffee_chat|hidden_opportunity|followup|thanks
   channel TEXT NOT NULL,           -- linkedin | email
   draft TEXT,
-  draft_note TEXT,                 -- ≤280-char LinkedIn connection-note variant of draft (linkedin channel)
+  draft_note TEXT,                 -- ≤200-char LinkedIn connection-note variant of draft (linkedin channel)
+  referral_stage TEXT,             -- pending|accepted|replied|asked_resume|will_refer|referred|declined|no_headcount|other (Claude, src/network/harvest.ts)
+  stage_summary TEXT,              -- one-line Claude summary of where the conversation stands
+  stage_action TEXT,               -- suggested next action for the user
+  stage_link TEXT,                 -- referral link/code the person sent, if any
+  last_checked_at TEXT,            -- when the attended session last harvested this thread
   thread_log TEXT NOT NULL DEFAULT '[]',   -- JSON: [{at, dir: sent|received, text}]
   status TEXT NOT NULL DEFAULT 'draft',    -- draft|pending_send|sent|replied|meeting|referral_won|no_response
   outcome TEXT,

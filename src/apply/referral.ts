@@ -192,6 +192,13 @@ export interface ReferralCardOutreach {
   draft: string | null;
   draftNote: string | null;
   sentAt: string | null;
+  // Referral-conversation monitor (src/network/harvest.ts)
+  stage: string | null;
+  stageSummary: string | null;
+  stageAction: string | null;
+  stageLink: string | null;
+  lastCheckedAt: string | null;
+  lastMessage: { dir: "sent" | "received"; at: string; text: string } | null;
 }
 export interface ReferralCard {
   company: string;
@@ -248,6 +255,12 @@ export function referralBoard(db: DB, now: () => number = () => Date.now()): Ref
           draft: o.draft,
           draftNote: o.draftNote,
           sentAt: sent?.at ?? null,
+          stage: o.referralStage,
+          stageSummary: o.stageSummary,
+          stageAction: o.stageAction,
+          stageLink: o.stageLink,
+          lastCheckedAt: o.lastCheckedAt,
+          lastMessage: o.threadLog.length ? o.threadLog[o.threadLog.length - 1] : null,
         };
       });
     const reached = group.map((r) => r.referral_reached_at).filter((x): x is string => !!x).sort()[0] ?? null;

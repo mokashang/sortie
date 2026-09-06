@@ -22,7 +22,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -118,6 +118,13 @@ export function openDb(file?: string): DB {
     // session picks the variant by how the person is reachable, never edits text itself).
     const outreachCols11 = (db.prepare("PRAGMA table_info(outreach)").all() as { name: string }[]).map((c) => c.name);
     if (!outreachCols11.includes("draft_note")) db.exec("ALTER TABLE outreach ADD COLUMN draft_note TEXT");
+    // v12 -> v13: outreach gained the referral-conversation monitor columns (referral_stage /
+    // stage_summary / stage_action / stage_link / last_checked_at — src/network/harvest.ts). New
+    // status value 'accepted' (invite accepted, no reply yet) needs no column change.
+    const outreachCols13 = (db.prepare("PRAGMA table_info(outreach)").all() as { name: string }[]).map((c) => c.name);
+    for (const col of ["referral_stage", "stage_summary", "stage_action", "stage_link", "last_checked_at"] as const) {
+      if (!outreachCols13.includes(col)) db.exec(`ALTER TABLE outreach ADD COLUMN ${col} TEXT`);
+    }
     // v11 -> v12: boards 注册表 + jobs.board_key(spec 2026-09-06 job-sources §1)。boards 表由上面的
     // CREATE TABLE IF NOT EXISTS 建好;这里给老 jobs 加列、按 apply_url 回填 board_key/ats,并把解析出的
     // 板块登记进 boards(origin=url)。只处理 board_key 仍为空的行 —— 可重跑。

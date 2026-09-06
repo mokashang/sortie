@@ -24,6 +24,12 @@ interface CardOutreach {
   draft: string | null;
   draftNote: string | null;
   sentAt: string | null;
+  stage: string | null;
+  stageSummary: string | null;
+  stageAction: string | null;
+  stageLink: string | null;
+  lastCheckedAt: string | null;
+  lastMessage: { dir: "sent" | "received"; at: string; text: string } | null;
 }
 interface Card {
   company: string;
@@ -43,7 +49,25 @@ const OUTREACH_STATUS: Record<string, string> = {
   referral_won: "已拿到内推",
   no_response: "无回应",
   archived: "已作废",
+  accepted: "已接受邀请,未回",
 };
+const STAGE: Record<string, { label: string; cls: string }> = {
+  pending: { label: "邀请待接受", cls: "text-sub" },
+  accepted: { label: "已接受未回", cls: "" },
+  replied: { label: "已回复", cls: "text-good" },
+  asked_resume: { label: "对方要简历/信息", cls: "text-warn" },
+  will_refer: { label: "答应内推", cls: "text-good" },
+  referred: { label: "已内推 ✓", cls: "text-good" },
+  declined: { label: "婉拒", cls: "text-accent" },
+  no_headcount: { label: "没名额/岗位关了", cls: "text-accent" },
+  other: { label: "其他", cls: "text-sub" },
+};
+function localTs(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 16);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 type WonForm = { company: string; jobIds: number[]; personName: string; source: string; link: string; code: string; note: string };
 type Edited = { draft: string; note: string };
@@ -173,6 +197,20 @@ export function ReferralPanel() {
     }
   }
 
+  async function checkNow() {
+    setBusy("check");
+    setError("");
+    setNotice("");
+    try {
+      const j = await post("/api/referral/check", {});
+      setNotice(j.queued ? `已入队检查 run #${j.runId},等值守会话去 LinkedIn 看邀请与消息` : "已有检查在排队/进行中,或没有需要检查的对话");
+    } catch (e) {
+      setError(`检查失败:${e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rejectDraft(o: CardOutreach) {
     setBusy(`reject-${o.id}`);
     setError("");
@@ -199,6 +237,14 @@ export function ReferralPanel() {
     <div>
       {notice && <p className="text-good">{notice}</p>}
       {error && <p className="text-accent">{error}</p>}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <button className="btn-ghost" onClick={checkNow} disabled={busy === "check"}>
+          现在检查回复
+        </button>
+        <span className="text-sub" style={{ fontSize: 12 }}>
+          值守会话早 9 点、晚 6 点各自动查一次 LinkedIn(邀请是否接受、有没有新消息),每次接单前也会查;这里可随时手动触发。
+        </span>
+      </div>
       {cards.map((c) => {
         const ids = c.jobs.map((j) => j.jobId);
         const ready = c.jobs.some((j) => j.status === "referral_ready");
@@ -210,7 +256,10 @@ export function ReferralPanel() {
           .join(" · ");
         const drafts = c.outreaches.filter((o) => o.status === "draft");
         const anyOut = c.outreaches.some((o) => o.status === "sent" || o.status === "replied");
-        const replied = c.outreaches.find((o) => o.status === "replied" || o.status === "sent");
+        const referredOne = c.outreaches.find((o) => o.stage === "referred" || o.stage === "will_refer");
+        const replied = referredOne ?? c.outreaches.find((o) => o.status === "replied" || o.status === "accepted" || o.status === "sent");
+        const wonLink = referredOne?.stageLink ?? "";
+        const wonIsUrl = /^https?:\/\//.test(wonLink);
         return (
           <div key={c.company} className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
@@ -287,8 +336,34 @@ export function ReferralPanel() {
                         )}
                         {" · "}
                         <span className={o.status === "sent" || o.status === "replied" ? "text-good" : ""}>{OUTREACH_STATUS[o.status] ?? o.status}</span>
-                        {o.sentAt ? <span className="mono"> · {o.sentAt.slice(0, 16).replace("T", " ")}</span> : null}
+                        {o.sentAt ? <span className="mono"> · 发于 {localTs(o.sentAt)}</span> : null}
                       </div>
+                      {(o.status === "sent" || o.status === "accepted" || o.status === "replied") && (
+                        <div style={{ fontSize: 13, marginTop: 4 }}>
+                          <span className={`chip ${STAGE[o.stage ?? "pending"]?.cls ?? ""}`}>{STAGE[o.stage ?? "pending"]?.label ?? o.stage}</span>
+                          {o.lastCheckedAt && (
+                            <span className="text-sub" style={{ fontSize: 12, marginLeft: 6 }}>
+                              上次检查 {localTs(o.lastCheckedAt.replace(" ", "T") + "Z")}
+                            </span>
+                          )}
+                          {o.stageSummary && <div style={{ marginTop: 4 }}>{o.stageSummary}</div>}
+                          {o.lastMessage && o.lastMessage.dir === "received" && (
+                            <div className="text-sub" style={{ fontSize: 12, marginTop: 2 }}>
+                              最后一条(对方 {localTs(o.lastMessage.at)}):{o.lastMessage.text.slice(0, 160)}
+                              {o.lastMessage.text.length > 160 ? "…" : ""}
+                            </div>
+                          )}
+                          {(o.stage === "referred" || o.stage === "will_refer") && (
+                            <div className="text-good" style={{ fontWeight: 600, marginTop: 4 }}>
+                              {o.stage === "referred" ? "对方说已经内推了" : "对方答应内推"}
+                              {o.stageLink ? ` · 链接/码:${o.stageLink}` : ""} → 请点下方「有内推了」确认
+                            </div>
+                          )}
+                          {o.stageAction && o.stage !== "referred" && (
+                            <div className="text-warn" style={{ fontSize: 12, marginTop: 2 }}>建议:{o.stageAction}</div>
+                          )}
+                        </div>
+                      )}
                       {o.status === "draft" ? (
                         <>
                           <label className="text-sub" style={{ fontSize: 12, display: "block", marginTop: 6 }}>
@@ -363,8 +438,8 @@ export function ReferralPanel() {
                         jobIds: ids,
                         personName: replied?.personName ?? "",
                         source: replied ? (replied.channel === "email" ? "email" : "linkedin") : "wechat",
-                        link: "",
-                        code: "",
+                        link: wonIsUrl ? wonLink : "",
+                        code: wonIsUrl ? "" : wonLink,
                         note: "",
                       })
                     }
