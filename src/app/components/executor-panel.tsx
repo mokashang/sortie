@@ -2,7 +2,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApplyQuotaTable } from "@/app/apply/quota-table";
 
-export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review";
+export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review" | "scan";
+
+// 运行记录里 kind 的中文标签(scan run 从 /sources 页入队,不在这个面板配置里,但记录要认得出)。
+const KIND_LABEL: Record<string, string> = { apply: "投递", network_send: "发消息", network_find: "找人", jd_review: "补正文", scan: "Chrome 扫描" };
 
 export interface ExecutorKindConfig {
   kind: ExecutorKind;
@@ -445,7 +448,7 @@ export function ExecutorPanel({ kinds }: { kinds: ExecutorKindConfig[] }) {
                 return [
                   <tr key={r.id}>
                     <td className="mono">{r.id}</td>
-                    <td>{r.kind}</td>
+                    <td title={r.kind}>{KIND_LABEL[r.kind] ?? r.kind}</td>
                     <td className="text-sub" style={{ fontSize: 12 }}>{CHANNEL_LABELS[r.channel] ?? r.channel}</td>
                     <td className="text-sub" style={{ fontSize: 12 }}>{describeOptions(r.options) || "—"}</td>
                     <td className={r.status === "failed" ? "text-accent" : r.status === "done" ? "text-good" : ""}>

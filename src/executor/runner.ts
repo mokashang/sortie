@@ -17,7 +17,8 @@ import {
 // `claude -p` process wired to prompts.ts's prompt for the requested kind, and the App polls
 // executorStatus() to show progress until the process exits.
 
-export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review";
+// scan = Chrome 扫描 run(值守会话在用户 Chrome 里找岗:LinkedIn 登录态 / Handshake / Tesla,只读,经 /api/scan/ingest 入库)。仅 user_chrome。
+export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review" | "scan";
 
 // headless: this module spawns a detached `claude -p` process itself (unchanged path).
 // user_chrome: the "值守会话" (attended session) channel — no process is spawned here. A row is
@@ -43,6 +44,10 @@ export interface StartOptions {
   // referral for them (referral). Referral mode is attended-session only.
   jobIds?: number[];
   mode?: "referral" | "direct";
+  // scan kind only — 要扫哪些站、时间窗、每站最多抄多少个新岗(默认 全部 / 24h / 40)。
+  sites?: ("linkedin" | "handshake" | "tesla")[];
+  window?: "24h" | "7d";
+  maxPerSite?: number;
 }
 
 // A structural subset of child_process.ChildProcess — deliberately loose so tests can inject a
@@ -97,6 +102,8 @@ function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
       return buildNetworkFindPrompt({ companies: options.companies });
     case "jd_review":
       return buildJdReviewPrompt({ limit: options.limit });
+    case "scan":
+      throw new Error("scan runs are attended-only (user_chrome); no headless prompt exists");
     default:
       throw new Error(`startExecutor: unknown kind '${kind satisfies never}'`);
   }
@@ -221,6 +228,9 @@ export function startExecutor(
   const wantsReferral = options.mode === "referral" || (options.plan ?? []).some((p) => p.mode === "referral");
   if (channel === "headless" && wantsReferral) {
     throw new Error("内推模式仅支持值守会话(user_chrome)——无人值守通道只做海投");
+  }
+  if (channel === "headless" && kind === "scan") {
+    throw new Error("扫描 run 仅支持值守会话(user_chrome)——LinkedIn/Handshake/Tesla 需要用户登录的 Chrome");
   }
   const existing = db
     .prepare("SELECT id, pid, status FROM executor_runs WHERE kind=? AND channel=? AND status IN ('running','queued')")
