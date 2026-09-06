@@ -12,18 +12,24 @@ const strip = (s: string) => s.replace(/<[^>]+>/g, "").replace(/\*\*/g, "").repl
 const links = (cell: string) => [...cell.matchAll(/\((https?:\/\/[^)\s]+)\)|href="(https?:\/\/[^"]+)"/g)].map((m) => m[1] ?? m[2]);
 
 export function parseReadmeTable(md: string, opts: { kind: "newgrad" | "intern"; now: Date }): RawJob[] {
-  const lines = md.split("\n").filter((l) => l.trim().startsWith("|"));
-  if (lines.length < 2) return [];
-  const header = lines[0].split("|").slice(1, -1).map((h) => strip(h).toLowerCase());
-  const col = (names: string[]) => header.findIndex((h) => names.some((n) => h.includes(n)));
-  const ci = col(["company"]), ti = col(["role", "title", "position"]), li = col(["location"]), ai = col(["posted", "age", "date"]), ki = col(["apply", "link"]);
-  if (ci < 0 || ti < 0) return [];
+  // README 里可能有好几张表(统计表、按类别分的岗位表)。遇到含 Company 列的表头就重新定位列;
+  // 没有当前表头的行跳过。
   const out: RawJob[] = [];
+  let ci = -1, ti = -1, li = -1, ai = -1, ki = -1;
   let lastCompany = "";
-  for (const line of lines.slice(1)) {
-    if (/^\|\s*:?-+/.test(line)) continue;
+  for (const line of md.split("\n")) {
+    if (!line.trim().startsWith("|")) continue;
+    if (/^\|\s*:?-+/.test(line)) continue; // 分隔行
     const cells = line.split("|").slice(1, -1);
-    if (cells.length <= Math.max(ci, ti)) continue;
+    const lower = cells.map((h) => strip(h).toLowerCase());
+    const col = (names: string[]) => lower.findIndex((h) => names.some((n) => h === n || h.includes(n)));
+    const hc = col(["company"]), ht = col(["role", "title", "position"]);
+    if (hc >= 0 && ht >= 0 && !lower.some((h) => /https?:\/\//.test(h))) {
+      ci = hc; ti = ht; li = col(["location"]); ai = col(["posted", "age", "date"]); ki = col(["apply", "link"]);
+      lastCompany = "";
+      continue;
+    }
+    if (ci < 0 || ti < 0 || cells.length <= Math.max(ci, ti)) continue;
     let company = strip(cells[ci]);
     if (company === "↳" || company === "") company = lastCompany; else lastCompany = company;
     const title = strip(cells[ti]);

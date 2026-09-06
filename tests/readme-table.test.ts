@@ -18,6 +18,11 @@ describe("readme table parser", () => {
     const rows = parseReadmeTable(md, { kind: "newgrad", now: NOW });
     expect(rows.map((r) => r.company)).toEqual(["Beta"]);
   });
+  it("handles a stats table before the jobs table and multiple job tables", () => {
+    const md = "| 🛂 Visa | count |\n|---|---|\n| yes | 12 |\n\n## SWE\n| Company | Role | Location | Posted | Visa | **Apply** |\n|---|---|---|---|---|---|\n| **Acme** | SWE | NYC | 1h | ✅ | [x](https://a.example/1) |\n\n## Data\n| Company | Role | Location | Posted | Visa | **Apply** |\n|---|---|---|---|---|---|\n| **Beta** | DS | SF | 2d | ✅ | [x](https://b.example/2) |";
+    const rows = parseReadmeTable(md, { kind: "newgrad", now: NOW });
+    expect(rows.map((r) => r.company)).toEqual(["Acme", "Beta"]);
+  });
   it("converts relative ages", () => {
     expect(parseAge("12m", NOW)).toBe("2026-09-06T11:48:00.000Z");
     expect(parseAge("2d", NOW)).toBe("2026-09-04T12:00:00.000Z");
