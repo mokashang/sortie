@@ -44,7 +44,7 @@
 - 时区:系统设太平洋时间,且 pm2 环境钉死 `TZ=America/Los_Angeles`。
 
 部署:`ops/windows/deploy.ps1` 取代 `npm run build && launchctl kickstart`:
-1. 守卫:`GET /api/executor/status`,若 `attended.spawn.alive` 或有 `channel=user_chrome` 且 `status=running` 的 run → 拒绝并提示(重启服务器会连带杀掉它用 ConPTY 拉起的 claude 子进程),`-Force` 可跳过;
+1. 守卫:`GET /api/executor/dispatch` 的 `spawn.alive` 为真,或 `GET /api/executor/status` 里有 `channel=user_chrome` 且 `status=running` 的 run → 拒绝并提示(重启服务器会连带杀掉它用 ConPTY 拉起的 claude 子进程),`-Force` 可跳过;
 2. `git pull --ff-only` → `npm ci` → `npm run build` → `pm2 restart sortie` → 等 `/api/executor/status` 返回 200 后打印版本(最新 commit)。
 构建失败则不重启(与 Mac 上现状一致:`.next` 可能已被写坏,需再跑一次成功的 build)。
 
@@ -59,7 +59,7 @@ Chrome 一次性准备:新建求职档案,手动登录 LinkedIn / Workday / Hand
 | 文件 | 改什么 |
 |---|---|
 | `src/lib/notify.ts` | osascript 只在 `darwin` 调用;非 darwin 且没配 `NTFY_TOPIC` 时警告一次(进程级)。`opts.platform` 可注入。 |
-| `src/executor/attended.ts` | argv 组装抽成纯函数 `buildAttendedArgs({runId, prompt, sessionName})`,expect 脚本与 Windows 路径共用同一份 argv。win32 用 **node-pty**(ConPTY)拉起 `claude.exe`:`cols 200/rows 50`,`onData` 追加到 `attended-<run>.log`,匹配 `/Enter to confirm|Press Enter to continue/i` 时写 `\r`(等价现有 expect),返回 pid。回收:win32 `taskkill /pid <pid> /t /f`,其余平台维持进程组 SIGTERM。`ATTENDED_SPAWN_MODE=console` 兜底:`spawn(claudeBin, args, {detached:true, stdio:'ignore', windowsHide:false})` 开独立控制台窗口,无自动回车、无转录(node-pty 装不上时用)。依赖注入:`spawnExpect`(现有)+ `spawnPty` + `platform`,测试不碰真进程。deploy 守卫依赖 status 已有的 `attended.spawn.alive`。 |
+| `src/executor/attended.ts` | argv 组装抽成纯函数 `buildAttendedArgs({runId, prompt, sessionName})`,expect 脚本与 Windows 路径共用同一份 argv。win32 用 **node-pty**(ConPTY)拉起 `claude.exe`:`cols 200/rows 50`,`onData` 追加到 `attended-<run>.log`,匹配 `/Enter to confirm|Press Enter to continue/i` 时写 `\r`(等价现有 expect),返回 pid。回收:win32 `taskkill /pid <pid> /t /f`,其余平台维持进程组 SIGTERM。`ATTENDED_SPAWN_MODE=console` 兜底:`spawn(claudeBin, args, {detached:true, stdio:'ignore', windowsHide:false})` 开独立控制台窗口,无自动回车、无转录(node-pty 装不上时用)。依赖注入:`spawnExpect`(现有)+ `spawnPty` + `platform`,测试不碰真进程。deploy 守卫读 `GET /api/executor/dispatch` 的 `spawn.alive` 与 `GET /api/executor/status` 的 runs。 |
 | `src/executor/runner.ts` | `stopExecutor` 的进程组杀在 win32 改 `taskkill /t /f`;其余不动。 |
 | `src/lib/claude-bin.ts` | 候选顺序:`CLAUDE_BIN` → `~/.local/bin/claude` → (win32) `~/.local/bin/claude.exe` → 裸 `claude`。 |
 | `src/executor/open-profile.ts` | `CHROME_BIN` 优先;win32 默认探 `%ProgramFiles%\Google\Chrome\Application\chrome.exe`、`%ProgramFiles(x86)%\…`、`%LocalAppData%\Google\Chrome\Application\chrome.exe`,都没有则 `cmd /c start "" chrome …`;darwin 逻辑不变;linux `google-chrome`。 |
