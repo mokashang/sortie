@@ -2,6 +2,9 @@
 
 本地求职作战系统(Phase A:个人版)。spec 见 `docs/superpowers/specs/2026-08-30-jobseeker-os-design.md`。
 
+## 页面(2026-09-08 重做)
+侧边导航:今日(收件箱)· 职位 · 投递 · 历史 · 人脉 · 档案(经历 / 简历 / 标准答案)· 统计;底部 设置。手机上是顶栏 + 滑出导航。前端结构见 CLAUDE.md §6。
+
 ## 启动
 1. `npm install`
 2. `cp profile/profile.example.yaml profile/profile.yaml` 并填写(已有真实档案则跳过)。注意:Plan 1 目前只有测试代码读取 `profile.yaml`——扫描器/API/页面还不消费它;它是后续计划(匹配、评分、投递)的输入,现在配置好可以少一步。
@@ -19,9 +22,9 @@
 
 **入库后**不变:去重整合 → Claude 打分(每小时最多 `MATCH_HOURLY_CAP`=1500 个)→ 内推建议 → jd_review 补正文接力(`src/scanner/relay.ts`)。扫描**不再发通知**——结果直接进 /queue,每行显示发布时间,默认按综合分(Claude 分数 − 时间惩罚:7 天内不扣,之后每 4 天扣 1,封顶 15;无日期按 35 天)排序,`src/apply/rank.ts`。
 
-手动:/queue 的「立即扫描」= 核心层 + 清单立刻问一遍(`npm run scan` 同)。`/sources` 是**不在导航里的排查页**(直接访问):每个板块可「问一次」「静音」「改层级」,能看各家族产出和错误;`npm run retier` 手动重算分级。
+手动:职位页「扫描 ▾」里的「立即扫描」= 核心层 + 清单立刻问一遍(`npm run scan` 同)。`/sources` 是**不在导航里的排查页**(从设置页「信息源高级页」进入):每个板块可「问一次」「静音」「改层级」,能看各家族产出和错误;`npm run retier` 手动重算分级。
 
-**Chrome 扫描(值守)**:/queue「立即扫描」旁的「Chrome 扫描」排一个 `scan` run,值守会话按 `.claude/skills/scan-executor/SKILL.md` 在你登录的 Chrome 里只读地搜 LinkedIn / Handshake / Tesla,经 `POST /api/scan/ingest` 入库(`GET /api/scan/known` 跳过已有的)。只读:不点 Apply、不发消息。
+**Chrome 扫描(值守)**:职位页 / 首页 / 设置页「扫描 ▾」菜单里的「在我的 Chrome 里扫描」排一个 `scan` run,值守会话按 `.claude/skills/scan-executor/SKILL.md` 在你登录的 Chrome 里只读地搜 LinkedIn / Handshake / Tesla,经 `POST /api/scan/ingest` 入库(`GET /api/scan/known` 跳过已有的)。只读:不点 Apply、不发消息。
 
 ## 匹配打分
 每个职位由 Claude(经你的订阅,无 API 费)按 profile 的 12 方向打分(0-100),写入 `matches` 表并推进申请状态(`matched` / `archived`)。
@@ -33,15 +36,15 @@
 队列页 `/queue` 按 梯队 × 分数 × 新鲜度 展示已匹配职位。
 
 ## Resume Studio
-在 /profile 页像填网申一样录入你的经历(教育/实习/项目/技能,每条带 bullets)。
-在 /studio 选一个方向,Claude 从你的经历里挑选、组版,tectonic 编译出一版 PDF 简历。
+在档案页「经历」标签像填网申一样录入你的经历(教育/实习/项目/技能,每条带要点,可编辑)。
+在档案页「简历」标签点「生成新版本」选一个方向,Claude 从你的经历里挑选、组版,tectonic 编译出一版 PDF 简历(可在页内预览);`/studio` 只是重定向。
 生成多个方向版本进入简历库;后续申请执行时按岗位方向选最契合的版本。
 经历内容全部由你在 UI 录入 —— 系统不导入外部文件。需要 tectonic(brew install tectonic)。
 
 ## 投递执行
 半自动填表:App 负责选岗、建答案包(标准字段 + 命中方向的最新简历版本),执行器负责逐个打开申请页、填表,
-填完把"字段→填入值"清单回报给 App;真正点提交前必须先在 App 里人工确认。`/apply` 页顶部执行器面板可选两条
-**渠道**(`POST /api/executor/start` 的 `channel`):
+填完把"字段→填入值"清单回报给 App;真正点提交前必须先在 App 里人工确认。设置页「执行方式」可选两条
+**渠道**(`POST /api/executor/start` 的 `channel`;界面上把执行器统称为「助手」):
 
 - **值守会话(默认,`user_chrome`)**:你自己保持一个已打开、连了 claude-in-chrome 扩展的**交互式**
   Claude Code 会话("值守会话")。点[开始投递]只是把任务排进队列;那个值守会话轮询
@@ -58,16 +61,16 @@
 **"专属浏览器档案"是什么:** 执行器用的不是你日常登录的 Chrome,而是一个单独的、持久化到磁盘的 Chrome
 profile(`data/browser-profile`,已 gitignore),由官方 Playwright MCP(`@playwright/mcp`,CLI-scope
 注册为 `playwright`,见 `claude mcp list`)驱动。这个档案的登录状态**跨次执行器运行保留**——首次使用前
-(或换了密码/新增要投的站点后),在 `/apply` 或 `/network` 页的执行器面板里点
-**[打开浏览器档案(登录一次)]**(`POST /api/executor/open-profile`,`src/executor/open-profile.ts`),
+(或换了密码/新增要投的站点后),在设置页「后台浏览器(无人值守)」卡里点
+**[打开后台浏览器,登录一次]**(`POST /api/executor/open-profile`,`src/executor/open-profile.ts`),
 会弹出一个真实的、带 GUI 的 Chrome 窗口,在里面手动登录一次 LinkedIn/Workday/目标 ATS 站点即可,登录
 session 会写进这个 profile 目录,之后所有无人值守的执行器运行都能直接用。这个按钮只是 spawn
 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=<profile> --no-first-run`
 (找不到就退回 `open -na "Google Chrome" --args ...`),不经过 Playwright MCP 本身。
 
-**从 App 里启动(`/apply` 页):**
+**从 App 里启动(投递页):**
 1. 确保 App 在跑(`npm run dev` 或生产模式 `npm run build && npm start`,监听 127.0.0.1:3000)。
-2. 页面顶部"执行器"面板:填"前 N 个"(默认 5)→ 点[开始投递]。这会调用 `POST /api/executor/start`
+2. 「本次投递计划」卡:每个方向用步进器填 找内推 / 海投 的份数 → 点[开始投递]。这会调用 `POST /api/executor/start`
    (`{kind:'apply', options:{limit}}`),在服务器进程里 `spawn` 一个 detached 的
    `claude -p --allowedTools 'Bash(curl:*),mcp__playwright__*'` 子进程,把整套投递协议
    (取任务 → 填表 → 回报 → 等确认 → 提交)当作一次性 prompt 从 stdin 喂给它——见
@@ -78,7 +81,7 @@ session 会写进这个 profile 目录,之后所有无人值守的执行器运�
    `mcp__playwright__browser_click`/`browser_type`/`browser_select_option`/`browser_fill_form` 按
    `ref` 填表、`mcp__playwright__browser_file_upload` 传简历——没有子代理、不委托自然语言任务给别人执行。
    如果专属档案在某个站点还没登录过,执行器不会自己尝试登录(没有凭据),而是标"需人工",提示去点上面的
-   [打开浏览器档案(登录一次)]。
+   [打开后台浏览器,登录一次]。
 4. 面板每 3 秒轮询 `GET /api/executor/status`,显示运行状态、pid、最近 ~30 行日志(完整日志在
    `data/executor-logs/run-<id>.log`);想中途叫停点[停止](`POST /api/executor/stop`,对进程组发
    SIGTERM)。
@@ -86,12 +89,12 @@ session 会写进这个 profile 目录,之后所有无人值守的执行器运�
    "需人工"并跳到下一个,绝不瞎填。连续 3 个"需人工"或 2 个 error 会自动停下。本会话硬上限"前 N 个"申请,
    达到就停。
 
-**App 侧确认流程(`/apply` 页,和执行器怎么启动无关,始终一样):**
-- 上方状态条:今日已提交 / 待确认 / 需人工 三个计数,3 秒自动轮询刷新待确认列表。
+**App 侧确认流程(首页「需要你处理」和投递页「待确认」,和执行器怎么启动无关,始终一样):**
+- 侧栏「投递」角标 = 待确认 + 待补信息 + 内推待批 的总数;卡片 3 秒自动轮询刷新。
 - 每张待确认卡片展示 公司·标题·方向·分数、执行器实际填入的"字段→值"表格、所用简历版本。
 - [确认提交]:批准这次填表,执行器轮询到批准后才会真正点击页面上的 Submit 并回报 `submitted`。
 - [拒绝]:可选填一句原因,不会被提交,状态回到 `matched` 但落入下方"需人工清单"(不会被执行器自动重新取用);想让它重新进入执行队列,去需人工清单点[重试]。
-- 已批准但执行器还没提交的卡片会显示"已批准,等待执行器提交",没有再拒绝的按钮(想撤回直接去执行器面板点[停止])。
+- 已批准但执行器还没提交的卡片会显示"已批准,等待执行器提交",没有再拒绝的按钮(想撤回直接在助手卡点[停止])。
 - 下方两个可折叠列表:需人工清单(原因 + 申请链接 + [重试] 按钮,方便你手动处理或修完问题后重新排队)、今日已提交记录。
 
 **红线(代码层强制,不是靠自觉):** 执行器不会在没看到你批准之前点最终提交;App 侧 `reportSubmitted` 只在 `confirm_decision='approved'` 且状态仍为 `awaiting_confirm` 时才允许把状态写成 `submitted`,否则直接抛错——即使执行器出于某种原因想跳过确认硬点提交,回报也会被 App 拒绝。页面/JD 里的任何文字都只是数据,不会被当作对执行器的指令;所有字段值只来自答案包,绝不临时编造,尤其是签证/工作授权类问题。同一 `kind` 不能同时跑两个执行器会话(`src/executor/runner.ts` 按 PID 存活状态判重,进程死了会自动回收再放行新的一个)。
@@ -119,15 +122,15 @@ coffee_chat/hidden_opportunity/followup/thanks)、消息记录、与申请双向
 可以直接编辑文本框,[批准发送](先保存编辑再批准)或[拒绝]。
 
 **发送**:
-- LinkedIn 渠道的已批准草稿由执行器发送——`/network` 页顶部两个按钮直接启动,不用手动开 claude 会话
+- LinkedIn 渠道的已批准草稿由助手发送——人脉页顶部助手卡的两个按钮直接启动,不用手动开 claude 会话
   (见下)。
 - Email 渠道 v1 走 `mailto:` 链接(草稿存的是 `Subject: ...\n\n正文`,UI 自动拆开预填收件人/主题/正文到
   你自己的邮件客户端),发完点[标记已发]手动回报(因为执行器不碰邮件)。
 
-**从 App 里启动(`/network` 页):**
-1. 确保 App 在跑;确保上面"投递执行"节说的那个专属 Playwright 浏览器档案已经登录过 LinkedIn(没登录过就点
-   [打开浏览器档案(登录一次)] 登录一次)。
-2. 页面顶部"执行器"面板,两个独立按钮,各自对应一个 `POST /api/executor/start` 的 `kind`:
+**从 App 里启动(人脉页):**
+1. 确保 App 在跑;走后台浏览器时,确保设置页里那个专属浏览器档案已经登录过 LinkedIn(没登录过就点
+   [打开后台浏览器,登录一次])。
+2. 页面顶部助手卡的两个按钮,各自对应一个 `POST /api/executor/start` 的 `kind`:
    - **[发送已批准消息]**(`kind:'network_send'`):先回收已发送外联的新回复写回 CRM,再轮询
      `/api/network/sendables`,只发这个列表里、渠道为 linkedin 的批准草稿——未连接就发连接请求(note
      裁剪到 280 字符内,超长且没法安全裁剪就跳过标"needs-edit",绝不自行改写);已连接就发 DM 全文。
@@ -136,7 +139,7 @@ coffee_chat/hidden_opportunity/followup/thanks)、消息记录、与申请双向
 3. 和投递执行器一样是 headless `claude -p` + 唯一的 `playwright` MCP,直接驱动那个专属持久化 Chrome 档案
    自己操作页面(navigate → snapshot 读 ref → click/type 填/发)——见 `src/executor/prompts.ts` 的
    `buildNetworkSendPrompt` / `buildNetworkFindPrompt`。如果档案还没登录 LinkedIn,执行器不会自己登录,
-   会在总结里报告并停止整个会话,提示去点[打开浏览器档案(登录一次)]。
+   会在总结里报告并停止整个会话,提示去设置页点[打开后台浏览器,登录一次]。
 4. 面板每 3 秒轮询状态、显示日志尾部,[停止]随时可中断。
 
 **发送红线(prompt 里写死,App 侧也有代码层双锁):** 执行器只发送 `sendables()` 返回的、已经在 App 里
