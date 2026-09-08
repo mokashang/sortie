@@ -1,21 +1,21 @@
 import { getDb } from "@/lib/db";
-import { ConfirmPanel } from "./confirm-panel";
-import { InfoPanel } from "./info-panel";
-import { ManualList, ManualRow } from "./manual-list";
-import { ExecutorPanel } from "@/app/components/executor-panel";
-import { directionLabel } from "@/matcher/directions";
 import { todaySubmitted } from "@/apply/history";
-import { referralBoard } from "@/apply/referral";
-import { ReferralPanel } from "./referral-panel";
+import { PageHeader, Section } from "@/app/components/ui";
+import { AssistantCard } from "@/app/components/assistant-card";
+import { PlanCard } from "./plan-card";
+import { InfoCards } from "./info-cards";
+import { ConfirmCards } from "./confirm-cards";
+import { ReferralBoard } from "./referral-board";
+import { ManualList, type ManualRow } from "./manual-list";
+import { TodaySubmitted } from "./today-submitted";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "投递" };
 
+// 投递: plan a run, watch the assistant, and decide on everything it hands back — confirmations,
+// missing answers, referral drafts — plus the parked (需人工) and submitted-today lists.
 export default function ApplyPage() {
   const db = getDb();
-
-  const pendingCount = (
-    db.prepare("SELECT COUNT(*) n FROM applications WHERE status='awaiting_confirm'").get() as { n: number }
-  ).n;
 
   const manualRows = db
     .prepare(
@@ -30,123 +30,26 @@ export default function ApplyPage() {
     )
     .all() as ManualRow[];
 
-  // Parked rows that still carry pending_questions are shown on the 待补信息 panel instead (they
-  // are answerable in-App), so they're excluded from the needs-manual list above.
-  // Local calendar day (resets at local midnight) — see todaySubmitted.
   const submittedRows = todaySubmitted(db);
 
-  // 内推进行中 counts for the strip (the board itself is the client-side ReferralPanel).
-  const cards = referralBoard(db);
-  const referralJobs = cards.flatMap((c) => c.jobs);
-  const referralCounts = {
-    draft: cards.filter((c) => c.outreaches.some((o) => o.status === "draft")).length,
-    waiting: cards.filter((c) => c.outreaches.some((o) => o.status === "sent" || o.status === "pending_send")).length,
-    noContact: cards.filter((c) => c.outreaches.length === 0 && c.jobs.some((j) => j.noContactReason)).length,
-    ready: cards.filter((c) => c.jobs.some((j) => j.status === "referral_ready")).length,
-  };
-
-  // "今日已提交 7(swe_backend 4 · quant 3)" — per-direction breakdown, counts desc, NULL last.
-  const submittedByDirection = new Map<string | null, number>();
-  for (const r of submittedRows) {
-    submittedByDirection.set(r.direction, (submittedByDirection.get(r.direction) ?? 0) + 1);
-  }
-  const submittedBreakdown = [...submittedByDirection.entries()]
-    .sort((a, b) => {
-      if (a[0] === null) return 1;
-      if (b[0] === null) return -1;
-      return b[1] - a[1];
-    })
-    .map(([direction, count]) => `${direction ? directionLabel(direction) : "未分类"} ${count}`)
-    .join(" · ");
-
   return (
-    <div>
-      <h1>投递</h1>
-      <p className="panel-sub">
-        在下面选好每个方向「找内推」和「海投」的份数、点「开始投递」,值守会话(你自己的 Chrome)就会接手。
-        海投的申请填完出现在「待确认」等你点[确认提交],执行器才会真正点提交;拒绝会把申请退回队列。
-        找内推的岗位出现在「内推进行中」:值守会话找到人后起草首条消息等你批准,之后的往来你自己处理;
-        拿到内推点「有内推了」填入,或随时「直接投」。已提交及之后的追踪在「历史」页。
-      </p>
-
-      <ExecutorPanel
-        kinds={[
-          { kind: "apply", label: "开始投递", quotaTable: true },
-          { kind: "jd_review", label: "补正文(Claude 逐页读)", withLimit: true, defaultLimit: 40, headlessOnly: true, pendingCountUrl: "/api/jd-review/pending-count" },
-        ]}
-      />
-
-      <div style={{ display: "flex", gap: 24, margin: "16px 0 20px", fontSize: 14 }}>
-        <span>
-          今日已提交 <strong className="mono">{submittedRows.length}</strong>
-          {submittedBreakdown && <span className="text-sub" style={{ marginLeft: 6 }}>({submittedBreakdown})</span>}
-        </span>
-        <span>待确认 <strong className="mono">{pendingCount}</strong></span>
-        <span>
-          内推进行中 <strong className="mono">{referralJobs.length}</strong>
-          {referralJobs.length > 0 && (
-            <span className="text-sub" style={{ marginLeft: 6 }}>
-              (等草稿 {referralCounts.draft} · 等回复 {referralCounts.waiting} · 找不到人 {referralCounts.noContact} · 待投 {referralCounts.ready})
-            </span>
-          )}
-        </span>
-        <span>需人工 <strong className="mono">{manualRows.length}</strong></span>
-      </div>
-
-      <InfoPanel />
-
-      <section className="panel">
-        <div className="panel-title">待确认</div>
-        <ConfirmPanel />
-      </section>
-
-      <section className="panel">
-        <div className="panel-title">内推进行中</div>
-        <ReferralPanel />
-      </section>
-
-      <details style={{ marginTop: 24 }}>
-        <summary>需人工清单 ({manualRows.length})</summary>
+    <>
+      <PageHeader title="投递" subtitle="选好每个方向的份数,助手在你的 Chrome 里找人或填表;任何提交和发送都先经你确认。" />
+      <AssistantCard />
+      <PlanCard />
+      <InfoCards />
+      <Section id="confirm" title="待确认" description="助手填好、停在提交前一步的申请。核对后点确认,它才会点提交。">
+        <ConfirmCards />
+      </Section>
+      <Section id="referrals" title="内推进行中" description="助手找到的联系人和草稿。你批准的消息才会发出;拿到内推后点「有内推了」。">
+        <ReferralBoard />
+      </Section>
+      <Section id="manual" title="需人工" count={manualRows.length} description="助手处理不了的申请:登录墙、验证码、死链等。可以自己投,或重试、移除。">
         <ManualList rows={manualRows} />
-      </details>
-
-      <details style={{ marginTop: 16 }}>
-        <summary>今日已提交 ({submittedRows.length}) · 本地 0 点重置 · 完整记录见「历史」页</summary>
-        {submittedRows.length === 0 ? (
-          <p className="text-sub" style={{ marginTop: 8 }}>无。</p>
-        ) : (
-          <table style={{ marginTop: 8 }}>
-            <thead>
-              <tr>
-                <th>方向</th>
-                <th>方式</th>
-                <th>公司</th>
-                <th>标题</th>
-                <th>时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {submittedRows.map((r) => (
-                <tr key={r.jobId}>
-                  <td>
-                    <span className="chip">{r.direction ? directionLabel(r.direction) : "未分类"}</span>
-                  </td>
-                  <td style={{ fontSize: 13 }}>
-                    {r.applyMode === "referral" ? (
-                      <span className="text-good">内推{r.referralPersonName ? ` · ${r.referralPersonName}` : ""}</span>
-                    ) : (
-                      <span className="text-sub">海投</span>
-                    )}
-                  </td>
-                  <td className="company">{r.company}</td>
-                  <td>{r.title}</td>
-                  <td className="mono">{r.submittedAt}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </details>
-    </div>
+      </Section>
+      <Section id="submitted" title="今日已提交" count={submittedRows.length}>
+        <TodaySubmitted rows={submittedRows} />
+      </Section>
+    </>
   );
 }

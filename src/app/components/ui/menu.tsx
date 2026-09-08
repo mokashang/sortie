@@ -24,9 +24,11 @@ export interface MenuProps {
   // Text trigger instead of the ⋯ icon button.
   text?: React.ReactNode;
   disabled?: boolean;
+  // Fully custom trigger element; receives the props it must spread onto its button.
+  trigger?: (props: { onClick: () => void; "aria-expanded": boolean; "aria-haspopup": "menu"; disabled?: boolean }) => React.ReactNode;
 }
 
-export function Menu({ items, label = "更多", icon, align = "end", size = "sm", variant = "ghost", text, disabled }: MenuProps) {
+export function Menu({ items, label = "更多", icon, align = "end", size = "sm", variant = "ghost", text, disabled, trigger }: MenuProps) {
   const [open, setOpen] = useState(false);
   const [up, setUp] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -71,7 +73,9 @@ export function Menu({ items, label = "更多", icon, align = "end", size = "sm"
 
   return (
     <div className="menu" ref={wrap} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-      {text != null ? (
+      {trigger ? (
+        trigger({ onClick: toggle, "aria-expanded": open, "aria-haspopup": "menu", disabled })
+      ) : text != null ? (
         <Button variant={variant} size={size} onClick={toggle} aria-expanded={open} aria-haspopup="menu" disabled={disabled} icon={icon}>
           {text}
         </Button>
