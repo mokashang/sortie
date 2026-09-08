@@ -1,5 +1,5 @@
 import type { DB } from "@/lib/db";
-import { executorStatus, RunStatusRow } from "@/executor/runner";
+import { executorStatus } from "@/executor/runner";
 import { pendingInfo } from "@/apply/info";
 import { referralBoard } from "@/apply/referral";
 import { queueByDirection } from "@/apply/queue";
@@ -9,26 +9,11 @@ import { JOB_LINKED_SQL } from "@/network/crm";
 
 // One read for the app shell: badge counts for the sidebar, the numbers on the 今日 page, and
 // which assistant task (if any) is in flight. Composed entirely from existing read functions.
-export interface OverviewCounts {
-  awaitingConfirm: number;
-  approvedWaiting: number;
-  needsInfo: number;
-  referralDrafts: number;
-  referralProgress: number;
-  referralInFlight: number;
-  networkDrafts: number;
-  networkPendingSend: number;
-  manual: number;
-  queueMatched: number;
-  submittedToday: number;
-  submittedThisWeek: number;
-}
-
-export interface Overview {
-  today: string;
-  assistant: RunStatusRow | null;
-  counts: OverviewCounts;
-}
+// The response types (and attentionTotal) live in src/app/lib/overview-types.ts so the client
+// can import them without pulling this module's db dependencies into the browser bundle.
+import type { Overview, OverviewCounts } from "@/app/lib/overview-types";
+export { attentionTotal } from "@/app/lib/overview-types";
+export type { Overview, OverviewCounts } from "@/app/lib/overview-types";
 
 function count(db: DB, sql: string): number {
   return (db.prepare(sql).get() as { n: number }).n;
@@ -36,7 +21,9 @@ function count(db: DB, sql: string): number {
 
 export function overview(db: DB): Overview {
   const runs = executorStatus(db);
-  const assistant = runs.find((r) => r.status === "queued" || r.status === "running") ?? runs[0] ?? null;
+  const liveRuns = runs.filter((r) => r.status === "queued" || r.status === "running");
+  const assistant = liveRuns[0] ?? runs[0] ?? null;
+  const liveKinds = [...new Set(liveRuns.map((r) => r.kind))];
 
   const cards = referralBoard(db);
   const referralInFlight = cards.reduce((n, c) => n + c.jobs.length, 0);
@@ -71,11 +58,5 @@ export function overview(db: DB): Overview {
 
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-  return { today: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, assistant, counts };
-}
-
-// Things only the user can move forward: unapproved confirmations, unanswered questions,
-// unapproved referral drafts, and referral conversations that need a 「有内推了」 decision.
-export function attentionTotal(c: OverviewCounts): number {
-  return Math.max(0, c.awaitingConfirm - c.approvedWaiting) + c.needsInfo + c.referralDrafts + c.referralProgress;
+  return { today: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, assistant, liveKinds, counts };
 }

@@ -1,6 +1,6 @@
 import { forwardRef } from "react";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { cx } from "@/app/lib/cx";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -26,7 +26,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       aria-busy={loading || undefined}
       {...rest}
     >
-      {loading ? <Loader2 className="btn-spin" size={14} aria-hidden /> : icon ? <span aria-hidden>{icon}</span> : null}
+      {loading ? <LoaderCircle className="btn-spin" size={14} aria-hidden /> : icon ? <span aria-hidden>{icon}</span> : null}
       {children != null && children !== false ? <span>{children}</span> : null}
     </button>
   );

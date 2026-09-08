@@ -152,3 +152,376 @@ details summary {
   font-weight: 600;
   font-size: 13px;
 }
+
+/* ---- Assistant card ---- */
+
+.assistant-card {
+  margin-bottom: var(--s-5);
+}
+
+.assistant-compact {
+  margin-bottom: var(--s-3);
+}
+
+.assistant-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.assistant-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.assistant-name .muted {
+  font-weight: 400;
+}
+
+.assistant-body {
+  margin-top: 10px;
+}
+
+.assistant-last {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.assistant-summary {
+  color: var(--ink);
+}
+
+.assistant-history {
+  margin-top: 12px;
+}
+
+.assistant-history summary {
+  cursor: pointer;
+  font-size: var(--t-sm);
+  color: var(--sub);
+  font-weight: 500;
+}
+
+.assistant-history summary:hover {
+  color: var(--ink);
+}
+
+/* ---- Decision cards (待确认 / 待补信息) ---- */
+
+.confirm-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.confirm-title {
+  font-size: var(--t-md);
+}
+
+.link-btn {
+  color: var(--accent);
+  font-size: var(--t-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---- 今日 ---- */
+
+.link-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ---- 职位 ---- */
+
+.job-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 var(--s-3);
+}
+
+.job-toolbar .job-search {
+  flex: 1 1 180px;
+  max-width: 300px;
+}
+
+.job-list {
+  border-top: 1px solid var(--line-strong);
+}
+
+.job-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+
+.job-row:hover {
+  background: var(--surface-2);
+}
+
+.job-row.is-active {
+  background: var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.job-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.job-score {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+.job-score.is-top {
+  color: var(--accent);
+}
+
+.job-score.is-none {
+  color: var(--sub);
+  font-weight: 400;
+}
+
+.job-main {
+  min-width: 0;
+}
+
+.job-line1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.job-company {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: var(--t-md);
+}
+
+.job-title {
+  color: var(--ink-2);
+}
+
+.job-pin {
+  color: var(--warn);
+  align-self: center;
+}
+
+.job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 2px;
+  font-size: var(--t-sm);
+  color: var(--sub);
+  min-width: 0;
+}
+
+.job-meta > .truncate {
+  max-width: 420px;
+}
+
+.job-side {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.job-when {
+  font-size: var(--t-sm);
+  color: var(--sub);
+}
+
+.detail-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+}
+
+.fact-label {
+  font-size: var(--t-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sub);
+}
+
+.fact-value {
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.jd-text {
+  white-space: pre-line;
+  line-height: 1.65;
+  font-size: var(--t-base);
+  word-break: break-word;
+}
+
+.jd-text.is-clamped {
+  max-height: 340px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 72%, transparent);
+  mask-image: linear-gradient(#000 72%, transparent);
+}
+
+.drawer-body h4 {
+  margin-bottom: 8px;
+}
+
+@media (max-width: 880px) {
+  .job-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+    padding: 10px 4px;
+  }
+
+  .job-side {
+    grid-column: 2;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .job-meta > .truncate {
+    max-width: 100%;
+  }
+
+  .job-toolbar .job-search {
+    max-width: none;
+  }
+}
+
+.stat-strip-compact {
+  margin: var(--s-3) 0 0;
+}
+
+.stat-strip-compact .stat-value {
+  font-size: 22px;
+}
+
+.input-icon {
+  position: relative;
+}
+
+.input-icon > svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--sub);
+  pointer-events: none;
+}
+
+.input-icon > .input {
+  padding-left: 28px;
+}
+
+.job-list.is-loading {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ---- 投递 ---- */
+
+.plan-card h3 {
+  font-family: var(--font-serif);
+  font-size: var(--t-lg);
+}
+
+.plan-table td {
+  vertical-align: middle;
+}
+
+.plan-table th:nth-child(2),
+.plan-table th:nth-child(3) {
+  white-space: nowrap;
+}
+
+.plan-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  padding-bottom: 2px;
+  border-top: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.referral-jobs {
+  list-style: none;
+  margin: var(--s-2) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.referral-jobs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.referral-contact {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s-3);
+}
+
+.manual-list,
+.submitted-list {
+  border-top: 1px solid var(--line-strong);
+}
+
+.manual-row,
+.submitted-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.submitted-row .truncate {
+  min-width: 0;
+}
+
+@media (max-width: 880px) {
+  .submitted-row {
+    flex-wrap: wrap;
+  }
+}

@@ -45,6 +45,7 @@ describe("overview", () => {
       referralProgress: 0,
     });
     expect(o.assistant).toBeNull();
+    expect(o.liveKinds).toEqual([]);
     expect(o.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     // one unapproved confirmation is the only thing waiting on the user
     expect(attentionTotal(o.counts)).toBe(1);
@@ -58,8 +59,11 @@ describe("overview", () => {
     db.prepare("INSERT INTO executor_runs (kind, status, channel, options, started_at) VALUES (?,?,?,?,?)").run(
       "scan", "queued", "user_chrome", "{}", "2026-09-06 11:00:00"
     );
+    db.prepare("INSERT INTO executor_runs (kind, status, channel, options, started_at) VALUES (?,?,?,?,?)").run(
+      "apply", "running", "user_chrome", "{}", "2026-09-06 11:05:00"
+    );
     const o = overview(db);
-    expect(o.assistant?.kind).toBe("scan");
-    expect(o.assistant?.status).toBe("queued");
+    expect(o.assistant?.status).toMatch(/queued|running/);
+    expect(o.liveKinds.sort()).toEqual(["apply", "scan"]);
   });
 });

@@ -32,6 +32,6 @@ export function Stat({ label, value, sub, tone, hint, href }: StatProps) {
   return <div className="stat">{body}</div>;
 }
 
-export function StatStrip({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cx("stat-strip", className)}>{children}</div>;
+export function StatStrip({ children, className, compact }: { children: React.ReactNode; className?: string; compact?: boolean }) {
+  return <div className={cx("stat-strip", compact && "stat-strip-compact", className)}>{children}</div>;
 }

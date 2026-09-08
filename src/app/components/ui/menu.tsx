@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { MoreHorizontal } from "lucide-react";
+import { Ellipsis } from "lucide-react";
 import { cx } from "@/app/lib/cx";
 import { IconButton, Button, ButtonVariant, ButtonSize } from "./button";
 
@@ -78,7 +78,7 @@ export function Menu({ items, label = "更多", icon, align = "end", size = "sm"
       ) : (
         <IconButton
           label={label}
-          icon={icon ?? <MoreHorizontal size={16} />}
+          icon={icon ?? <Ellipsis size={16} />}
           variant={variant}
           size={size}
           onClick={toggle}
