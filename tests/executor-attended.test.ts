@@ -14,9 +14,11 @@ import {
   ATTENDED_ALLOWED_TOOLS,
   buildAttendedPrompt,
   attendedStatus,
+  attendedSpawnModeFromEnv,
   HEARTBEAT_STALE_MS,
   REAP_GRACE_MS,
 } from "@/executor/attended";
+import type { WindowsSpawnOptions } from "@/executor/attended-win";
 import { startExecutor, finishRun, claimNextRun } from "@/executor/runner";
 
 describe("attended dispatcher — decide()", () => {
@@ -75,6 +77,7 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
       claudeBin: "/fake/claude",
       logDir,
       cwd: "/fake/repo",
+      platform: "darwin" as const,
     };
 
     const r1 = dispatchAttended(db, deps);
@@ -108,7 +111,7 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     const logDir = tmp();
     startExecutor(db, "apply", {}, { logDir }, "user_chrome");
     recordHeartbeat(db, "desktop-1", "desktop", new Date("2026-09-06T10:00:00Z"));
-    const r = dispatchAttended(db, { now: () => new Date("2026-09-06T10:00:08Z"), spawnExpect: () => { throw new Error("must not spawn"); }, logDir });
+    const r = dispatchAttended(db, { now: () => new Date("2026-09-06T10:00:08Z"), spawnExpect: () => { throw new Error("must not spawn"); }, logDir, platform: "darwin" });
     expect(r.decision.action).toBe("none");
   });
 
@@ -117,7 +120,7 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     const logDir = tmp();
     const run = startExecutor(db, "apply", {}, { logDir }, "user_chrome");
     let alive = true;
-    const deps = { isAlive: () => alive, spawnExpect: () => ({ pid: 1 }), kill: () => {}, claudeBin: "/fake/claude", logDir, cwd: "/fake" };
+    const deps = { isAlive: () => alive, spawnExpect: () => ({ pid: 1 }), kill: () => {}, claudeBin: "/fake/claude", logDir, cwd: "/fake", platform: "darwin" as const };
     expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
     alive = false;
     expect(dispatchAttended(db, deps).decision.action).toBe("reap");
@@ -139,5 +142,51 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     const script = buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 3, prompt: "P" });
     for (const tool of ATTENDED_ALLOWED_TOOLS) expect(script).toContain(tool);
     expect(script).toContain("-n sortie-run-3");
+  });
+
+  it("on Windows hands the argv to the platform launcher instead of writing an expect script", () => {
+    const db = openDb(":memory:");
+    const logDir = tmp();
+    const run = startExecutor(db, "apply", {}, { logDir }, "user_chrome");
+    const calls: { mode: string; opts: WindowsSpawnOptions }[] = [];
+    const deps = {
+      platform: "win32" as const,
+      spawnMode: "pty" as const,
+      spawnWindows: (mode: "pty" | "console", opts: WindowsSpawnOptions) => {
+        calls.push({ mode, opts });
+        return { pid: 9 };
+      },
+      spawnExpect: () => {
+        throw new Error("expect must not be used on win32");
+      },
+      claudeBin: "C:\\Users\\u\\.local\\bin\\claude.exe",
+      logDir,
+      cwd: "C:\\sortie",
+    };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].mode).toBe("pty");
+    expect(calls[0].opts.claudeBin).toBe("C:\\Users\\u\\.local\\bin\\claude.exe");
+    expect(calls[0].opts.cwd).toBe("C:\\sortie");
+    expect(calls[0].opts.args.slice(0, 4)).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools"]);
+    expect(calls[0].opts.args.at(-1)).toContain(`run #${run.id}`);
+    expect(calls[0].opts.logPath).toBe(path.join(logDir, `attended-${run.id}.log`));
+    expect(fs.existsSync(path.join(logDir, `attended-${run.id}.exp`))).toBe(false);
+    expect(currentSpawn(db)).toMatchObject({ pid: 9, runId: run.id, logPath: path.join(logDir, `attended-${run.id}.log`) });
+  });
+
+  it("passes the console mode through to the Windows launcher", () => {
+    const db = openDb(":memory:");
+    const logDir = tmp();
+    startExecutor(db, "apply", {}, { logDir }, "user_chrome");
+    const modes: string[] = [];
+    dispatchAttended(db, { platform: "win32", spawnMode: "console", spawnWindows: (mode) => { modes.push(mode); return { pid: 1 }; }, claudeBin: "C:\\c.exe", logDir, cwd: "C:\\s" });
+    expect(modes).toEqual(["console"]);
+  });
+
+  it("reads the Windows launcher mode from ATTENDED_SPAWN_MODE (pty unless explicitly console)", () => {
+    expect(attendedSpawnModeFromEnv({})).toBe("pty");
+    expect(attendedSpawnModeFromEnv({ ATTENDED_SPAWN_MODE: "console" })).toBe("console");
+    expect(attendedSpawnModeFromEnv({ ATTENDED_SPAWN_MODE: "bogus" })).toBe("pty");
   });
 });

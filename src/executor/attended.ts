@@ -4,13 +4,15 @@ import path from "path";
 import { DB } from "@/lib/db";
 import { resolveClaudeBin } from "@/lib/claude-bin";
 import { killTree } from "@/lib/proc-kill";
+import { spawnAttendedPty, spawnAttendedConsole, type WindowsSpawnOptions } from "@/executor/attended-win";
 
 // The attended-session dispatcher ("值守会话调度器", spec: docs/superpowers/specs/
 // 2026-09-06-attended-dispatcher-design.md). The user_chrome channel needs an *interactive*
 // Claude session (the Chrome extension only attaches to those) to claim queued runs. When the
 // desktop App is open, the session inside it heartbeats here and claims runs itself. When no
 // session has heartbeated recently, the App server spawns a terminal `claude --chrome` session
-// under `expect` (a pseudo-tty; macOS ships expect, no tmux needed) with the run handed to it in
+// under `expect` (a pseudo-tty; macOS ships expect, no tmux needed) — on Windows via node-pty / a
+// console window (attended-win.ts) — with the run handed to it in
 // the initial prompt, and reaps it once the run reaches a terminal status.
 //
 // Both pieces of state live in the `profile` key/value table so no schema migration is needed:
@@ -158,10 +160,21 @@ export function buildExpectScript(opts: { claudeBin: string; cwd: string; runId:
   ].join("\n");
 }
 
+export type AttendedSpawnMode = "pty" | "console";
+
+// Windows launcher choice (see attended-win.ts): pty unless the box opted into the console
+// fallback because node-pty could not be installed.
+export function attendedSpawnModeFromEnv(env: Record<string, string | undefined> = process.env): AttendedSpawnMode {
+  return env.ATTENDED_SPAWN_MODE === "console" ? "console" : "pty";
+}
+
 export interface AttendedDeps {
   now?: () => Date;
   isAlive?: (pid: number) => boolean;
   spawnExpect?: (scriptPath: string, logPath: string) => { pid: number };
+  spawnWindows?: (mode: AttendedSpawnMode, opts: WindowsSpawnOptions) => { pid: number };
+  spawnMode?: AttendedSpawnMode;
+  platform?: NodeJS.Platform;
   kill?: (pid: number) => void;
   claudeBin?: string;
   logDir?: string;
@@ -182,17 +195,31 @@ function defaultSpawnExpect(scriptPath: string, logPath: string): { pid: number 
   child.unref();
   return { pid: child.pid ?? -1 };
 }
+function defaultSpawnWindows(mode: AttendedSpawnMode, opts: WindowsSpawnOptions): { pid: number } {
+  return mode === "console" ? spawnAttendedConsole(opts) : spawnAttendedPty(opts);
+}
 
+// macOS/Linux: an expect script gives claude a pseudo-tty and answers the first-run prompt.
+// Windows: node-pty (or a plain console window) does the same job — see attended-win.ts.
 export function spawnAttendedSession(db: DB, runId: number, deps: AttendedDeps = {}): SpawnRecord {
   const now = (deps.now ?? (() => new Date()))();
   const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
   fs.mkdirSync(logDir, { recursive: true });
-  const scriptPath = path.join(logDir, `attended-${runId}.exp`);
   const logPath = path.join(logDir, `attended-${runId}.log`);
   const cwd = deps.cwd ?? process.cwd();
   const claudeBin = deps.claudeBin ?? process.env.ATTENDED_CLAUDE_BIN ?? resolveClaudeBin();
-  fs.writeFileSync(scriptPath, buildExpectScript({ claudeBin, cwd, runId, prompt: buildAttendedPrompt(runId) }));
-  const { pid } = (deps.spawnExpect ?? defaultSpawnExpect)(scriptPath, logPath);
+  const prompt = buildAttendedPrompt(runId);
+  const platform = deps.platform ?? process.platform;
+
+  let pid: number;
+  if (platform === "win32") {
+    const mode = deps.spawnMode ?? attendedSpawnModeFromEnv();
+    pid = (deps.spawnWindows ?? defaultSpawnWindows)(mode, { claudeBin, args: buildAttendedArgs({ runId, prompt }), cwd, logPath }).pid;
+  } else {
+    const scriptPath = path.join(logDir, `attended-${runId}.exp`);
+    fs.writeFileSync(scriptPath, buildExpectScript({ claudeBin, cwd, runId, prompt }));
+    pid = (deps.spawnExpect ?? defaultSpawnExpect)(scriptPath, logPath).pid;
+  }
   const rec: SpawnRecord = { pid, runId, startedAt: now.toISOString(), logPath };
   writeKey(db, SPAWN_KEY, rec);
   return rec;
