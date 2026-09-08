@@ -49,7 +49,8 @@ export function HistorySankey({ rows }: { rows: HistoryRow[] }) {
     if (nodes.length === 0) return null;
     const total = rows.length;
     const maxStack = Math.max(...[0, 1, 2, 3, 4].map((l) => nodes.filter((n) => n.layer === l).length));
-    const scale = (TARGET_H - PAD_TOP - PAD_BOTTOM - GAP * (maxStack - 1)) / total;
+    // Cap the per-row thickness so a handful of applications draws as a slim flow, not a slab.
+    const scale = Math.min(28, (TARGET_H - PAD_TOP - PAD_BOTTOM - GAP * (maxStack - 1)) / total);
     const colX = (layer: number) => PAD_X + ((W - 2 * PAD_X - NODE_W) * layer) / 4;
 
     const placed = new Map<string, Placed>();
