@@ -13,6 +13,9 @@
 
 日常使用也可以用生产模式:`npm run build && npm start`(同样监听 127.0.0.1:3000,行为与 `dev` 一致,但没有热更新开销,适合常驻后台跑扫描)。
 
+## Windows 常开机部署
+生产环境跑在一台常开的 Windows 11 机器上,Mac/手机经 Tailscale 用浏览器访问(设计 `docs/superpowers/specs/2026-09-06-windows-server-migration-design.md`,操作手册 `ops/windows/README.md`)。要点:pm2 + 任务计划「用户登录时」常驻(不是 Windows 服务,服务碰不到 Chrome);部署用 `powershell -ExecutionPolicy Bypass -File ops\windows\deploy.ps1`;通知只走 ntfy(`NTFY_TOPIC` 必填);值守会话由 node-pty 代替 expect 拉起(`src/executor/attended-win.ts`,`ATTENDED_SPAWN_MODE=console` 兜底);每天 04:00 自动备份到 `data/backups/`(`npm run backup`)。
+
 ## 自动扫描(信息源层,2026-09-06 起)
 **来源注册表 `boards`**:凡是被轮询的东西都是一行——公司在某个招聘系统上的板块(`greenhouse:stripe`、`workday:nvidia.wd5/NVIDIAExternalCareerSite`、`smartrecruiters:ServiceNow`、`oracle:<host>/<site>`、`icims:<host>`、`workable:<acct>`)、6 份 GitHub 清单、字节/TikTok 两个门户、Amazon、LinkedIn 游客接口,以及 Chrome 通道的三个站点。板块从三处进来:种子 `config/boards.seed.json`;每个入库岗位的 apply_url 自动解析出它所属的板块(`src/scanner/board-key.ts`);开源公司目录一次性导入(/sources 页「导入开源目录」或 `npm run import-directory`,约 4700 家)。
 
@@ -109,7 +112,7 @@ session 会写进这个 profile 目录,之后所有无人值守的执行器运�
 `~/.local/bin`——而 `claude` 在这台机器上装在 `~/.local/bin/claude`。`resolveClaudeBin()`
 (`src/executor/runner.ts`)已经处理了这个:优先用 `CLAUDE_BIN` 环境变量,其次探测
 `~/.local/bin/claude` 是否存在,最后兜底裸 `claude` 交给 PATH 解析——一般不用手动配置,装的位置不一样才需要
-在 `.env` 里设 `CLAUDE_BIN`。
+在 `.env` 里设 `CLAUDE_BIN`。Windows 上原生安装器把它装在 `%USERPROFILE%\.local\bin\claude.exe`,`resolveClaudeBin()` 同样会探测到。
 
 ## 人脉 / Networking
 集中式 CRM:联系人(招聘方/校友/用人经理/工程师)、多剧本 AI 草稿(referral/self_pitch/recruiter/

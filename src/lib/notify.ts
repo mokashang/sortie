@@ -32,6 +32,14 @@ export function encodeNtfyTitle(title: string): string {
   return `=?UTF-8?B?${Buffer.from(title, "utf8").toString("base64")}?=`;
 }
 
+// Off macOS there is no desktop notifier, so ntfy is the only channel. Warn once per process
+// when it is not configured: a Windows deploy without NTFY_TOPIC must show up in the server log
+// instead of silently dropping every notification.
+let warnedNoTopic = false;
+export function resetNotifyWarningForTests(): void {
+  warnedNoTopic = false;
+}
+
 export async function notify(
   title: string,
   body: string,
@@ -40,13 +48,19 @@ export async function notify(
     priority?: "default" | "high";
     fetcher?: typeof fetch;
     execMacNotifier?: MacNotifier;
+    platform?: NodeJS.Platform;
   } = {}
 ): Promise<void> {
   const topic = opts.ntfyTopic ?? process.env.NTFY_TOPIC;
   const fetcher = opts.fetcher ?? fetch;
-  const mac = opts.execMacNotifier ?? defaultMacNotifier;
+  const platform = opts.platform ?? process.platform;
 
-  mac(title, body);
+  if (platform === "darwin") {
+    (opts.execMacNotifier ?? defaultMacNotifier)(title, body);
+  } else if (!topic && !warnedNoTopic) {
+    warnedNoTopic = true;
+    console.warn("[notify] NTFY_TOPIC is not set and this is not macOS: notifications are being dropped. Set NTFY_TOPIC in .env.");
+  }
   if (topic) {
     try {
       await fetcher(`https://ntfy.sh/${topic}`, {

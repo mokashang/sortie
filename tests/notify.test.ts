@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { notify, escapeAppleScript, encodeNtfyTitle } from "@/lib/notify";
+import { notify, escapeAppleScript, encodeNtfyTitle, resetNotifyWarningForTests } from "@/lib/notify";
 
 describe("notify", () => {
   it("posts to ntfy when topic configured and calls macos notifier", async () => {
@@ -13,6 +13,7 @@ describe("notify", () => {
       ntfyTopic: "test-topic",
       fetcher: fakeFetch as typeof fetch,
       execMacNotifier: fakeExec,
+      platform: "darwin",
     });
     expect(calls[0].url).toBe("https://ntfy.sh/test-topic");
     expect(calls[0].body).toBe("正文内容");
@@ -37,6 +38,26 @@ describe("notify", () => {
     ).resolves.toBeUndefined();
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  it("does not call the macOS notifier off macOS", async () => {
+    const fakeExec = vi.fn();
+    const fakeFetch = async () => new Response("ok");
+    await notify("t", "b", { ntfyTopic: "topic", fetcher: fakeFetch as typeof fetch, execMacNotifier: fakeExec, platform: "win32" });
+    expect(fakeExec).not.toHaveBeenCalled();
+  });
+
+  it("warns once per process when off macOS and no ntfy topic is configured", async () => {
+    vi.stubEnv("NTFY_TOPIC", "");
+    resetNotifyWarningForTests();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const opts = { ntfyTopic: undefined, fetcher: vi.fn() as unknown as typeof fetch, execMacNotifier: vi.fn(), platform: "win32" as const };
+    await notify("t", "b", opts);
+    await notify("t", "b", opts);
+    const topicWarnings = warnSpy.mock.calls.filter((c) => String(c[0]).includes("NTFY_TOPIC"));
+    expect(topicWarnings).toHaveLength(1);
+    warnSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 });
 

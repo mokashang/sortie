@@ -2,6 +2,9 @@
   "name": "jobseeker-os",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev -H 127.0.0.1 -p 3000",
     "build": "next build",
@@ -14,7 +17,8 @@
     "consolidate": "tsx scripts/consolidate.ts",
     "referral-fit": "tsx scripts/referral-fit.ts",
     "import-directory": "tsx scripts/import-directory.ts",
-    "retier": "tsx scripts/retier.ts"
+    "retier": "tsx scripts/retier.ts",
+    "backup": "tsx scripts/backup-db.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
@@ -32,5 +36,8 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   }
 }

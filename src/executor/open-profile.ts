@@ -12,9 +12,23 @@ import path from "path";
 // Deliberately does NOT go through `npx @playwright/mcp` — that starts an MCP server, not a
 // plain browser window for a human to click around in. Spawns the Chrome binary directly instead,
 // falling back to `open -na "Google Chrome" --args ...` (Launch Services app-name resolution) if
-// the .app isn't at the usual path.
+// the .app isn't at the usual path. Windows probes Program Files / LocalAppData (or CHROME_BIN),
+// falling back to `cmd /c start chrome`.
 
-const CHROME_APP_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+// Where a stock Chrome install lives per platform, most specific first. Windows paths are built
+// from the environment so tests can pin them; on a real box ProgramFiles / LOCALAPPDATA always exist.
+export function chromeCandidates(platform: NodeJS.Platform, env: Record<string, string | undefined>): string[] {
+  if (platform === "darwin") return [MAC_CHROME];
+  if (platform === "win32") {
+    const rel = path.join("Google", "Chrome", "Application", "chrome.exe");
+    return [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]
+      .filter((d): d is string => !!d)
+      .map((d) => path.join(d, rel));
+  }
+  return ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"];
+}
 
 // A structural subset of child_process.ChildProcess — mirrors the pattern in executor/runner.ts
 // so tests can inject a fake without touching the real filesystem/process table.
@@ -33,6 +47,8 @@ export interface OpenProfileDeps {
   spawn?: SpawnFn;
   existsSync?: (p: string) => boolean;
   profileDir?: string;
+  platform?: NodeJS.Platform;
+  env?: Record<string, string | undefined>;
 }
 
 export interface OpenProfileResult {
@@ -45,15 +61,29 @@ export function openBrowserProfile(deps: OpenProfileDeps = {}): OpenProfileResul
   const spawnFn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
   const existsSync = deps.existsSync ?? fs.existsSync;
   const profileDir = deps.profileDir ?? path.join(process.cwd(), "data/browser-profile");
+  const platform = deps.platform ?? process.platform;
+  const env = deps.env ?? process.env;
+  const userDataDir = `--user-data-dir=${profileDir}`;
+
+  // CHROME_BIN is an explicit override and is trusted as-is (a wrong path surfaces as ENOENT).
+  const found = env.CHROME_BIN || chromeCandidates(platform, env).find((c) => existsSync(c));
 
   let bin: string;
   let args: string[];
-  if (existsSync(CHROME_APP_BIN)) {
-    bin = CHROME_APP_BIN;
-    args = [`--user-data-dir=${profileDir}`, "--no-first-run"];
-  } else {
+  if (found) {
+    bin = found;
+    args = [userDataDir, "--no-first-run"];
+  } else if (platform === "darwin") {
+    // Launch Services app-name resolution when Chrome.app isn't at the usual path.
     bin = "open";
-    args = ["-na", "Google Chrome", "--args", `--user-data-dir=${profileDir}`, "--no-first-run"];
+    args = ["-na", "Google Chrome", "--args", userDataDir, "--no-first-run"];
+  } else if (platform === "win32") {
+    // `start` resolves `chrome` through the App Paths registry key.
+    bin = "cmd";
+    args = ["/c", "start", "", "chrome", userDataDir, "--no-first-run"];
+  } else {
+    bin = "google-chrome";
+    args = [userDataDir, "--no-first-run"];
   }
 
   const child = spawnFn(bin, args, { detached: true, stdio: "ignore" });

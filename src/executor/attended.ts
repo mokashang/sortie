@@ -3,13 +3,16 @@ import fs from "fs";
 import path from "path";
 import { DB } from "@/lib/db";
 import { resolveClaudeBin } from "@/lib/claude-bin";
+import { killTree } from "@/lib/proc-kill";
+import { spawnAttendedPty, spawnAttendedConsole, type WindowsSpawnOptions } from "@/executor/attended-win";
 
 // The attended-session dispatcher ("值守会话调度器", spec: docs/superpowers/specs/
 // 2026-09-06-attended-dispatcher-design.md). The user_chrome channel needs an *interactive*
 // Claude session (the Chrome extension only attaches to those) to claim queued runs. When the
 // desktop App is open, the session inside it heartbeats here and claims runs itself. When no
 // session has heartbeated recently, the App server spawns a terminal `claude --chrome` session
-// under `expect` (a pseudo-tty; macOS ships expect, no tmux needed) with the run handed to it in
+// under `expect` (a pseudo-tty; macOS ships expect, no tmux needed) — on Windows via node-pty / a
+// console window (attended-win.ts) — with the run handed to it in
 // the initial prompt, and reaps it once the run reaches a terminal status.
 //
 // Both pieces of state live in the `profile` key/value table so no schema migration is needed:
@@ -116,13 +119,38 @@ export function buildAttendedPrompt(runId: number, appBase = "http://127.0.0.1:3
   ].join("\n");
 }
 
+export interface AttendedArgsOptions {
+  runId: number;
+  prompt: string;
+  sessionName?: string;
+}
+
+// The exact argv every launcher (expect on macOS, node-pty / console on Windows) hands to the
+// claude binary: Chrome integration on, no permission prompts, only the attended tool allowlist,
+// a stable session name per run, and the task prompt as the initial message.
+export function buildAttendedArgs(opts: AttendedArgsOptions): string[] {
+  return [
+    "--chrome",
+    "--permission-mode",
+    "dontAsk",
+    "--allowedTools",
+    ...ATTENDED_ALLOWED_TOOLS,
+    "-n",
+    opts.sessionName ?? `sortie-run-${opts.runId}`,
+    opts.prompt,
+  ];
+}
+
 export function buildExpectScript(opts: { claudeBin: string; cwd: string; runId: number; prompt: string; sessionName?: string }): string {
   const q = (s: string) => `"${s.replace(/[\\"$\[\]]/g, (m) => `\\${m}`)}"`;
-  const tools = ATTENDED_ALLOWED_TOOLS.map(q).join(" ");
+  // Plain flag-like tokens stay bare (keeps the script readable and byte-identical to before for
+  // them); anything with shell-ish characters or spaces is quoted and escaped for Tcl.
+  const qIfNeeded = (s: string) => (/^[A-Za-z0-9_.:/=-]+$/.test(s) ? s : q(s));
+  const args = buildAttendedArgs({ runId: opts.runId, prompt: opts.prompt, sessionName: opts.sessionName });
   return [
     `set timeout ${Math.floor(SPAWN_MAX_AGE_MS / 1000)}`,
     `cd ${q(opts.cwd)}`,
-    `spawn ${q(opts.claudeBin)} --chrome --permission-mode dontAsk --allowedTools ${tools} -n ${q(opts.sessionName ?? `sortie-run-${opts.runId}`)} ${q(opts.prompt)}`,
+    `spawn ${q(opts.claudeBin)} ${args.map(qIfNeeded).join(" ")}`,
     `expect {`,
     `  -re "Enter to confirm" { send "\\r"; exp_continue }`,
     `  timeout { }`,
@@ -132,10 +160,21 @@ export function buildExpectScript(opts: { claudeBin: string; cwd: string; runId:
   ].join("\n");
 }
 
+export type AttendedSpawnMode = "pty" | "console";
+
+// Windows launcher choice (see attended-win.ts): pty unless the box opted into the console
+// fallback because node-pty could not be installed.
+export function attendedSpawnModeFromEnv(env: Record<string, string | undefined> = process.env): AttendedSpawnMode {
+  return env.ATTENDED_SPAWN_MODE === "console" ? "console" : "pty";
+}
+
 export interface AttendedDeps {
   now?: () => Date;
   isAlive?: (pid: number) => boolean;
   spawnExpect?: (scriptPath: string, logPath: string) => { pid: number };
+  spawnWindows?: (mode: AttendedSpawnMode, opts: WindowsSpawnOptions) => { pid: number };
+  spawnMode?: AttendedSpawnMode;
+  platform?: NodeJS.Platform;
   kill?: (pid: number) => void;
   claudeBin?: string;
   logDir?: string;
@@ -156,28 +195,31 @@ function defaultSpawnExpect(scriptPath: string, logPath: string): { pid: number 
   child.unref();
   return { pid: child.pid ?? -1 };
 }
-function defaultKill(pid: number): void {
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
+function defaultSpawnWindows(mode: AttendedSpawnMode, opts: WindowsSpawnOptions): { pid: number } {
+  return mode === "console" ? spawnAttendedConsole(opts) : spawnAttendedPty(opts);
 }
 
+// macOS/Linux: an expect script gives claude a pseudo-tty and answers the first-run prompt.
+// Windows: node-pty (or a plain console window) does the same job — see attended-win.ts.
 export function spawnAttendedSession(db: DB, runId: number, deps: AttendedDeps = {}): SpawnRecord {
   const now = (deps.now ?? (() => new Date()))();
   const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
   fs.mkdirSync(logDir, { recursive: true });
-  const scriptPath = path.join(logDir, `attended-${runId}.exp`);
   const logPath = path.join(logDir, `attended-${runId}.log`);
   const cwd = deps.cwd ?? process.cwd();
   const claudeBin = deps.claudeBin ?? process.env.ATTENDED_CLAUDE_BIN ?? resolveClaudeBin();
-  fs.writeFileSync(scriptPath, buildExpectScript({ claudeBin, cwd, runId, prompt: buildAttendedPrompt(runId) }));
-  const { pid } = (deps.spawnExpect ?? defaultSpawnExpect)(scriptPath, logPath);
+  const prompt = buildAttendedPrompt(runId);
+  const platform = deps.platform ?? process.platform;
+
+  let pid: number;
+  if (platform === "win32") {
+    const mode = deps.spawnMode ?? attendedSpawnModeFromEnv();
+    pid = (deps.spawnWindows ?? defaultSpawnWindows)(mode, { claudeBin, args: buildAttendedArgs({ runId, prompt }), cwd, logPath }).pid;
+  } else {
+    const scriptPath = path.join(logDir, `attended-${runId}.exp`);
+    fs.writeFileSync(scriptPath, buildExpectScript({ claudeBin, cwd, runId, prompt }));
+    pid = (deps.spawnExpect ?? defaultSpawnExpect)(scriptPath, logPath).pid;
+  }
   const rec: SpawnRecord = { pid, runId, startedAt: now.toISOString(), logPath };
   writeKey(db, SPAWN_KEY, rec);
   return rec;
@@ -213,7 +255,7 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
   }
   const decision = decide({ queuedRunId: queued?.id ?? null, heartbeatAgeMs: heartbeatAgeMs(db, now), spawn: spawnInput });
   if (decision.action === "reap") {
-    (deps.kill ?? defaultKill)(decision.pid);
+    (deps.kill ?? killTree)(decision.pid);
     writeKey(db, SPAWN_KEY, null);
     console.log(`[attended] reaped child ${decision.pid}: ${decision.reason}`);
     return { decision };

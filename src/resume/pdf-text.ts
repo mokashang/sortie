@@ -2,10 +2,12 @@ import { execFile } from "child_process";
 
 export type PdftotextExec = (pdfPath: string) => Promise<string>;
 
+// `pdftotext` (poppler) is resolved from PATH by default; PDFTOTEXT_BIN pins an absolute path
+// (Windows installs of poppler are rarely on PATH). Symmetric with TECTONIC_BIN in compile.ts.
 const defaultExec: PdftotextExec = (pdfPath) =>
   new Promise((resolve, reject) => {
     execFile(
-      "pdftotext",
+      process.env.PDFTOTEXT_BIN || "pdftotext",
       ["-layout", pdfPath, "-"],
       { timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
       (err, stdout) => {
