@@ -569,3 +569,93 @@ details summary {
     grid-column: 2;
   }
 }
+
+/* ---- 人脉 ---- */
+
+.network-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+
+.contact-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line-strong);
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+.contact-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 8px;
+  border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  transition: background var(--dur) var(--ease);
+}
+
+.contact-item:hover {
+  background: var(--surface-2);
+}
+
+.contact-item.is-active {
+  background: var(--surface-2);
+  border-left-color: var(--accent);
+}
+
+.contact-detail-pane {
+  padding: var(--s-4) var(--s-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  min-height: 240px;
+}
+
+.thread {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s-3);
+}
+
+.bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  font-size: var(--t-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.bubble.is-sent {
+  align-self: flex-end;
+  background: var(--surface-2);
+  border-right: 2px solid var(--line-strong);
+}
+
+.bubble.is-received {
+  align-self: flex-start;
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+}
+
+.bubble-meta {
+  font-size: var(--t-xs);
+  color: var(--sub);
+  margin-bottom: 2px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+@media (max-width: 880px) {
+  .network-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}

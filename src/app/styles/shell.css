@@ -57,8 +57,10 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 8px 10px;
   color: var(--sub);
+  text-align: left;
   text-decoration: none;
   border-left: 2px solid transparent;
   transition: color var(--dur) var(--ease), background var(--dur) var(--ease);

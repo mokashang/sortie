@@ -9,12 +9,13 @@ import { AssistantCard } from "@/app/components/assistant-card";
 
 // The 人脉 page's assistant card: status of network tasks plus the two start buttons
 // (send approved messages / find people at the companies at the head of the queue).
-export function NetworkAssistant({ pendingSend }: { pendingSend: number }) {
+export function NetworkAssistant() {
   const [channel, setChannel] = useState<Channel>("user_chrome");
   const [busy, setBusy] = useState<string | null>(null);
   const { data, refresh } = useOverview();
   const { toast } = useToast();
   const live = data?.liveKinds ?? [];
+  const pendingSend = data?.counts.networkPendingSend ?? 0;
 
   useEffect(() => setChannel(getChannel()), []);
 

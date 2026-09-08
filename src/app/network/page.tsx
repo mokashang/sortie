@@ -1,19 +1,18 @@
-import { NetworkClient } from "./network-client";
+import { PageHeader } from "@/app/components/ui";
 import { NetworkAssistant } from "./network-assistant";
+import { NetworkClient } from "./network-client";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "人脉" };
 
+// 人脉: contacts plus coffee-chat / exploratory outreach. Job-linked referral requests live on
+// 投递's 内推进行中 board, not here.
 export default function NetworkPage() {
   return (
-    <div>
-      <h1>人脉</h1>
-      <p className="panel-sub">
-        这里只做两件事:探索隐藏机会(hidden_opportunity)和约 coffee chat。岗位相关的内推请求在「投递」页的「内推进行中」里处理,不在这里显示。
-        联系人可以手动添加,也会被找人执行器自动写入。选联系人 + 剧本点"AI 草稿"生成初稿;草稿区可编辑后批准发送——执行器只发送你批准过的原文,LinkedIn
-        消息由执行器发送,Email 走 mailto:(你自己的邮件客户端发)。
-      </p>
-      <NetworkAssistant pendingSend={0} />
+    <>
+      <PageHeader title="人脉" subtitle="联系人和探索性的请教消息。助手只发送你批准过的原文;找内推在投递页处理。" />
+      <NetworkAssistant />
       <NetworkClient />
-    </div>
+    </>
   );
 }
