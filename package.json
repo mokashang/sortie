@@ -17,7 +17,8 @@
     "consolidate": "tsx scripts/consolidate.ts",
     "referral-fit": "tsx scripts/referral-fit.ts",
     "import-directory": "tsx scripts/import-directory.ts",
-    "retier": "tsx scripts/retier.ts"
+    "retier": "tsx scripts/retier.ts",
+    "backup": "tsx scripts/backup-db.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
