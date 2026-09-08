@@ -117,13 +117,38 @@ export function buildAttendedPrompt(runId: number, appBase = "http://127.0.0.1:3
   ].join("\n");
 }
 
+export interface AttendedArgsOptions {
+  runId: number;
+  prompt: string;
+  sessionName?: string;
+}
+
+// The exact argv every launcher (expect on macOS, node-pty / console on Windows) hands to the
+// claude binary: Chrome integration on, no permission prompts, only the attended tool allowlist,
+// a stable session name per run, and the task prompt as the initial message.
+export function buildAttendedArgs(opts: AttendedArgsOptions): string[] {
+  return [
+    "--chrome",
+    "--permission-mode",
+    "dontAsk",
+    "--allowedTools",
+    ...ATTENDED_ALLOWED_TOOLS,
+    "-n",
+    opts.sessionName ?? `sortie-run-${opts.runId}`,
+    opts.prompt,
+  ];
+}
+
 export function buildExpectScript(opts: { claudeBin: string; cwd: string; runId: number; prompt: string; sessionName?: string }): string {
   const q = (s: string) => `"${s.replace(/[\\"$\[\]]/g, (m) => `\\${m}`)}"`;
-  const tools = ATTENDED_ALLOWED_TOOLS.map(q).join(" ");
+  // Plain flag-like tokens stay bare (keeps the script readable and byte-identical to before for
+  // them); anything with shell-ish characters or spaces is quoted and escaped for Tcl.
+  const qIfNeeded = (s: string) => (/^[A-Za-z0-9_.:/=-]+$/.test(s) ? s : q(s));
+  const args = buildAttendedArgs({ runId: opts.runId, prompt: opts.prompt, sessionName: opts.sessionName });
   return [
     `set timeout ${Math.floor(SPAWN_MAX_AGE_MS / 1000)}`,
     `cd ${q(opts.cwd)}`,
-    `spawn ${q(opts.claudeBin)} --chrome --permission-mode dontAsk --allowedTools ${tools} -n ${q(opts.sessionName ?? `sortie-run-${opts.runId}`)} ${q(opts.prompt)}`,
+    `spawn ${q(opts.claudeBin)} ${args.map(qIfNeeded).join(" ")}`,
     `expect {`,
     `  -re "Enter to confirm" { send "\\r"; exp_continue }`,
     `  timeout { }`,

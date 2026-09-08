@@ -10,6 +10,8 @@ import {
   dispatchAttended,
   currentSpawn,
   buildExpectScript,
+  buildAttendedArgs,
+  ATTENDED_ALLOWED_TOOLS,
   buildAttendedPrompt,
   attendedStatus,
   HEARTBEAT_STALE_MS,
@@ -128,5 +130,14 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(p).toContain("list_connected_browsers");
     expect(p).toContain("claim-next");
     expect(buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 1, prompt: 'say "hi" $x' })).toContain('say \\"hi\\" \\$x');
+  });
+
+  it("buildAttendedArgs is the single argv both launchers hand to claude", () => {
+    const args = buildAttendedArgs({ runId: 3, prompt: "P" });
+    expect(args).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools", ...ATTENDED_ALLOWED_TOOLS, "-n", "sortie-run-3", "P"]);
+    expect(buildAttendedArgs({ runId: 3, prompt: "P", sessionName: "custom" })).toContain("custom");
+    const script = buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 3, prompt: "P" });
+    for (const tool of ATTENDED_ALLOWED_TOOLS) expect(script).toContain(tool);
+    expect(script).toContain("-n sortie-run-3");
   });
 });
