@@ -19,7 +19,7 @@ const MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 
 // Where a stock Chrome install lives per platform, most specific first. Windows paths are built
 // from the environment so tests can pin them; on a real box ProgramFiles / LOCALAPPDATA always exist.
-export function chromeCandidates(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
+export function chromeCandidates(platform: NodeJS.Platform, env: Record<string, string | undefined>): string[] {
   if (platform === "darwin") return [MAC_CHROME];
   if (platform === "win32") {
     const rel = path.join("Google", "Chrome", "Application", "chrome.exe");
@@ -48,7 +48,7 @@ export interface OpenProfileDeps {
   existsSync?: (p: string) => boolean;
   profileDir?: string;
   platform?: NodeJS.Platform;
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string | undefined>;
 }
 
 export interface OpenProfileResult {

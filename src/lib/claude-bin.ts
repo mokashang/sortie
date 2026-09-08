@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 
 export interface ResolveClaudeBinDeps {
-  env?: NodeJS.ProcessEnv;
+  env?: Record<string, string | undefined>;
   homedir?: string;
   platform?: NodeJS.Platform;
   existsSync?: (p: string) => boolean;
