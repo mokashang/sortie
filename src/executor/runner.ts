@@ -78,6 +78,7 @@ const ALLOWED_TOOLS = "Bash(curl:*),mcp__playwright__*";
 // override always wins, then the known install path, then fall back to bare 'claude' and let
 // PATH resolution have a shot (e.g. in dev, where the interactive shell's PATH is inherited).
 import { resolveClaudeBin } from "@/lib/claude-bin";
+import { killTree } from "@/lib/proc-kill";
 export { resolveClaudeBin };
 
 function isAlive(pid: number | null | undefined): boolean {
@@ -322,11 +323,10 @@ export function startExecutor(
   return { id: runId, pid, logPath };
 }
 
-// Sends SIGTERM to the run's process group (negative pid) so a detached `claude` and any
-// sub-processes it spawned all get the signal, not just the immediate child. Falls back to
-// signalling the bare pid if the group kill errors (e.g. the fake spawn in tests uses a pid that
-// isn't really a process group leader). Marks the row 'stopped' regardless — the point is to
-// record the user's intent to stop, not to guarantee the OS-level kill succeeded.
+// Kills the run's whole process tree via killTree() (process-group SIGTERM on POSIX, taskkill on
+// Windows) so a detached `claude` and any sub-processes it spawned all go, not just the immediate
+// child. Marks the row 'stopped' regardless — the point is to record the user's intent to stop,
+// not to guarantee the OS-level kill succeeded.
 export function stopExecutor(db: DB, runId: number): void {
   const row = db.prepare("SELECT pid, status, channel FROM executor_runs WHERE id=?").get(runId) as
     | { pid: number | null; status: string; channel: string }
@@ -342,15 +342,7 @@ export function stopExecutor(db: DB, runId: number): void {
   // GET /api/executor/run and stops itself. For headless rows, SIGTERM the process group as
   // before.
   if (row.channel !== "user_chrome" && row.pid != null && row.pid > 0) {
-    try {
-      process.kill(-row.pid, "SIGTERM");
-    } catch {
-      try {
-        process.kill(row.pid, "SIGTERM");
-      } catch {
-        // process already gone — nothing left to signal, still record the stop below
-      }
-    }
+    killTree(row.pid);
   }
 
   db.prepare("UPDATE executor_runs SET status='stopped', ended_at=datetime('now') WHERE id=?").run(runId);

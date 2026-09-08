@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { DB } from "@/lib/db";
 import { resolveClaudeBin } from "@/lib/claude-bin";
+import { killTree } from "@/lib/proc-kill";
 
 // The attended-session dispatcher ("值守会话调度器", spec: docs/superpowers/specs/
 // 2026-09-06-attended-dispatcher-design.md). The user_chrome channel needs an *interactive*
@@ -156,17 +157,6 @@ function defaultSpawnExpect(scriptPath: string, logPath: string): { pid: number 
   child.unref();
   return { pid: child.pid ?? -1 };
 }
-function defaultKill(pid: number): void {
-  try {
-    process.kill(-pid, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
-}
 
 export function spawnAttendedSession(db: DB, runId: number, deps: AttendedDeps = {}): SpawnRecord {
   const now = (deps.now ?? (() => new Date()))();
@@ -213,7 +203,7 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
   }
   const decision = decide({ queuedRunId: queued?.id ?? null, heartbeatAgeMs: heartbeatAgeMs(db, now), spawn: spawnInput });
   if (decision.action === "reap") {
-    (deps.kill ?? defaultKill)(decision.pid);
+    (deps.kill ?? killTree)(decision.pid);
     writeKey(db, SPAWN_KEY, null);
     console.log(`[attended] reaped child ${decision.pid}: ${decision.reason}`);
     return { decision };
