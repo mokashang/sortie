@@ -1,26 +1,27 @@
 import { getDb } from "@/lib/db";
-import { queueByDirection, pagedQueue, pagedAllJobs, QueueSort, ALL_JOBS_DIRECTION, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
-import { QueueBoard } from "./queue-board";
-import { ScanButton } from "./scan-button";
+import { queueByDirection, pagedQueue, pagedAllJobs, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
+import { ALL_JOBS_DIRECTION, QUEUE_MODES, QUEUE_SORTS, type QueueModeKey, type QueueSortKey } from "@/app/lib/queue-const";
+import { PageHeader, Stat, StatStrip } from "@/app/components/ui";
+import { ScanMenu } from "@/app/components/scan-menu";
+import { QueueClient } from "./queue-client";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "职位" };
 
 const PAGE_SIZE = 25;
-const VALID_SORTS: QueueSort[] = ["composite", "score", "fresh", "company"];
 
-// The single "职位" section: the old /jobs page (funnel counts, scan button, raw listing) merged
-// into the direction-tabbed apply queue. The raw listing lives on as the trailing "全部入库" tab.
+// 职位: the ranked apply queue, one tab per direction (tier ASC, count DESC, 未分类 last) plus a
+// trailing 全部入库 tab that is the raw scanner output. State lives in the URL so a reload or a
+// shared link lands on the same view.
 export default async function QueuePage({
   searchParams,
 }: {
-  searchParams: Promise<{ direction?: string; page?: string; sort?: string }>;
+  searchParams: Promise<{ direction?: string; page?: string; sort?: string; mode?: string; q?: string }>;
 }) {
   const sp = await searchParams;
   const db = getDb();
 
   const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
-  // "可见" is the population the 全部入库 tab draws from (visa_flag IS NULL AND loc_flag IS NULL);
-  // the two hidden counts explain what the hard filters removed and are mutually exclusive.
   const visibleTotal = count("SELECT COUNT(*) n FROM jobs WHERE visa_flag IS NULL AND loc_flag IS NULL");
   const visaHidden = count("SELECT COUNT(*) n FROM jobs WHERE visa_flag IS NOT NULL");
   const locHidden = count("SELECT COUNT(*) n FROM jobs WHERE visa_flag IS NULL AND loc_flag IS NOT NULL");
@@ -30,45 +31,37 @@ export default async function QueuePage({
      WHERE a.status='matched' AND ${QUEUE_ELIGIBLE_SQL}`
   );
 
-  // Tab strip: one tab per direction that currently has matched jobs, already ordered exactly
-  // the way the user asked (tier ASC then count DESC, "未分类" last) — queueByDirection already
-  // implements that ordering for the /apply quota table, so this reuses it verbatim.
   const tabs = queueByDirection(db);
-
-  const requestedDirection = sp.direction;
-  const resolvedDirection =
-    requestedDirection === ALL_JOBS_DIRECTION
+  const requested = sp.direction;
+  const direction =
+    requested === ALL_JOBS_DIRECTION
       ? ALL_JOBS_DIRECTION
-      : requestedDirection && tabs.some((t) => t.direction === requestedDirection)
-      ? requestedDirection
+      : requested && tabs.some((t) => t.direction === requested)
+      ? requested
       : (tabs[0]?.direction ?? ALL_JOBS_DIRECTION);
+  const isAllTab = direction === ALL_JOBS_DIRECTION;
 
   const page = Math.max(1, Number(sp.page) || 1);
-  // The raw listing defaults to scan order (what the old /jobs page showed); queue tabs to the composite (freshness-aware) rank.
-  const defaultSort: QueueSort = resolvedDirection === ALL_JOBS_DIRECTION ? "fresh" : "composite";
-  const sort: QueueSort = VALID_SORTS.includes(sp.sort as QueueSort) ? (sp.sort as QueueSort) : defaultSort;
+  const defaultSort: QueueSortKey = isAllTab ? "fresh" : "composite";
+  const sort: QueueSortKey = (QUEUE_SORTS as readonly string[]).includes(sp.sort ?? "") ? (sp.sort as QueueSortKey) : defaultSort;
+  const mode: QueueModeKey = (QUEUE_MODES as readonly string[]).includes(sp.mode ?? "") ? (sp.mode as QueueModeKey) : "all";
+  const q = sp.q?.trim() ?? "";
 
-  const result =
-    resolvedDirection === ALL_JOBS_DIRECTION
-      ? pagedAllJobs(db, { page, pageSize: PAGE_SIZE, sort })
-      : pagedQueue(db, { direction: resolvedDirection, page, pageSize: PAGE_SIZE, sort });
+  const result = isAllTab
+    ? pagedAllJobs(db, { page, pageSize: PAGE_SIZE, sort, q: q || undefined })
+    : pagedQueue(db, { direction, page, pageSize: PAGE_SIZE, sort, mode: mode === "all" ? undefined : mode, q: q || undefined });
 
   return (
-    <div>
-      <h1>
-        职位{" "}
-        <small>
-          (入库可见 {visibleTotal} · 已打分 {scoredTotal} · 已入队 {matchedTotal} · 已隐藏 {visaHidden} 个签证不符 ·{" "}
-          {locHidden} 个海外)
-        </small>
-      </h1>
-      <ScanButton />
-      <p className="panel-sub">
-        按方向分 tab,每 tab 内按所选排序展示,每页 {PAGE_SIZE} 条。分数 ≥ 阈值且未归档的职位在方向 tab 里,最值钱的排最前;
-        「全部入库」是扫描进来的全部可见职位(含未打分)。每行的「建议内推 / 海投」是 Claude 的建议,可逐条改;
-        「投递」页按这个模式分开取件。
-      </p>
-      <QueueBoard
+    <>
+      <PageHeader title="职位" subtitle="按方向分组的可投队列,排在前面的最值得投;点任意一行看详情。" actions={<ScanMenu />}>
+        <StatStrip compact>
+          <Stat label="入库可见" value={visibleTotal.toLocaleString()} hint="扫描进来、并通过签证与地点硬过滤的职位" />
+          <Stat label="已打分" value={scoredTotal.toLocaleString()} hint="助手已按 12 个方向打过分的职位" />
+          <Stat label="可投" value={matchedTotal.toLocaleString()} tone="accent" hint="分数达标、未归档、未投递的职位,也就是各方向标签页里的数量" />
+          <Stat label="已隐藏" value={(visaHidden + locHidden).toLocaleString()} sub={`${visaHidden.toLocaleString()} 个签证不符 · ${locHidden.toLocaleString()} 个海外`} hint="硬过滤掉的职位不会出现在队列里" />
+        </StatStrip>
+      </PageHeader>
+      <QueueClient
         tabs={tabs.map((t) => ({
           direction: t.direction,
           tier: t.tier,
@@ -77,12 +70,14 @@ export default async function QueuePage({
           directSuggested: t.directSuggested,
         }))}
         allJobsCount={visibleTotal}
-        initialDirection={resolvedDirection}
+        initialDirection={direction}
         initialPage={page}
         initialSort={sort}
+        initialMode={mode}
+        initialQuery={q}
         initialResult={result}
         pageSize={PAGE_SIZE}
       />
-    </div>
+    </>
   );
 }

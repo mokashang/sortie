@@ -3,7 +3,8 @@ import { useMemo, useState } from "react";
 import { directionLabel } from "@/matcher/directions";
 import { POST_SUBMIT_STAGES, STAGE_LABELS, HistoryRow, PostSubmitStage } from "@/apply/stages";
 import { HistorySankey } from "./history-sankey";
-import { ModeFilter, ModeFilterValue } from "@/app/components/mode-filter";
+import { Segmented } from "@/app/components/ui";
+type ModeFilterValue = "all" | "referral" | "direct";
 
 const ALL = "__all__";
 
@@ -111,7 +112,17 @@ export function HistoryBoard({ rows }: { rows: HistoryRow[] }) {
       </div>
 
       <div style={{ margin: "10px 0 0" }}>
-        <ModeFilter value={modeFilter} onChange={setModeFilter} labels={{ referral: "内推", direct: "海投" }} counts={modeCounts} />
+        <Segmented<ModeFilterValue>
+          ariaLabel="投递方式"
+          size="sm"
+          value={modeFilter}
+          onChange={setModeFilter}
+          options={[
+            { value: "all", label: "全部", count: modeCounts.all },
+            { value: "referral", label: "内推", count: modeCounts.referral },
+            { value: "direct", label: "海投", count: modeCounts.direct },
+          ]}
+        />
       </div>
 
       <div style={{ display: "flex", gap: 18, margin: "12px 0 16px", fontSize: 13, flexWrap: "wrap" }}>

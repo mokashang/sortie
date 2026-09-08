@@ -527,7 +527,8 @@ export function unpark(db: DB, jobId: number): void {
 // Sentinel used wherever a NULL matches.direction needs a display/routing string — the
 // queueByDirection summary and the /queue tab strip it feeds, and pagedQueue's own direction
 // filter below (which maps this string back to "IS NULL" rather than a literal match).
-export const UNCLASSIFIED_DIRECTION = "未分类";
+import { ALL_JOBS_DIRECTION, UNCLASSIFIED_DIRECTION } from "@/app/lib/queue-const";
+export { ALL_JOBS_DIRECTION, UNCLASSIFIED_DIRECTION };
 
 export interface DirectionQueueRow {
   score: number;
@@ -771,10 +772,9 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
   return { rows, total, pages };
 }
 
-// Sentinel `direction` value the merged /queue page uses for its "全部入库" tab — every visa/US
-// visible job in the database, scored or not, queued or not. Like UNCLASSIFIED_DIRECTION it is a
-// routing key only and never appears as a matches.direction column value.
-export const ALL_JOBS_DIRECTION = "__all__";
+// ALL_JOBS_DIRECTION (the merged /queue page's "全部入库" tab — every visa/US visible job, scored or
+// not, queued or not) and UNCLASSIFIED_DIRECTION are defined in src/app/lib/queue-const.ts so the
+// client can import them without this module; both are routing keys only.
 
 export interface PagedAllJobsRow extends PagedQueueRow {
   source: string;

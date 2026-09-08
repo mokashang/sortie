@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { ChromeScanButton } from "@/app/components/chrome-scan-button";
+import { ScanMenu } from "@/app/components/scan-menu";
 
 type Tier = "core" | "longtail" | "dormant" | "muted";
 const TIERS: Tier[] = ["core", "longtail", "dormant", "muted"];
@@ -68,7 +68,7 @@ export function SourcesBoard() {
           <button className="btn-ghost" onClick={() => act("导入开源目录", () => fetch("/api/sources/import-directory", { method: "POST" }))} disabled={!!busy} title="一次性把开源目录里 4700 多家公司加为长尾板块;再点只补新增">
             {busy === "导入开源目录" ? "导入中…" : "导入开源目录"}
           </button>
-          <ChromeScanButton showSummary />
+          <ScanMenu />
         </div>
         {msg && <p className="text-sub" style={{ marginBottom: 8 }}>{msg}</p>}
         {data?.lastTick && (
