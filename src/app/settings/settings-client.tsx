@@ -63,7 +63,7 @@ export function SettingsClient({ ntfyConfigured, lastTick }: { ntfyConfigured: b
                 <Globe size={15} aria-hidden /> 在我的 Chrome 里操作 <Chip tone="good">推荐</Chip>
               </span>
             }
-            description="用你已经登录好的 Chrome,你随时能看着它做。需要 Claude 桌面应用里的会话在线,并连着 Chrome 扩展;任务会先排队,由它接手。"
+            description="用你已经登录好的 Chrome,你随时能看着它做。任务先排队:桌面应用里的 Claude 会话在线时由它接手,否则 App 自动拉起一个命令行会话(需要 claude 已登录)。"
           />
           <RadioCard
             name="channel"

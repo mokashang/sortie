@@ -117,10 +117,8 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
           <div className="assistant-body">
             {run.status === "queued" ? (
               <p className="small">
-                已排队,等待助手接手 · {labelOf(CHANNEL_LABEL, run.channel, run.channel)}
-                {run.channel === "user_chrome" ? (
-                  <span className="muted"> · 需要 Claude 桌面应用里的会话在线并连着 Chrome 扩展</span>
-                ) : null}
+                已排队 · {labelOf(CHANNEL_LABEL, run.channel, run.channel)}操作,助手接手后开始
+                {run.channel === "user_chrome" ? <span className="muted"> · 桌面应用里的会话在线时由它接手,否则 App 自动拉起一个</span> : null}
               </p>
             ) : (
               <div className="assistant-last">
