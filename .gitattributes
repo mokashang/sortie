@@ -1,0 +1,10 @@
+# Windows 上开发也按 LF 入库,避免 CRLF 污染 diff;二进制按扩展名标记。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.db binary
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+# 测试 fixture 是真实页面的字节快照,不做换行转换。
+tests/fixtures/** -text
