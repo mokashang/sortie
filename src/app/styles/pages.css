@@ -724,3 +724,34 @@ details summary {
     grid-column: 1 / -1;
   }
 }
+
+/* ---- 信息源 ---- */
+
+.row-click {
+  cursor: pointer;
+}
+
+.row-click:hover td {
+  background: var(--surface-2);
+}
+
+.row-click.is-active td {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+.event-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.event-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--t-sm);
+}

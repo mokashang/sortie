@@ -1,17 +1,17 @@
+import { PageHeader } from "@/app/components/ui";
+import { ScanMenu } from "@/app/components/scan-menu";
 import { SourcesBoard } from "./sources-board";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "信息源" };
 
-// 来源页(排查用,不在导航里,直接访问 /sources):每个信息源的产出、层级(多久问一次)、错误,
-// 以及动作:立即扫描(核心 + 清单)、导入开源目录、Chrome 扫描。用户日常只看 /queue。
+// 信息源 (advanced, reached from 设置 — not in the navigation): every polled board, its tier and
+// errors. Day-to-day use never needs this page; the queue is the product.
 export default function SourcesPage() {
   return (
-    <div>
-      <h1>来源 <small>(排查页,不在导航里)</small></h1>
-      <p className="panel-sub">
-        后台每分钟检查一次哪些板块该问了:core 每小时、longtail 每天、dormant 每周、muted 不问。层级按过去 90 天的产出自动升降,你手动改过的不再自动动。
-      </p>
+    <>
+      <PageHeader title="信息源" subtitle="后台每分钟检查一次哪些板块到期:核心每小时、长尾每天、休眠每周。这里用于排查,平时不用看。" actions={<ScanMenu />} />
       <SourcesBoard />
-    </div>
+    </>
   );
 }

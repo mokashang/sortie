@@ -472,6 +472,7 @@ a.stat:hover {
   font-size: var(--t-sm);
   cursor: pointer;
   user-select: none;
+  white-space: nowrap;
 }
 
 .radio-card {
