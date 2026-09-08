@@ -659,3 +659,68 @@ details summary {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- 档案 ---- */
+
+.exp-bullets {
+  margin: var(--s-3) 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--t-base);
+}
+
+.bullet-editor {
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+
+.bullet-editor .textarea {
+  background: var(--surface);
+}
+
+.chip-btn {
+  cursor: pointer;
+}
+
+.chip-btn:hover {
+  background: var(--accent-soft);
+}
+
+.resume-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--s-4);
+}
+
+.resume-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.pdf-frame {
+  width: 100%;
+  height: calc(100vh - 140px);
+  border: 0;
+  background: var(--surface-2);
+}
+
+.answer-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(200px, 2fr) auto;
+  gap: var(--s-3);
+  align-items: end;
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--line);
+}
+
+@media (max-width: 880px) {
+  .answer-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .answer-row > .field:first-child {
+    grid-column: 1 / -1;
+  }
+}

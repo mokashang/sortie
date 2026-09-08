@@ -1,27 +1,48 @@
 import { getDb } from "@/lib/db";
 import { listExperiences } from "@/resume/experiences";
-import { ExperienceEditor } from "./experience-editor";
-import { StandardAnswersEditor } from "./standard-answers-editor";
 import { loadProfile } from "@/lib/profile";
+import { PageHeader } from "@/app/components/ui";
+import { ProfileTabs, type ProfileTab } from "./profile-tabs";
+import type { ResumeRow } from "./profile-types";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "档案" };
 
-export default function ProfilePage() {
-  const experiences = listExperiences(getDb());
-  let standardAnswers: Record<string, string> = {};
+const TABS: ProfileTab[] = ["experiences", "resumes", "answers"];
+
+// 档案: 经历 (what the resumes are built from) · 简历 (generated versions) · 标准答案 (what the
+// assistant fills into application forms beyond contact/education/work-auth/EEO).
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const sp = await searchParams;
+  const tab: ProfileTab = TABS.includes(sp.tab as ProfileTab) ? (sp.tab as ProfileTab) : "experiences";
+  const db = getDb();
+  const experiences = listExperiences(db);
+  const resumes = (
+    db.prepare("SELECT id, version_name, directions, compiled_at FROM resumes ORDER BY compiled_at DESC").all() as {
+      id: number;
+      version_name: string;
+      directions: string;
+      compiled_at: string;
+    }[]
+  ).map<ResumeRow>((r) => {
+    let directions: string[] = [];
+    try {
+      directions = JSON.parse(r.directions);
+    } catch {
+      directions = [];
+    }
+    return { id: r.id, version_name: r.version_name, directions, compiled_at: r.compiled_at };
+  });
+  let answers: Record<string, string> = {};
   try {
-    standardAnswers = loadProfile().standard_answers;
+    answers = loadProfile().standard_answers;
   } catch {
-    standardAnswers = {};
+    answers = {};
   }
   return (
-    <div>
-      <h1>Profile — 我的经历</h1>
-      <p className="panel-sub">
-        像网申系统一样在这里录入你的教育、实习、项目、技能。生成简历时,Resume Studio 会按目标方向从这里挑选。
-      </p>
-      <ExperienceEditor initial={experiences} />
-      <StandardAnswersEditor initial={standardAnswers} />
-    </div>
+    <>
+      <PageHeader title="档案" subtitle="你的经历、由此生成的简历版本,以及网申常见问题的标准答案。" />
+      <ProfileTabs tab={tab} experiences={experiences} resumes={resumes} answers={answers} />
+    </>
   );
 }
