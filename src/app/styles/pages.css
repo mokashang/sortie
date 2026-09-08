@@ -525,3 +525,47 @@ details summary {
     flex-wrap: wrap;
   }
 }
+
+/* ---- 历史 ---- */
+
+.history-list {
+  border-top: 1px solid var(--line-strong);
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-main {
+  min-width: 0;
+}
+
+.history-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stage-trigger {
+  cursor: pointer;
+  gap: 6px;
+}
+
+.stage-trigger:hover {
+  filter: brightness(0.96);
+}
+
+@media (max-width: 880px) {
+  .history-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .history-side {
+    grid-column: 2;
+  }
+}

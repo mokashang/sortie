@@ -1,23 +1,19 @@
 import { getDb } from "@/lib/db";
 import { applicationHistory } from "@/apply/history";
-import { HistoryBoard } from "./history-board";
+import { PageHeader } from "@/app/components/ui";
+import { HistoryClient } from "./history-client";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "历史" };
 
-// 投递历史: every application that was actually submitted, grouped by direction tab and by
-// submission day, with a per-row status selector the user updates by hand as OA/interview/offer
-// news comes in. Pre-submit work (待确认, 需人工) stays on /apply.
+// 历史: every application that was actually submitted, grouped by direction and by day, with a
+// per-row status you update by hand as OA / interview / offer news comes in.
 export default function HistoryPage() {
   const rows = applicationHistory(getDb());
   return (
-    <div>
-      <h1>
-        投递历史 <small>(共 {rows.length} 份)</small>
-      </h1>
-      <p className="panel-sub">
-        已提交的申请按方向分 tab、按投递日期分组。状态由你手动更新(OA / 面试 / Offer / 被拒 / 无回音),每次变更都会记一条时间线。
-      </p>
-      <HistoryBoard rows={rows} />
-    </div>
+    <>
+      <PageHeader title="历史" subtitle={`已提交 ${rows.length} 份。状态由你手动更新,每次变更都会留一条记录。`} />
+      <HistoryClient rows={rows} />
+    </>
   );
 }

@@ -2,6 +2,7 @@
 import { useMemo } from "react";
 import { buildFunnel, FunnelKind, FunnelNode } from "@/apply/funnel";
 import type { HistoryRow } from "@/apply/stages";
+import { Section } from "@/app/components/ui";
 
 // 投递漏斗 — a hand-laid Sankey of the post-submit pipeline. Layout is a fixed five-column tree
 // (every node has exactly one parent), so no d3-sankey: columns are equally spaced, each column
@@ -91,10 +92,7 @@ export function HistorySankey({ rows }: { rows: HistoryRow[] }) {
   if (!layout) return null;
 
   return (
-    <section className="panel">
-      <div className="panel-title">
-        投递漏斗 <span className="text-sub" style={{ fontWeight: 400, marginLeft: 8, letterSpacing: 0, textTransform: "none" }}>{layout.total} 份</span>
-      </div>
+    <Section title="投递漏斗" count={layout.total}>
       <div style={{ overflowX: "auto" }}>
         <svg
           viewBox={`0 0 ${W} ${layout.height}`}
@@ -129,6 +127,6 @@ export function HistorySankey({ rows }: { rows: HistoryRow[] }) {
           })}
         </svg>
       </div>
-    </section>
+    </Section>
   );
 }
