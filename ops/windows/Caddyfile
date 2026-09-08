@@ -1,0 +1,24 @@
+# Sortie behind Caddy on the Windows box (spec §1, phase 2 — custom domain).
+# Only the Tailscale interface is bound, so the site is reachable from the user's own devices and
+# from nothing else. Fill in the domain below; put TS_IP (this machine's 100.x Tailscale address)
+# and CF_API_TOKEN (Cloudflare token scoped to Zone:DNS:Edit for this zone) into C:\sortie\.env.
+# The `Sortie Caddy` task runs: caddy run --config ops\windows\Caddyfile --envfile C:\sortie\.env
+# Requires a Caddy build with the cloudflare DNS module (caddyserver.com/download → dns.providers.cloudflare).
+{
+	admin off
+}
+
+sortie.example.com {
+	bind {$TS_IP}
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+	log {
+		output file C:/sortie/data/caddy-access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}
