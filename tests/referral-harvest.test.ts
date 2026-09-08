@@ -56,7 +56,9 @@ describe("harvestOutreach", () => {
       accepted: true,
       messages: [
         { dir: "sent", text: "Hi, refer me?" }, // duplicate of the sent text already in thread_log
-        { dir: "received", at: "2026-09-07T10:00:00.000Z", text: "Sure! Submitted: https://g/ref/123" },
+        // Must sort after the "sent" entry reportSent() stamped with the real current time, so the
+        // timestamp is computed relative to now instead of hard-coded (a fixed date broke on 2026-09-08).
+        { dir: "received", at: new Date(Date.now() + 60_000).toISOString(), text: "Sure! Submitted: https://g/ref/123" },
       ],
     });
     expect(r).toMatchObject({ status: "replied", stage: "referred", link: "https://g/ref/123", newMessages: 1 });
