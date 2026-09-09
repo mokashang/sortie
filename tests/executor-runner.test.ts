@@ -95,6 +95,12 @@ describe("executor/runner", () => {
       const [bin, args] = spawnFn.mock.calls[0];
       expect(args).toContain("-p");
       expect(args).toContain("--allowedTools");
+      // exactly one MCP server (playwright on <cwd>/data/browser-profile), registered inline, and
+      // every other MCP configuration on the machine ignored
+      expect(args).toContain("--strict-mcp-config");
+      const mcp = JSON.parse(args[args.indexOf("--mcp-config") + 1]);
+      expect(Object.keys(mcp.mcpServers)).toEqual(["playwright"]);
+      expect(mcp.mcpServers.playwright.args).toContain(path.join(process.cwd(), "data", "browser-profile"));
       expect(child.written).toContain("apply"); // the built apply prompt landed on stdin
       expect(child.ended).toBe(true);
     });

@@ -78,6 +78,7 @@ const ALLOWED_TOOLS = "Bash(curl:*),mcp__playwright__*";
 // override always wins, then the known install path, then fall back to bare 'claude' and let
 // PATH resolution have a shot (e.g. in dev, where the interactive shell's PATH is inherited).
 import { resolveClaudeBin } from "@/lib/claude-bin";
+import { browserProfileDir, playwrightMcpConfig } from "@/executor/mcp-config";
 import { killTree } from "@/lib/proc-kill";
 export { resolveClaudeBin };
 
@@ -289,6 +290,11 @@ export function startExecutor(
     "claude-sonnet-5",
     "--allowedTools",
     ALLOWED_TOOLS,
+    // Exactly one MCP server (playwright on data/browser-profile), registered inline; every other
+    // MCP config on the machine is ignored — see src/executor/mcp-config.ts.
+    "--mcp-config",
+    playwrightMcpConfig(browserProfileDir()),
+    "--strict-mcp-config",
   ];
 
   const child = spawnFn(bin, args, {

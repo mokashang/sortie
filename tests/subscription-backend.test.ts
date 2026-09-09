@@ -51,6 +51,9 @@ describe("SubscriptionBackend", () => {
     expect(args).toContain("claude-sonnet-5");
     expect(args).toContain("--output-format");
     expect(args).toContain("json");
+    // pure text completion: boot no MCP servers, whatever ~/.claude.json / .mcp.json say
+    expect(args).toContain("--strict-mcp-config");
+    expect(args).not.toContain("--mcp-config");
   });
 });
 

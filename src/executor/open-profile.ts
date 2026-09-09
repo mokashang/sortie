@@ -1,11 +1,12 @@
 import { spawn as nodeSpawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import { browserProfileDir } from "@/executor/mcp-config";
 
 // "Login once" affordance: POST /api/executor/open-profile (src/app/api/executor/open-profile/
 // route.ts) calls this to spawn a headed Chrome window on the SAME persistent profile dir the
-// headless Playwright MCP executor drives (data/browser-profile — see the `playwright` MCP
-// server registered via `claude mcp add --scope user`). The user logs into LinkedIn/Workday/etc.
+// headless Playwright MCP executor drives (data/browser-profile — the `playwright` MCP server the
+// executor registers inline, see src/executor/mcp-config.ts). The user logs into LinkedIn/Workday/etc.
 // once in that window; the session persists on disk so unattended `claude -p` executor runs see
 // it as already-logged-in.
 //
@@ -60,7 +61,7 @@ export interface OpenProfileResult {
 export function openBrowserProfile(deps: OpenProfileDeps = {}): OpenProfileResult {
   const spawnFn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
   const existsSync = deps.existsSync ?? fs.existsSync;
-  const profileDir = deps.profileDir ?? path.join(process.cwd(), "data/browser-profile");
+  const profileDir = deps.profileDir ?? browserProfileDir();
   const platform = deps.platform ?? process.platform;
   const env = deps.env ?? process.env;
   const userDataDir = `--user-data-dir=${profileDir}`;

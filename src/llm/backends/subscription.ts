@@ -81,6 +81,10 @@ export class SubscriptionBackend implements LlmBackend {
       "--no-session-persistence",
       "--model",
       req.tier === "smart" ? this.model.smart : this.model.fast,
+      // Pure text completion: ignore every MCP configuration on the machine so this short-lived
+      // process boots no MCP servers (it used to inherit the user's playwright + hanzi-browse
+      // entries and spawn both, six at a time during a matching pass).
+      "--strict-mcp-config",
     ];
     if (req.system) args.push("--append-system-prompt", req.system);
 

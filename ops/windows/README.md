@@ -42,6 +42,7 @@ copy profile\profile.example.yaml profile\profile.yaml
 1. Chrome 里新建「求职」档案,手动登录 LinkedIn / Workday / Handshake / Google;装 Claude in Chrome 扩展并登录 Claude 账号。`chrome://version` 看 Profile Path 最后一段(如 `Profile 2`),写进 `ops\windows\start-chrome.cmd` 的 `PROFILE=`。
 2. 终端:`claude` → `/login`(浏览器 OAuth,选 Pro/Max 账号)。
 3. 在 `C:\sortie` 里跑一次 `claude --chrome`:点掉首次介绍框、目录信任框;`/chrome` 应显示 Status: Enabled、Extension: Installed;`/exit`。这样调度器自动拉起的会话不会卡在首次提示上。
+4. **不用** `claude mcp add playwright`:无人值守执行器 spawn `claude -p` 时自己内联注册 Playwright MCP(Windows 上走 `cmd /c npx`),只要 `npx` 在 PATH 里;打分等纯文本调用不起任何 MCP。
 
 ## 4. 一次性设置、pm2 首启、Tailscale Serve
 ```powershell

@@ -23,7 +23,7 @@
 
 **适配器**(`src/scanner/sources/`):greenhouse / lever / ashby(公开 JSON)、workday(站点自己的 CXS 接口,8 个关键词逐个搜,新岗再拉详情拿 JD)、bytedance(同一接口切 `website-path` 拿 TikTok 和 ByteDance,城市白名单筛美国)、smartrecruiters、oracle(HCM REST)、icims(HTML 解析)、workable、amazon(search.json)、linkedin 游客接口(免登录,有 JD 没外链,3 秒一次)、github_list(Simplify ×2、vanshb03 ×2 有 JSON;zapplyjobs ×2 解析 README 表格;带 ETag 条件请求)。非精选来源(目录板块、Workday、SmartRecruiters、Oracle、iCIMS、Workable、LinkedIn、Amazon)先过一道很宽的工程标题门,清单和种子公司不设门。
 
-**入库后**不变:去重整合 → Claude 打分(每小时最多 `MATCH_HOURLY_CAP`=1500 个)→ 内推建议 → jd_review 补正文接力(`src/scanner/relay.ts`;`.env` 设 `JD_REVIEW_RELAY_DISABLED=1` 可关掉自动接力,/apply 的「补正文」按钮不受影响)。扫描**不再发通知**——结果直接进 /queue,每行显示发布时间,默认按综合分(Claude 分数 − 时间惩罚:7 天内不扣,之后每 4 天扣 1,封顶 15;无日期按 35 天)排序,`src/apply/rank.ts`。
+**入库后**不变:去重整合 → Claude 打分(每小时最多 `MATCH_HOURLY_CAP`=1500 个;这些纯文本 `claude -p` 调用带 `--strict-mcp-config`,不起任何 MCP 子进程)→ 内推建议 → jd_review 补正文接力(`src/scanner/relay.ts`;`.env` 设 `JD_REVIEW_RELAY_DISABLED=1` 可关掉自动接力,/apply 的「补正文」按钮不受影响)。扫描**不再发通知**——结果直接进 /queue,每行显示发布时间,默认按综合分(Claude 分数 − 时间惩罚:7 天内不扣,之后每 4 天扣 1,封顶 15;无日期按 35 天)排序,`src/apply/rank.ts`。
 
 手动:职位页「扫描 ▾」里的「立即扫描」= 核心层 + 清单立刻问一遍(`npm run scan` 同)。`/sources` 是**不在导航里的排查页**(从设置页「信息源高级页」进入):每个板块可「问一次」「静音」「改层级」,能看各家族产出和错误;`npm run retier` 手动重算分级。
 
@@ -62,8 +62,8 @@
 `apply` 执行器,会按上次用的渠道自动补一个(`src/apply/decide-auto-start.ts`),没跑过的话默认走值守会话。
 
 **"专属浏览器档案"是什么:** 执行器用的不是你日常登录的 Chrome,而是一个单独的、持久化到磁盘的 Chrome
-profile(`data/browser-profile`,已 gitignore),由官方 Playwright MCP(`@playwright/mcp`,CLI-scope
-注册为 `playwright`,见 `claude mcp list`)驱动。这个档案的登录状态**跨次执行器运行保留**——首次使用前
+profile(`data/browser-profile`,已 gitignore),由官方 Playwright MCP(`@playwright/mcp`)驱动——执行器 spawn `claude -p` 时用 `--mcp-config` 内联注册它,
+并加 `--strict-mcp-config` 忽略机器上其它 MCP 配置(`src/executor/mcp-config.ts`;不再依赖 `claude mcp add` 的用户级注册,Windows 上也不用配)。这个档案的登录状态**跨次执行器运行保留**——首次使用前
 (或换了密码/新增要投的站点后),在设置页「后台浏览器(无人值守)」卡里点
 **[打开后台浏览器,登录一次]**(`POST /api/executor/open-profile`,`src/executor/open-profile.ts`),
 会弹出一个真实的、带 GUI 的 Chrome 窗口,在里面手动登录一次 LinkedIn/Workday/目标 ATS 站点即可,登录
@@ -75,7 +75,7 @@ session 会写进这个 profile 目录,之后所有无人值守的执行器运�
 1. 确保 App 在跑(`npm run dev` 或生产模式 `npm run build && npm start`,监听 127.0.0.1:3000)。
 2. 「本次投递计划」卡:每个方向用步进器填 找内推 / 海投 的份数 → 点[开始投递]。这会调用 `POST /api/executor/start`
    (`{kind:'apply', options:{limit}}`),在服务器进程里 `spawn` 一个 detached 的
-   `claude -p --allowedTools 'Bash(curl:*),mcp__playwright__*'` 子进程,把整套投递协议
+   `claude -p --allowedTools 'Bash(curl:*),mcp__playwright__*' --mcp-config <playwright> --strict-mcp-config` 子进程,把整套投递协议
    (取任务 → 填表 → 回报 → 等确认 → 提交)当作一次性 prompt 从 stdin 喂给它——见
    `src/executor/prompts.ts` 的 `buildApplyPrompt`。
 3. Headless 会话只有一个 MCP:`playwright`(官方 Playwright MCP,驱动上面那个专属持久化 Chrome 档案)。
