@@ -29,6 +29,20 @@ describe("maybeStartJdReview", () => {
     expect(s.calls).toHaveLength(0);
   });
 
+  it("does nothing when JD_REVIEW_RELAY_DISABLED is set, even with pending work and no live run", () => {
+    const db = openDb(":memory:");
+    const s = fakeStart();
+    process.env.JD_REVIEW_RELAY_DISABLED = "1";
+    try {
+      expect(maybeStartJdReview(db, { startExecutor: s.fn, hasLiveRun: () => false, pendingCount: () => 5 })).toEqual({ started: false, reason: "disabled" });
+    } finally {
+      delete process.env.JD_REVIEW_RELAY_DISABLED;
+    }
+    expect(s.calls).toHaveLength(0);
+    // and it is only the env flag: with it gone the same inputs start a run again
+    expect(maybeStartJdReview(db, { startExecutor: s.fn, hasLiveRun: () => false, pendingCount: () => 5 })).toEqual({ started: true, runId: 7 });
+  });
+
   it("swallows start failures as reason 'error'", () => {
     const db = openDb(":memory:");
     const r = maybeStartJdReview(db, { startExecutor: (() => { throw new Error("no claude"); }) as any, hasLiveRun: () => false, pendingCount: () => 1 });

@@ -10,7 +10,7 @@ export interface RelayDeps {
   hasLiveRun?: typeof hasLiveRun;
   pendingCount?: (db: DB) => number;
 }
-export type RelayResult = { started: true; runId: number } | { started: false; reason: "no_pending" | "run_live" | "daily_cap" | "error" };
+export type RelayResult = { started: true; runId: number } | { started: false; reason: "disabled" | "no_pending" | "run_live" | "daily_cap" | "error" };
 
 export function jdReviewRunsToday(db: DB): number {
   return (db.prepare(
@@ -19,7 +19,10 @@ export function jdReviewRunsToday(db: DB): number {
 }
 
 // 扫描链末尾与 jd_review run 结束时都调用:有待补、无活 run、未到每日上限 → 启一个 headless run。
+// 运维开关:.env 里设 JD_REVIEW_RELAY_DISABLED=1 就一律不自动接力(/apply 的「补正文」按钮走
+// /api/executor/start,不受影响)。2026-09-09 起 Mac 生产先关掉,等切到 Windows 后那边不设即恢复。
 export function maybeStartJdReview(db: DB, deps: RelayDeps = {}): RelayResult {
+  if (process.env.JD_REVIEW_RELAY_DISABLED) return { started: false, reason: "disabled" };
   const pending = (deps.pendingCount ?? pendingJdReviewCount)(db);
   if (pending <= 0) return { started: false, reason: "no_pending" };
   if ((deps.hasLiveRun ?? hasLiveRun)(db, "jd_review")) return { started: false, reason: "run_live" };

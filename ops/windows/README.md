@@ -35,7 +35,7 @@ copy .env.example .env
 copy profile\profile.example.yaml profile\profile.yaml
 ```
 - `npm ci` 输出里确认 `better-sqlite3` 与 `node-pty` 用了预编译包;若 `node-pty` 编译失败(没有 VS Build Tools),不用管——在 `.env` 里设 `ATTENDED_SPAWN_MODE=console`。
-- `.env` 至少填:`NTFY_TOPIC=<长随机串>`;**演练期先加** `SCAN_TICK_DISABLED=1` 和 `ATTENDED_DISPATCH_DISABLED=1`(避免和 Mac 同时扫描、同时烧 `claude -p` 配额)。
+- `.env` 至少填:`NTFY_TOPIC=<长随机串>`;**演练期先加** `SCAN_TICK_DISABLED=1` 和 `ATTENDED_DISPATCH_DISABLED=1`(避免和 Mac 同时扫描、同时烧 `claude -p` 配额)。Mac 生产的 `.env` 从 2026-09-09 起还有 `JD_REVIEW_RELAY_DISABLED=1`(迁移前不让 Mac 再跑补正文);**Windows 的 `.env` 不要抄这一条**,否则补正文永远不自动接力。
 - iPhone 装 ntfy app 订阅这个 topic;Mac 浏览器打开 ntfy.sh/app 订阅同名 topic 并允许通知。
 
 ## 3. Claude 与 Chrome 一次性准备
@@ -85,7 +85,7 @@ pgrep -fl "next start" || echo "mac server stopped"
 cd /Users/moka/Documents/job_seeker && sqlite3 data/jobseeker.db ".backup 'data/backups/final-$(date +%F).db'"
 tailscale file cp data/backups/final-$(date +%F).db <windows-机名>:
 ```
-Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobseeker.db`(同上删 -wal/-shm)→ `.env` 去掉 `SCAN_TICK_DISABLED` 与 `ATTENDED_DISPATCH_DISABLED` → `pm2 restart sortie --update-env`。
+Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobseeker.db`(同上删 -wal/-shm)→ `.env` 去掉 `SCAN_TICK_DISABLED` 与 `ATTENDED_DISPATCH_DISABLED`(也确认没有 `JD_REVIEW_RELAY_DISABLED`)→ `pm2 restart sortie --update-env`。
 核对:/queue 漏斗计数与 Mac 最后一次一致;`pm2 logs sortie` 每分钟出现 scan tick;做一个会发通知的动作(如让一次 needs_info 发生,或 `curl -d test https://ntfy.sh/<topic>`)手机与 Mac 都收到。
 
 ## 7. 验收清单
