@@ -1,6 +1,5 @@
 import { spawn as nodeSpawn } from "child_process";
 import fs from "fs";
-import { createRequire } from "module";
 import path from "path";
 
 // Windows launchers for the attended `claude --chrome` session (spec: docs/superpowers/specs/
@@ -63,8 +62,16 @@ export interface PtyModule {
 // `undefined` and every dispatcher tick on the Windows box failed with "(void 0) is not a
 // function" — silently, because the route only returned the error as JSON (2026-09-11). The server
 // always runs with cwd = repo root (pm2 ecosystem / launchd), which is where node_modules lives.
+//
+// And the `module` builtin is fetched through process.getBuiltinModule (Node >= 22.3) — a plain
+// `import { createRequire } from "module"` came out of the bundle as `undefined` as well ("a is not
+// a function" after the first attempt). `eval("require")` is the fallback for older Node 22.x: it
+// reaches the real Node require that webpack's module wrapper closes over.
+type ModuleBuiltin = { createRequire: (filename: string) => (id: string) => unknown };
 export function defaultPtyRequire(cwd = process.cwd()): (id: string) => unknown {
-  return createRequire(path.join(cwd, "package.json"));
+  const getBuiltin = (process as unknown as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule;
+  const mod = (getBuiltin ? getBuiltin("module") : eval("require")("module")) as ModuleBuiltin;
+  return mod.createRequire(path.join(cwd, "package.json"));
 }
 
 export function loadNodePty(requireFn: (id: string) => unknown = defaultPtyRequire()): PtyModule {

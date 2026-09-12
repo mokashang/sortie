@@ -5,6 +5,7 @@ import path from "path";
 import {
   PromptAnswerer,
   loadNodePty,
+  defaultPtyRequire,
   spawnAttendedPty,
   spawnAttendedConsole,
   type PtyModule,
@@ -83,6 +84,15 @@ describe("spawnAttendedConsole", () => {
     expect(calls[0].opts).toEqual({ cwd: "C:\\sortie", detached: true, stdio: "ignore", windowsHide: false });
     expect(child.unref).toHaveBeenCalledTimes(1);
     expect(fs.readFileSync(logPath, "utf8")).toContain("console mode");
+  });
+});
+
+describe("defaultPtyRequire", () => {
+  it("returns a real require anchored at <cwd>/package.json (no import.meta, no static module import)", () => {
+    const req = defaultPtyRequire(process.cwd());
+    expect(typeof req).toBe("function");
+    // resolves packages the same way the server does at runtime
+    expect(typeof (req("better-sqlite3") as unknown)).toBe("function");
   });
 });
 
