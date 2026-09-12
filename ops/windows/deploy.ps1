@@ -52,8 +52,7 @@ if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
 # has succeeded.
 git diff --quiet $before HEAD -- package-lock.json
 $lockChanged = ($LASTEXITCODE -ne 0)
-$needInstall = $lockChanged -or -not (Test-Path (Join-Path $Root "node_modules
-ext\package.json"))
+$needInstall = $lockChanged -or -not (Test-Path (Join-Path $Root "node_modules/next/package.json"))
 $stopped = $false
 if ($needInstall) {
   Write-Host "==> dependencies changed (or node_modules missing): pm2 stop sortie, then npm ci"
