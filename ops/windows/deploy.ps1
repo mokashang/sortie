@@ -13,7 +13,8 @@
 [CmdletBinding()]
 param(
   [switch]$Force,
-  [string]$Root = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+  # $PSScriptRoot can be empty when the script is launched through a nested `powershell -File` (seen 2026-09-11).
+  [string]$Root = $(if ($PSScriptRoot) { Split-Path -Parent (Split-Path -Parent $PSScriptRoot) } else { Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }),
   [string]$Base = "http://127.0.0.1:3000"
 )
 $ErrorActionPreference = "Stop"
@@ -38,17 +39,38 @@ if (-not $Force) {
   }
 }
 
+$before = git rev-parse HEAD
 Write-Host "==> git pull --ff-only"
 git pull --ff-only
 if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
 
-Write-Host "==> npm ci"
-npm ci
-if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+# `npm ci` wipes node_modules first. On Windows that fails with EPERM while the server is running,
+# because the native modules it has loaded (better-sqlite3, next-swc, node-pty) are locked files -
+# and by then half of node_modules is already gone (2026-09-11). So: only reinstall when the
+# lockfile actually changed (or node_modules is missing), and stop the server first so the locks
+# are released. A deploy that does not touch dependencies keeps the old server up until the build
+# has succeeded.
+git diff --quiet $before HEAD -- package-lock.json
+$lockChanged = ($LASTEXITCODE -ne 0)
+$needInstall = $lockChanged -or -not (Test-Path (Join-Path $Root "node_modules
+ext\package.json"))
+$stopped = $false
+if ($needInstall) {
+  Write-Host "==> dependencies changed (or node_modules missing): pm2 stop sortie, then npm ci"
+  pm2 stop sortie | Out-Null
+  $stopped = $true
+  npm ci
+  if ($LASTEXITCODE -ne 0) { throw "npm ci failed - server is STOPPED. Fix the install (re-run npm ci), then: pm2 restart sortie --update-env" }
+} else {
+  Write-Host "==> package-lock.json unchanged since $($before.Substring(0,7)): skipping npm ci"
+}
 
 Write-Host "==> npm run build"
 npm run build
-if ($LASTEXITCODE -ne 0) { throw "build failed - server NOT restarted. .next may be partially overwritten: fix the build and re-run." }
+if ($LASTEXITCODE -ne 0) {
+  if ($stopped) { throw "build failed - server is STOPPED (dependencies were reinstalled). Fix the build, then: pm2 restart sortie --update-env" }
+  throw "build failed - server NOT restarted. .next may be partially overwritten: fix the build and re-run."
+}
 
 Write-Host "==> pm2 restart sortie"
 pm2 restart sortie --update-env
