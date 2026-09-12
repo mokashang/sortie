@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn } from "child_process";
 import fs from "fs";
 import { createRequire } from "module";
+import path from "path";
 
 // Windows launchers for the attended `claude --chrome` session (spec: docs/superpowers/specs/
 // 2026-09-06-windows-server-migration-design.md §3). macOS keeps the expect path in attended.ts;
@@ -56,7 +57,17 @@ export interface PtyModule {
 // Lazy CJS require: node-pty is an optionalDependency and a native module. Resolving it at import
 // time would load it on macOS too and break `next build` wherever it is not installed. It is also
 // listed in next.config.ts serverExternalPackages so the bundler leaves the require alone.
-export function loadNodePty(requireFn: (id: string) => unknown = createRequire(import.meta.url)): PtyModule {
+//
+// The require is anchored at <cwd>/package.json, NOT at import.meta.url: inside the production
+// server bundle `import.meta.url` is compiled away, so `createRequire(import.meta.url)` produced
+// `undefined` and every dispatcher tick on the Windows box failed with "(void 0) is not a
+// function" — silently, because the route only returned the error as JSON (2026-09-11). The server
+// always runs with cwd = repo root (pm2 ecosystem / launchd), which is where node_modules lives.
+export function defaultPtyRequire(cwd = process.cwd()): (id: string) => unknown {
+  return createRequire(path.join(cwd, "package.json"));
+}
+
+export function loadNodePty(requireFn: (id: string) => unknown = defaultPtyRequire()): PtyModule {
   try {
     return requireFn("node-pty") as PtyModule;
   } catch (e) {
