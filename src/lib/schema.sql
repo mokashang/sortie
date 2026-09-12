@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS people (
   email_status TEXT,               -- guessed | verified
   relation TEXT,                   -- recruiter | alum | hiring_manager | engineer
   source TEXT,
+  notes TEXT,                      -- 会话在对方主页读到的 1–3 句事实观察(headline/About/近期动态);草稿里「关于对方那句话」的唯一来源
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

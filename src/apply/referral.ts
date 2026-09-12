@@ -187,6 +187,9 @@ export interface ReferralCardOutreach {
   personName: string;
   relation: string | null;
   linkedinUrl: string | null;
+  // What the session read on their profile — shown next to the draft so the user can check the
+  // message's "line about them" is true before approving.
+  personNotes: string | null;
   channel: string;
   status: string;
   draft: string | null;
@@ -239,9 +242,10 @@ export function referralBoard(db: DB, now: () => number = () => Date.now()): Ref
     const outreaches: ReferralCardOutreach[] = outreachesForJobs(db, group.map((r) => r.job_id))
       .filter((o) => o.status !== "archived")
       .map((o) => {
-        const person = db.prepare("SELECT relation, linkedin_url FROM people WHERE id = ?").get(o.personId) as {
+        const person = db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as {
           relation: string | null;
           linkedin_url: string | null;
+          notes: string | null;
         };
         const sent = o.threadLog.find((t) => t.dir === "sent");
         return {
@@ -250,6 +254,7 @@ export function referralBoard(db: DB, now: () => number = () => Date.now()): Ref
           personName: o.personName,
           relation: person.relation,
           linkedinUrl: person.linkedin_url,
+          personNotes: person.notes,
           channel: o.channel,
           status: o.status,
           draft: o.draft,

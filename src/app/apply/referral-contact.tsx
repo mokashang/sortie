@@ -13,6 +13,7 @@ export interface CardOutreach {
   personName: string;
   relation: string | null;
   linkedinUrl: string | null;
+  personNotes: string | null;
   channel: string;
   status: string;
   draft: string | null;
@@ -94,6 +95,14 @@ export function ReferralContact({ o, edit, onEdit, onApprove, onReject, onUnappr
 
       {o.status === "draft" ? (
         <div className="mt-3 col gap-3">
+          {o.personNotes ? (
+            <div className="msg-quote is-secondary small">
+              助手在对方主页看到的:{o.personNotes}
+              <div className="muted xs mt-1">草稿里关于对方的那句话来自这里,批准前核对一下是否属实。</div>
+            </div>
+          ) : (
+            <div className="muted xs">助手没记下对方主页的观察,草稿只能按团队/职位来写;想更具体可以自己补一句。</div>
+          )}
           <Field
             label={
               <>

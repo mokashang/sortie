@@ -22,7 +22,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -125,6 +125,11 @@ export function openDb(file?: string): DB {
     for (const col of ["referral_stage", "stage_summary", "stage_action", "stage_link", "last_checked_at"] as const) {
       if (!outreachCols13.includes(col)) db.exec(`ALTER TABLE outreach ADD COLUMN ${col} TEXT`);
     }
+    // v13 -> v14: people gained notes — what the attended session read on the person's profile
+    // (headline / About / a recent post), the draft engine's only source for the "line about
+    // them" (src/network/draft.ts, 2026-09-11 outreach wording rework: give before you ask).
+    const peopleCols14 = (db.prepare("PRAGMA table_info(people)").all() as { name: string }[]).map((c) => c.name);
+    if (!peopleCols14.includes("notes")) db.exec("ALTER TABLE people ADD COLUMN notes TEXT");
     // v11 -> v12: boards 注册表 + jobs.board_key(spec 2026-09-06 job-sources §1)。boards 表由上面的
     // CREATE TABLE IF NOT EXISTS 建好;这里给老 jobs 加列、按 apply_url 回填 board_key/ats,并把解析出的
     // 板块登记进 boards(origin=url)。只处理 board_key 仍为空的行 —— 可重跑。

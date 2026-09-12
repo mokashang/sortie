@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { openDb, DB } from "@/lib/db";
 import { parseProfile, Profile } from "@/lib/profile";
 import { upsertPerson, createOutreach, appendThread, listOutreach, outreachJobIds } from "@/network/crm";
-import { buildDraftPrompt, generateDraft, trimToNote, shortenNote, NOTE_MAX_CHARS } from "@/network/draft";
+import { buildDraftPrompt, generateDraft, trimToNote, shortenNote, pickHighlights, NOTE_MAX_CHARS } from "@/network/draft";
+import { createExperience } from "@/resume/experiences";
 import { LlmBackend, LlmRequest } from "@/llm/types";
 
 const baseYaml = `
@@ -99,6 +100,137 @@ describe("buildDraftPrompt", () => {
       text: "Hey, following up on my note last week!",
     });
     expect(req.prompt).toContain("Hey, following up on my note last week!");
+  });
+});
+
+// 2026-09-11 wording rework: every message gives before it asks (a true line about them, one
+// concrete thing the candidate built, a small ask with an easy out, a close that stands alone).
+describe("give-first wording", () => {
+  const person = { name: "Jane Doe", company: "Acme", role_title: "Eng", relation: "engineer" as string | null };
+
+  it("system prompt carries the give-before-ask structure, the easy out, and bans flattery/hollow openers", () => {
+    const req = buildDraftPrompt(testProfile(), person, "referral", { company: "Acme", title: "SWE" });
+    expect(req.system).toMatch(/give before you ask/i);
+    expect(req.system).toMatch(/one specific, true line about them/i);
+    expect(req.system).toMatch(/easy out/i);
+    expect(req.system).toMatch(/applying regardless|applying either way/i);
+    expect(req.system).toMatch(/never imply they owe you/i);
+    expect(req.system).toMatch(/never flatter/i);
+    expect(req.system).toMatch(/hope this finds you well/i);
+    expect(req.system).toMatch(/one short question about their own experience/i);
+    expect(req.system).toMatch(/visas or sponsorship/i);
+  });
+
+  it("referral guidance asks lightly (referral OR a pointer, a no is fine) and never for a résumé review", () => {
+    const req = buildDraftPrompt(testProfile(), person, "referral", { company: "Acme", title: "SWE" });
+    expect(req.system).toMatch(/a pointer to whoever owns hiring/i);
+    expect(req.system).toMatch(/a no is completely fine/i);
+    expect(req.system).toMatch(/don't ask them to review your résumé/i);
+  });
+
+  it("followup guidance bans nudging phrases; coffee_chat offers an async alternative; thanks has no new ask", () => {
+    expect(buildDraftPrompt(testProfile(), person, "followup").system).toMatch(/just checking in/i);
+    expect(buildDraftPrompt(testProfile(), person, "followup").system).toMatch(/completely fine if now isn't a good time/i);
+    expect(buildDraftPrompt(testProfile(), person, "coffee_chat").system).toMatch(/async alternative/i);
+    expect(buildDraftPrompt(testProfile(), person, "thanks").system).toMatch(/no new ask/i);
+  });
+
+  it("alum guidance frames USC as a bridge, not a lever", () => {
+    const alum = { ...person, relation: "alum" };
+    expect(buildDraftPrompt(testProfile(), alum, "referral").system).toMatch(/bridge, not a lever/i);
+    expect(buildDraftPrompt(testProfile(), person, "referral").system).not.toMatch(/bridge, not a lever/i);
+  });
+
+  it("puts the recipient's profile notes in the Recipient block and marks them as the only source for the line about them", () => {
+    const withNotes = { ...person, notes: "Moved from robotics research at USC to the perception team in 2024." };
+    const req = buildDraftPrompt(testProfile(), withNotes, "referral");
+    expect(req.prompt).toContain("Moved from robotics research at USC to the perception team in 2024.");
+    expect(req.prompt).toMatch(/ONLY source for the line about them/);
+    expect(req.prompt).toMatch(/— use it/);
+    const without = buildDraftPrompt(testProfile(), person, "referral");
+    expect(without.prompt).toMatch(/do not pretend to know more than their title and company/i);
+    expect(without.prompt).toContain('"notes": null');
+  });
+
+  it("lists candidate highlights (one to mention, never invent) and the job's direction label", () => {
+    const req = buildDraftPrompt(
+      testProfile(),
+      person,
+      "referral",
+      { company: "Acme", title: "ML Systems Eng", direction: "ai_infra" },
+      undefined,
+      { highlights: [{ kind: "project", title: "flash-attention-mini", organization: "Triton, CUDA", bullet: "Reimplemented FlashAttention forward in Triton." }] }
+    );
+    expect(req.prompt).toMatch(/Candidate highlights/);
+    expect(req.prompt).toMatch(/mention at most ONE/);
+    expect(req.prompt).toContain("[project] flash-attention-mini @ Triton, CUDA: Reimplemented FlashAttention forward in Triton.");
+    expect(req.prompt).toContain("AI Infra / ML Systems");
+    expect(buildDraftPrompt(testProfile(), person, "referral").prompt).not.toMatch(/Candidate highlights/);
+  });
+
+  it("the connection-note guidance makes the note a first hello: never opens with the referral ask, no URLs, at most one role", () => {
+    const req = buildDraftPrompt(testProfile(), person, "referral", { company: "Acme", title: "SWE" }, undefined, { note: true });
+    expect(req.prompt).toMatch(/first hello/i);
+    expect(req.prompt).toMatch(/never open with the referral ask/i);
+    expect(req.prompt).toMatch(/at most one role/i);
+    expect(req.prompt).toMatch(/no URLs/);
+  });
+
+  it("pickHighlights prefers bullets tagged with the target directions, work before projects, and caps the list", () => {
+    const exp = (id: number, kind: "work" | "project" | "skill", title: string, bullets: { text: string; directions: string[] }[], sort_order = 0) =>
+      ({ id, kind, title, organization: null, location: null, start_date: null, end_date: null, bullets, sort_order }) as never;
+    const list = [
+      exp(1, "skill", "Languages", [{ text: "C++", directions: ["swe_general"] }]),
+      exp(2, "project", "cuda-kernels", [{ text: "Fused softmax kernel.", directions: ["gpu_cuda", "ai_infra"] }, { text: "Roofline profiling.", directions: ["gpu_cuda"] }]),
+      exp(3, "work", "Intern @ Pay", [{ text: "Integrated gRPC APIs.", directions: ["swe_backend"] }, { text: "Built vLLM serving.", directions: ["ai_infra"] }]),
+      exp(4, "project", "chat-app", [{ text: "WebSocket chat.", directions: ["swe_backend"] }], 5),
+      exp(5, "project", "lob-engine", [{ text: "Order book.", directions: ["quant"] }], 1),
+    ];
+    const picked = pickHighlights(list, ["ai_infra"]);
+    expect(picked.map((h) => h.title)).toEqual(["Intern @ Pay", "cuda-kernels", "lob-engine", "chat-app"]);
+    expect(picked[0].bullet).toBe("Built vLLM serving."); // the bullet tagged with the target direction, not the first one
+    expect(picked[1].bullet).toBe("Fused softmax kernel.");
+    expect(pickHighlights(list, ["ai_infra"], 2)).toHaveLength(2);
+    expect(pickHighlights(list, [])).toHaveLength(4); // no direction: still work first, skills never
+    const long = exp(9, "project", "long", [{ text: "x".repeat(400), directions: [] }]);
+    expect(pickHighlights([long], []) [0].bullet.length).toBeLessThanOrEqual(220);
+  });
+
+  it("generateDraft feeds the experiences table and the person's notes into the prompt", async () => {
+    const d = db();
+    createExperience(d, {
+      kind: "work",
+      title: "Software Engineer Intern",
+      organization: "UnionPay",
+      bullets: [{ text: "Integrated REST/gRPC APIs for cross-border payments.", directions: ["swe_backend", "swe_general"] }],
+      sort_order: 0,
+    });
+    createExperience(d, { kind: "skill", title: "Languages", bullets: [{ text: "C++, Python", directions: ["swe_general"] }], sort_order: 0 });
+    const personId = upsertPerson(d, { name: "Jane", company: "Acme", relation: "engineer", linkedin_url: "in/jane", notes: "Leads the payments platform team; posted about idempotency last week." });
+    const { backend, requests } = fakeBackend({ message: "Hi Jane", note: "Hi Jane" });
+    await generateDraft(d, { backend, profile: testProfile(), personId, playbook: "coffee_chat" });
+    expect(requests[0].prompt).toContain("[work] Software Engineer Intern @ UnionPay: Integrated REST/gRPC APIs for cross-border payments.");
+    expect(requests[0].prompt).not.toContain("C++, Python");
+    expect(requests[0].prompt).toContain("Leads the payments platform team; posted about idempotency last week.");
+  });
+
+  it("shortenNote's compressor keeps the line about them and never reduces the note to a bare referral ask", async () => {
+    const d = db();
+    const pid = upsertPerson(d, { name: "Jane", company: "Google" });
+    const id = createOutreach(d, { personId: pid, playbook: "referral", channel: "linkedin", draft: "Your path from USC to Google's SRE team caught my eye. I'm an MS ECE student; would love to hear how you found the team, and ask about the SRE opening if you're open to it." });
+    const seen: LlmRequest[] = [];
+    const backend: LlmBackend = {
+      name: "rec",
+      complete: async (req) => {
+        seen.push(req);
+        return { text: JSON.stringify({ note: "Your path from USC to Google's SRE team caught my eye — would love to hear how you found it." }), backend: "rec" };
+      },
+    };
+    const r = await shortenNote(d, { backend, outreachId: id, max: 120 });
+    expect(r.source).toBe("model");
+    expect(seen[0].system).toMatch(/first hello, not a request form/i);
+    expect(seen[0].system).toMatch(/keep the line that is specifically about the recipient/i);
+    expect(seen[0].system).toMatch(/never reduce it to a bare 'can you refer me'/i);
   });
 });
 

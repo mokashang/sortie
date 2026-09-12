@@ -139,11 +139,15 @@ describe("outreach → reached → board", () => {
       backend,
       profile: parseProfile(yaml),
       jobIds: [a],
-      person: { name: "Jane", company: "Google", relation: "alum", linkedin_url: "https://li/jane" },
+      person: { name: "Jane", company: "Google", relation: "alum", linkedin_url: "https://li/jane", notes: "USC ECE 2019, now on the Borg scheduling team." },
     });
     expect(outreachJobIds(db, r.outreachId)).toEqual([a]);
     expect(r.draft).toBe("Hi");
-    expect(referralBoard(db)[0].outreaches[0].status).toBe("draft");
+    const card = referralBoard(db)[0].outreaches[0];
+    expect(card.status).toBe("draft");
+    // The session's profile observation rides along to the card so the user can check the
+    // draft's "line about them" before approving.
+    expect(card.personNotes).toBe("USC ECE 2019, now on the Borg scheduling team.");
   });
 });
 

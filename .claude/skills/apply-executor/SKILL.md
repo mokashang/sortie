@@ -188,12 +188,21 @@ short, per company:
    mailto in the App).
 3. Nobody reachable → `POST /api/apply/report {"jobIds":[…],"status":"referral_no_contact","reason":"…"}`
    and take the next company.
-4. One outreach per person: `POST /api/referral/outreach {"jobIds":[…],"person":{name,company,role_title,linkedin_url,relation},"channel":"linkedin"}`
-   → `{outreachId, draft, draftNote}`. The App writes BOTH texts — the full DM (`draft`) and a
-   ≤200-char connection note (`draftNote`; free LinkedIn caps notes at 200, Premium at 300;
-   auto-trimmed by the App when the model overshoots). You
-   never write or shorten a message yourself; the user edits/approves on /apply (one 全部批准 per
-   card).
+4. **Read their profile first, then** one outreach per person:
+   `POST /api/referral/outreach {"jobIds":[…],"person":{name,company,role_title,linkedin_url,relation,notes},"channel":"linkedin"}`
+   → `{outreachId, draft, draftNote}`. `notes` = 1–3 plain-ASCII factual sentences you read on
+   their profile (headline, About, what their current role says, a recent post if one is visible)
+   — no quotes, no judgement, e.g. `USC ECE 2021, joined the perception team in 2024 after two
+   years at Cruise; recent post on sensor calibration`. The message's opening line about THEM is
+   built only from this, so a call without `notes` yields a draft that can only talk about their
+   team/title; leave it out only when the profile really shows nothing beyond a title. The App
+   writes BOTH texts — the full DM (`draft`) and a ≤200-char connection note (`draftNote`; free
+   LinkedIn caps notes at 200, Premium at 300; auto-trimmed by the App when the model
+   overshoots) — following the give-before-you-ask rules in CLAUDE.md §1 (a true line about
+   them, one concrete thing the candidate built, a light ask with an easy out; the note is a
+   first hello and never opens with the referral ask). You never write or shorten a message
+   yourself; the user edits/approves on /apply (one 全部批准 per card), where the card shows your
+   `notes` next to the draft so they can check the line about them is true.
 5. Poll `GET /api/referral/pending?outreachId=<id>` for each outreach every 5s (≤30 min, heartbeat
    log every ≤5 min). `pending_send` → 1st degree: DM `draft`; 2nd/3rd degree: Connect → Add a
    note → `draft_note`. Read the dialog first: it shows the real cap (`0/200`) and "N personalized

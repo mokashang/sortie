@@ -34,6 +34,7 @@ export function ContactDetail({ person, outreach, jobMap, onDraft, onOutcome, bu
             {person.relation ? <Chip outline>{labelOf(RELATION_LABEL, person.relation, person.relation)}</Chip> : null}
           </div>
           <div className="muted small mt-1">{[person.company, person.role_title].filter(Boolean).join(" · ") || "公司 / 职位未填"}</div>
+          {person.notes ? <div className="small mt-1">助手在主页看到的:{person.notes}</div> : null}
           <div className="row mt-2 small">
             {person.linkedin_url ? (
               <a href={person.linkedin_url} target="_blank" rel="noreferrer" className="row row-nowrap gap-1">

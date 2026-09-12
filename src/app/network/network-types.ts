@@ -13,6 +13,7 @@ export interface Person {
   linkedin_url: string | null;
   email: string | null;
   relation: string | null;
+  notes: string | null;
 }
 
 export interface ThreadEntry {

@@ -257,7 +257,7 @@ ${companiesNote}
 用 LinkedIn 自己的 People 搜索(linkedin.com/search/results/people——不要用泛用网页搜索,需要 profile URL 和 LinkedIn 自己报告的当前 title/company):
 
 1. \`mcp__playwright__browser_navigate\` 打开 LinkedIn people 搜索,依次搜这几个 query(关于公司 \`<company>\`):\`<company> recruiter\`、\`<company> USC\`、\`<company> <direction keyword> engineer\`(direction keyword 用用户 profile 主打的方向,不确定就用 "software engineer" 兜底)。如果这一步看到的是登录页而不是搜索结果——说明专属浏览器档案还没登录 LinkedIn,不要自己登录:停止整个 network_find 会话,总结里写 "${LOGIN_WALL_REASON}"。**这是只读搜索——绝不点任何人的 Connect 或 Message。**
-2. \`mcp__playwright__browser_snapshot\`(必要时 \`mcp__playwright__browser_take_screenshot\` 辅助)读搜索结果卡片:姓名、当前 title、当前公司、profile URL;卡片信息不够确定 title/company 时才 \`browser_navigate\` 打开对应 profile 页再 \`browser_snapshot\` 一次(不要为了看仔细而挨个打开太多个,流量保持轻量)。每个 query 最多累计取 5 个不重复的人。
+2. \`mcp__playwright__browser_snapshot\`(必要时 \`mcp__playwright__browser_take_screenshot\` 辅助)读搜索结果卡片:姓名、当前 title、当前公司、profile URL;卡片信息不够确定 title/company 时才 \`browser_navigate\` 打开对应 profile 页再 \`browser_snapshot\` 一次(不要为了看仔细而挨个打开太多个,流量保持轻量)。每个 query 最多累计取 5 个不重复的人。凡是打开了 profile 页的,顺手记 1–3 句关于 ta 的纯事实观察(headline、About、当前职位那段描述、能看到的最近一条动态;ASCII 改写、无引号、不评价)作为下面的 \`notes\`——App 起草消息时「关于对方那句话」只从这里来。
 3. 对每人按下面规则分类 relation(拿不准就用 "other",不要硬猜):
    - title 含 "recruiter"/"talent"/"recruiting"/"sourcer" → recruiter
    - About/教育经历提到 USC / University of Southern California / "Trojan" → alum(优先于下面的 title 判断)
@@ -265,7 +265,7 @@ ${companiesNote}
    - title 含 "engineer"/"developer"/"SWE"/"software" → engineer
    - 其他 → other
 4. 逐个写入 CRM(按 linkedin_url 去重,重复调用安全):
-   \`curl -s -X POST ${APP_BASE}/api/network/people -H 'content-type: application/json' -d '{"name": "...", "company": "...", "role_title": "...", "linkedin_url": "...", "relation": "...", "source": "executor"}'\`
+   \`curl -s -X POST ${APP_BASE}/api/network/people -H 'content-type: application/json' -d '{"name": "...", "company": "...", "role_title": "...", "linkedin_url": "...", "relation": "...", "source": "executor", "notes": "<步骤 2 的主页观察,没打开主页就省略这个字段>"}'\`
 5. 这个公司写完(最多 5 人)就换下一个公司,重复步骤 1-4;最多处理 3 个公司。
 
 ## 4. 红线

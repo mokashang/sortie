@@ -214,13 +214,20 @@ here always goes through the normal draft → approve → send-mode pipeline in 
    - Anything else you can't confidently classify → `other`. Don't force a guess you're not sure
      of — `other` is a safe default.
 
+   Whenever you do open a profile, also note 1–3 plain-ASCII factual sentences about them
+   (headline, About, what their current role says, a recent post if visible; no quotes, no
+   judgement) — that becomes `notes` below. The App's draft engine builds the message's opening
+   line about THEM only from it (CLAUDE.md §1 "先给后要"), so a person with empty `notes` can only
+   get a draft that talks about their team/title.
+
 4. **Write each person into the CRM:**
    ```
    curl -s -X POST http://127.0.0.1:3000/api/network/people -H 'content-type: application/json' \
-     -d '{"name": "...", "company": "...", "role_title": "...", "linkedin_url": "...", "relation": "...", "source": "executor"}'
+     -d '{"name": "...", "company": "...", "role_title": "...", "linkedin_url": "...", "relation": "...", "source": "executor", "notes": "USC CS 2020, leads the payments platform team; posted about idempotency keys last week"}'
    ```
    `upsertPerson` on the App side dedupes on `linkedin_url`, so re-running this mode over
-   overlapping searches is safe — it fills in gaps on an existing row rather than duplicating it.
+   overlapping searches is safe — it fills in gaps on an existing row rather than duplicating it
+   (`notes` is the one field where a fresh non-empty value replaces the old one).
 
 5. **Caps**: at most **5 people per company**, at most **3 companies per session**. Stop sourcing
    for a company once you hit 5 (even if the search has more results) and move to the next

@@ -48,6 +48,9 @@ export const PersonInputSchema = z.object({
   email_status: z.string().min(1).nullable().optional(), // guessed | verified (not enum-enforced upstream)
   relation: z.enum(RELATIONS).nullable().optional(),
   source: z.string().min(1).nullable().optional(),
+  // 1–3 factual sentences the attended session read on their profile (headline / About / a recent
+  // post) — the draft engine's only source for the message's "line about them" (draft.ts).
+  notes: z.string().max(1000).nullable().optional(),
 });
 export type PersonInput = z.infer<typeof PersonInputSchema>;
 
@@ -61,6 +64,7 @@ export interface Person {
   email_status: string | null;
   relation: string | null;
   source: string | null;
+  notes: string | null;
   created_at: string;
 }
 
@@ -74,6 +78,7 @@ interface PersonRow {
   email_status: string | null;
   relation: string | null;
   source: string | null;
+  notes: string | null;
   created_at: string;
 }
 
@@ -84,10 +89,13 @@ function rowToPerson(r: PersonRow): Person {
 // Upsert keyed on linkedin_url (the table's UNIQUE column): when a non-empty linkedin_url
 // matches an existing row, that row's id is returned and any currently-empty (null) fields on it
 // are filled in from `input` — fields the existing row already has a value for are left alone.
+// The one exception is `notes`: it is an observation, not an identity field, so a fresh non-empty
+// value replaces the old one (the session re-reads the profile every time it contacts someone).
 // Without a linkedin_url there's no dedup key, so every call inserts a fresh row (e.g. the
 // find-people executor mode may not have a profile URL yet).
 export function upsertPerson(db: DB, input: PersonInput): number {
   const p = PersonInputSchema.parse(input);
+  const notes = p.notes?.trim() || null;
 
   if (p.linkedin_url) {
     const existing = db
@@ -101,18 +109,19 @@ export function upsertPerson(db: DB, input: PersonInput): number {
         email_status: existing.email_status ?? p.email_status ?? null,
         relation: existing.relation ?? p.relation ?? null,
         source: existing.source ?? p.source ?? null,
+        notes: notes ?? existing.notes ?? null,
       };
       db.prepare(
-        `UPDATE people SET company = ?, role_title = ?, email = ?, email_status = ?, relation = ?, source = ? WHERE id = ?`
-      ).run(merged.company, merged.role_title, merged.email, merged.email_status, merged.relation, merged.source, existing.id);
+        `UPDATE people SET company = ?, role_title = ?, email = ?, email_status = ?, relation = ?, source = ?, notes = ? WHERE id = ?`
+      ).run(merged.company, merged.role_title, merged.email, merged.email_status, merged.relation, merged.source, merged.notes, existing.id);
       return existing.id;
     }
   }
 
   const info = db
     .prepare(
-      `INSERT INTO people (name, company, role_title, linkedin_url, email, email_status, relation, source)
-       VALUES (?,?,?,?,?,?,?,?)`
+      `INSERT INTO people (name, company, role_title, linkedin_url, email, email_status, relation, source, notes)
+       VALUES (?,?,?,?,?,?,?,?,?)`
     )
     .run(
       p.name,
@@ -122,7 +131,8 @@ export function upsertPerson(db: DB, input: PersonInput): number {
       p.email ?? null,
       p.email_status ?? null,
       p.relation ?? null,
-      p.source ?? null
+      p.source ?? null,
+      notes
     );
   return Number(info.lastInsertRowid);
 }

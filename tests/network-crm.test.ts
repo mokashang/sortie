@@ -52,6 +52,19 @@ describe("upsertPerson", () => {
     expect(people[0].company).toBe("Acme");
   });
 
+  it("notes: stored on insert, a fresh non-empty observation replaces the old one, empty/missing leaves it", () => {
+    const d = db();
+    const id = upsertPerson(d, { name: "Jane Doe", linkedin_url: "in/janedoe", notes: "  Runs the payments platform team.  " });
+    expect(listPeople(d)[0].notes).toBe("Runs the payments platform team.");
+    upsertPerson(d, { name: "Jane Doe", linkedin_url: "in/janedoe", notes: "" });
+    expect(listPeople(d)[0].notes).toBe("Runs the payments platform team.");
+    upsertPerson(d, { name: "Jane Doe", linkedin_url: "in/janedoe", company: "Acme" });
+    expect(listPeople(d)[0]).toMatchObject({ id, company: "Acme", notes: "Runs the payments platform team." });
+    upsertPerson(d, { name: "Jane Doe", linkedin_url: "in/janedoe", notes: "Moved to the infra org in 2025; posted about on-call last week." });
+    expect(listPeople(d)[0].notes).toBe("Moved to the infra org in 2025; posted about on-call last week.");
+    expect(listPeople(d)).toHaveLength(1);
+  });
+
   it("without linkedin_url, always creates a new row (no dedup key)", () => {
     const d = db();
     const id1 = upsertPerson(d, { name: "No Link Person" });
