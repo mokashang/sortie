@@ -169,16 +169,26 @@ describe("executor/runner", () => {
 
   describe("stopExecutor", () => {
     it("marks a running row stopped and attempts to kill the process group", () => {
-      const { spawnFn } = makeFakeSpawn(process.pid);
+      // POSIX: killTree() signals the process group through process.kill, which is spied on below
+      // so nothing is really signalled. win32: killTree() runs a real `taskkill /T /F` through
+      // execFile (that branch is covered by tests/proc-kill.test.ts), so the row must carry a pid
+      // that cannot exist — with our own pid the test would kill the vitest worker itself.
+      const win = process.platform === "win32";
+      const { spawnFn } = makeFakeSpawn(win ? 999999 : process.pid);
       const result = startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir });
 
       const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-      stopExecutor(db, result.id);
+      try {
+        stopExecutor(db, result.id);
 
-      // Assert on the spy BEFORE restoring — mockRestore() also clears recorded call history
-      // (it's mockReset() + restore-original), so asserting after restore would always fail.
-      expect(killSpy).toHaveBeenCalled();
-      killSpy.mockRestore();
+        // Assert on the spy BEFORE restoring — mockRestore() also clears recorded call history
+        // (it's mockReset() + restore-original), so asserting after restore would always fail.
+        if (!win) expect(killSpy).toHaveBeenCalled();
+      } finally {
+        // Always restore: a dangling no-op process.kill would make every later isAlive() check in
+        // this file report dead pids as alive.
+        killSpy.mockRestore();
+      }
 
       const row = db.prepare("SELECT status, ended_at FROM executor_runs WHERE id=?").get(result.id) as {
         status: string;

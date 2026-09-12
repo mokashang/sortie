@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
+import os from "os";
+import path from "path";
 import { openDb } from "@/lib/db";
 import { createExperience } from "@/resume/experiences";
 import { generateResume, isSafeVersionName } from "@/resume/generate";
 import { LlmBackend } from "@/llm/types";
+
+// Scratch output dirs under os.tmpdir() rather than a literal /tmp, which on Windows would resolve to
+// <current drive>:	mp (not creatable when the repo lives on a drive whose root is read-only).
+const TMP_OUT = path.join(os.tmpdir(), "sortie-resumes-test");
+const TMP_X = path.join(os.tmpdir(), "sortie-resumes-x");
 
 // Seed with one entry of each kind that matters for section-structure tests: education, work,
 // project, skill. Kept deliberately distinct per kind so tests can assert deterministic section
@@ -51,7 +58,7 @@ describe("generateResume", () => {
       versionName: "ai_infra_v1",
       compile: fakeCompile,
       extractText: noText,
-      outDir: "/tmp/resumes-test",
+      outDir: TMP_OUT,
     });
 
     expect(res.resumeId).toBeGreaterThan(0);
@@ -71,7 +78,7 @@ describe("generateResume", () => {
     seed(db);
     const selection = { include: [{ id: 9999, bullets: ["ghost"] }] };
     await expect(
-      generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: "/tmp/x" })
+      generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: TMP_X })
     ).rejects.toThrow(/unknown experience id|9999/i);
   });
 
@@ -82,7 +89,7 @@ describe("generateResume", () => {
     const workId = exps.find((e) => e.kind === "work")!.id;
     const selection = { include: [{ id: workId, bullets: ["", "Shipped a backend service"] }] };
     await expect(
-      generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: "/tmp/x" })
+      generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: TMP_X })
     ).rejects.toThrow();
   });
 
@@ -98,20 +105,20 @@ describe("generateResume", () => {
 
     const first = await generateResume(db, {
       backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "dup_v1",
-      compile: onePageCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
     });
 
     // Advance last_insert_rowid on this connection past dup_v1's row by generating an unrelated
     // second version.
     await generateResume(db, {
       backend: fakeBackend(selection), contact, direction: "mle", versionName: "other_v2",
-      compile: onePageCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
     });
 
     // Regenerate dup_v1 with a different direction — this hits the ON CONFLICT DO UPDATE path.
     const regenerated = await generateResume(db, {
       backend: fakeBackend(selection), contact, direction: "swe_backend", versionName: "dup_v1",
-      compile: onePageCompile, extractText: noText, outDir: "/tmp/resumes-test",
+      compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
     });
 
     const row = db.prepare("SELECT id FROM resumes WHERE version_name=?").get("dup_v1") as { id: number };
@@ -146,7 +153,7 @@ describe("generateResume", () => {
 
       await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v1",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       const tex = compiled[0].tex;
@@ -185,7 +192,7 @@ describe("generateResume", () => {
 
       await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v2",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       const tex = compiled[0].tex;
@@ -208,7 +215,7 @@ describe("generateResume", () => {
 
       await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "struct_v3",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       const tex = compiled[0].tex;
@@ -230,7 +237,7 @@ describe("generateResume", () => {
       };
       await generateResume(db, {
         backend: capturingBackend, contact, direction: "gpu_cuda", versionName: "prompt_v1",
-        compile: onePageCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       // Angling instruction present, bound to the target direction's label.
@@ -288,7 +295,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v1",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       expect(callCount).toBe(4); // initial compile + 3 trim/recompile cycles
@@ -342,7 +349,7 @@ describe("generateResume", () => {
 
       await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_chars_v1",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       // The long project bullet should be dropped first, even though the Experience entry has
@@ -367,7 +374,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v2",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       expect(res.pages).toBe(2);
@@ -401,7 +408,7 @@ describe("generateResume", () => {
       const fakeCompile = async (_tex: string, outPath: string) => { callCount++; return { pdfPath: outPath, pages: 2, overfullCount: 0, worstOverfullPt: 0 }; };
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v3",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
       expect(res.pages).toBe(2);
       expect(callCount).toBe(21); // initial + exactly MAX_TRIM_ATTEMPTS (20)
@@ -441,7 +448,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v1",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       expect(callCount).toBe(2); // initial compile + one trim/recompile cycle
@@ -470,7 +477,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v2",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       expect(callCount).toBe(1); // no trim triggered — trivial overfull is not a defect
@@ -497,7 +504,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v3",
-        compile: fakeCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
 
       expect(res.overfullCount).toBe(2);
@@ -516,7 +523,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v1",
-        compile: onePageCompile, extractText: async () => "Someone Else\nEducation\nM.S. ECE", outDir: "/tmp/resumes-test",
+        compile: onePageCompile, extractText: async () => "Someone Else\nEducation\nM.S. ECE", outDir: TMP_OUT,
       });
       expect(res.warnings.some((w) => /name/i.test(w))).toBe(true);
     });
@@ -530,7 +537,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v2",
-        compile: onePageCompile, extractText: async () => "M S\n\\resumeItem{broken}", outDir: "/tmp/resumes-test",
+        compile: onePageCompile, extractText: async () => "M S\n\\resumeItem{broken}", outDir: TMP_OUT,
       });
       expect(res.warnings.some((w) => /latex|leak/i.test(w))).toBe(true);
     });
@@ -544,7 +551,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v3",
-        compile: onePageCompile, extractText: async () => "  ", outDir: "/tmp/resumes-test",
+        compile: onePageCompile, extractText: async () => "  ", outDir: TMP_OUT,
       });
       expect(res.warnings.some((w) => /empty/i.test(w))).toBe(true);
     });
@@ -558,7 +565,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v4",
-        compile: onePageCompile, extractText: async () => "M S\nEducation\nM.S. ECE University of Southern California, Los Angeles, CA 2025-2027", outDir: "/tmp/resumes-test",
+        compile: onePageCompile, extractText: async () => "M S\nEducation\nM.S. ECE University of Southern California, Los Angeles, CA 2025-2027", outDir: TMP_OUT,
       });
       expect(res.warnings).toEqual([]);
     });
@@ -572,7 +579,7 @@ describe("generateResume", () => {
 
       const res = await generateResume(db, {
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v5",
-        compile: onePageCompile, extractText: noText, outDir: "/tmp/resumes-test",
+        compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
       });
       expect(res.warnings).toEqual([]);
     });

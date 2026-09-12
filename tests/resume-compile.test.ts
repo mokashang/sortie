@@ -100,7 +100,9 @@ describe("tectonic compiler wrapper", () => {
   it("throws with tectonic stderr on failure", async () => {
     const fakeExec = async () => { throw new Error("tectonic: undefined control sequence"); };
     const compile = makeTectonicCompiler({ bin: "tectonic", exec: fakeExec });
-    await expect(compile("bad", "/tmp/r/out.pdf")).rejects.toThrow(/tectonic/i);
+    // Under os.tmpdir(), not a literal /tmp: on Windows "/tmp" resolves to <current drive>:	mp,
+    // which may not be creatable (e.g. a read-only drive root) and would mask the real assertion.
+    await expect(compile("bad", path.join(os.tmpdir(), "sortie-compile-test", "out.pdf"))).rejects.toThrow(/tectonic/i);
   });
 });
 

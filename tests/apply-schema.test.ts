@@ -80,9 +80,13 @@ describe("apply executor schema (v3)", () => {
       raw.prepare("INSERT INTO applications (job_id, status) VALUES (?,?)").run(jobId, "matched");
       raw.close();
 
+      // Close this probe connection explicitly: on Windows an open handle keeps the file locked and
+      // the afterEach cleanup would fail with EPERM (unlink-while-open only works on macOS/Linux).
+      const probe = new Database(tmpFile);
       const colsBefore = (
-        new Database(tmpFile).prepare("PRAGMA table_info(applications)").all() as { name: string }[]
+        probe.prepare("PRAGMA table_info(applications)").all() as { name: string }[]
       ).map((c) => c.name);
+      probe.close();
       expect(colsBefore).not.toContain("answer_pack");
 
       // Opening it through openDb() should run the v2->v3 migration in place.
