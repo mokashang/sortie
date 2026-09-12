@@ -24,14 +24,34 @@ export interface McpServerSpec {
   args: string[];
 }
 
+// The executor's Chrome runs headless (no window) unless EXECUTOR_BROWSER_HEADED is set. On the
+// always-on box the jd_review relay starts runs on its own, and a headed Playwright window popping
+// up and changing pages on top of whatever the user is doing was the #1 complaint after the
+// Windows cutover (2026-09-11). The persistent profile (cookies / logins) is shared either way;
+// the settings-page "open the background browser, log in once" button still opens a real headed
+// window because that one exists for the user to type into. Set EXECUTOR_BROWSER_HEADED=1 to
+// watch a run or when a site refuses headless sessions.
+export function executorBrowserHeaded(env: Record<string, string | undefined> = process.env): boolean {
+  return Boolean(env.EXECUTOR_BROWSER_HEADED);
+}
+
 // On native Windows `npx` is a .cmd shim that a plain (shell-less) spawn cannot exec, so the
 // server goes through `cmd /c` there — the documented pattern for npx-based MCP servers on Windows.
-export function playwrightMcpServer(profileDir: string, platform: NodeJS.Platform = process.platform): McpServerSpec {
+export function playwrightMcpServer(
+  profileDir: string,
+  platform: NodeJS.Platform = process.platform,
+  headed: boolean = executorBrowserHeaded()
+): McpServerSpec {
   const npx = ["npx", "-y", "@playwright/mcp@latest", "--browser", "chrome", "--user-data-dir", profileDir];
+  if (!headed) npx.push("--headless");
   return platform === "win32" ? { command: "cmd", args: ["/c", ...npx] } : { command: npx[0], args: npx.slice(1) };
 }
 
 // The `--mcp-config` argument for a headless executor session: playwright, and nothing else.
-export function playwrightMcpConfig(profileDir: string, platform: NodeJS.Platform = process.platform): string {
-  return JSON.stringify({ mcpServers: { playwright: playwrightMcpServer(profileDir, platform) } });
+export function playwrightMcpConfig(
+  profileDir: string,
+  platform: NodeJS.Platform = process.platform,
+  headed: boolean = executorBrowserHeaded()
+): string {
+  return JSON.stringify({ mcpServers: { playwright: playwrightMcpServer(profileDir, platform, headed) } });
 }

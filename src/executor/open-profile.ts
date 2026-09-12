@@ -41,7 +41,7 @@ export interface SpawnedChild {
 export type SpawnFn = (
   bin: string,
   args: string[],
-  opts: { detached: boolean; stdio: "ignore" }
+  opts: { detached: boolean; stdio: "ignore"; windowsHide?: boolean }
 ) => SpawnedChild;
 
 export interface OpenProfileDeps {
@@ -87,7 +87,7 @@ export function openBrowserProfile(deps: OpenProfileDeps = {}): OpenProfileResul
     args = [userDataDir, "--no-first-run"];
   }
 
-  const child = spawnFn(bin, args, { detached: true, stdio: "ignore" });
+  const child = spawnFn(bin, args, { detached: true, stdio: "ignore", windowsHide: true });
   child.unref();
 
   return { bin, args, pid: child.pid };

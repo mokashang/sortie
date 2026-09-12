@@ -34,7 +34,9 @@ const defaultRunner: Runner = (bin, args, input) =>
     const child = execFile(
       bin,
       args,
-      { maxBuffer: 32 * 1024 * 1024, timeout: 180_000 },
+      // windowsHide: a console-less parent (pm2-managed server) would otherwise get a blank
+      // console window per call on Windows — hundreds per hour during a matching pass.
+      { maxBuffer: 32 * 1024 * 1024, timeout: 180_000, windowsHide: true },
       (err, stdout, stderr) => {
         const mapped = describeRunnerError(err as RunnerErrorLike | null);
         resolve({

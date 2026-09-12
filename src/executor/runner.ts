@@ -62,7 +62,7 @@ export interface SpawnedChild {
 export type SpawnFn = (
   bin: string,
   args: string[],
-  opts: { cwd: string; detached: boolean; stdio: [string, number, number] }
+  opts: { cwd: string; detached: boolean; stdio: [string, number, number]; windowsHide: boolean }
 ) => SpawnedChild;
 
 export interface RunnerDeps {
@@ -123,10 +123,18 @@ function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
 // touched in STALE_USER_CHROME_MS. `now`/`mtime` are injectable so tests don't need real
 // wall-clock waits or real files.
 const STALE_USER_CHROME_MS = 20 * 60 * 1000;
+// Headless rows whose process is still alive but whose log has not moved for this long are hung
+// (a Playwright page that never settles, a `claude -p` waiting on something that will never
+// come). Every headless protocol writes a log line at least every few minutes (per page for
+// jd_review, per step plus a <=5 min heartbeat while waiting for the user for apply/network), so
+// 30 quiet minutes is never a healthy run. Such a run holds a claude process and a whole Chrome
+// (~0.8 GB) and blocks every later run of its kind, so it is killed, not just marked.
+export const STALE_HEADLESS_MS = 30 * 60 * 1000;
 
 export interface ReapDeps {
   now?: () => number;
   mtime?: (filePath: string) => number | null;
+  killTree?: (pid: number) => void;
 }
 
 export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
@@ -161,6 +169,15 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
       db.prepare(
         "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
       ).run("process gone", row.id);
+      continue;
+    }
+    const mt = row.log_path ? mtime(row.log_path) : null;
+    if (mt != null && now() - mt > STALE_HEADLESS_MS) {
+      const quietMin = Math.round((now() - mt) / 60_000);
+      (deps.killTree ?? killTree)(row.pid as number);
+      db.prepare(
+        "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
+      ).run(`hung: no log activity for ${quietMin} min, process tree killed`, row.id);
     }
   }
 }
@@ -297,10 +314,14 @@ export function startExecutor(
     "--strict-mcp-config",
   ];
 
+  // windowsHide: the server itself has no console (pm2 starts it hidden), so without this flag
+  // Windows would open a new, blank console window for every detached `claude -p` child — which
+  // the user saw as stray "claude" command windows popping up (2026-09-11). No-op elsewhere.
   const child = spawnFn(bin, args, {
     cwd: process.cwd(),
     detached: true,
     stdio: ["pipe", logFd, logFd],
+    windowsHide: true,
   });
 
   child.stdin?.write(prompt);

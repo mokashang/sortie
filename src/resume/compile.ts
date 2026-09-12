@@ -7,7 +7,7 @@ export type Exec = (bin: string, args: string[]) => Promise<void>;
 
 const defaultExec: Exec = (bin, args) =>
   new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }, (err, _stdout, stderr) => {
+    execFile(bin, args, { timeout: 120_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, _stdout, stderr) => {
       if (err) reject(new Error(`${bin} failed: ${stderr || (err as Error).message}`.slice(0, 500)));
       else resolve();
     });

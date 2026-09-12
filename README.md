@@ -67,7 +67,9 @@ profile(`data/browser-profile`,已 gitignore),由官方 Playwright MCP(`@playwri
 (或换了密码/新增要投的站点后),在设置页「后台浏览器(无人值守)」卡里点
 **[打开后台浏览器,登录一次]**(`POST /api/executor/open-profile`,`src/executor/open-profile.ts`),
 会弹出一个真实的、带 GUI 的 Chrome 窗口,在里面手动登录一次 LinkedIn/Workday/目标 ATS 站点即可,登录
-session 会写进这个 profile 目录,之后所有无人值守的执行器运行都能直接用。这个按钮只是 spawn
+session 会写进这个 profile 目录,之后所有无人值守的执行器运行都能直接用。执行器自己运行时这个档案的 Chrome
+是 **headless 的(不显示窗口;2026-09-11 起)**,jd_review 自动接力再也不会往桌面上弹浏览器;`.env` 设
+`EXECUTOR_BROWSER_HEADED=1` 可切回有窗口模式(排查问题、或某站点拦 headless 时)。这个按钮只是 spawn
 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=<profile> --no-first-run`
 (找不到就退回 `open -na "Google Chrome" --args ...`),不经过 Playwright MCP 本身。
 

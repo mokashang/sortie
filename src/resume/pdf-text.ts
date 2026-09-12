@@ -9,7 +9,7 @@ const defaultExec: PdftotextExec = (pdfPath) =>
     execFile(
       process.env.PDFTOTEXT_BIN || "pdftotext",
       ["-layout", pdfPath, "-"],
-      { timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
+      { timeout: 30_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
       (err, stdout) => {
         if (err) reject(err);
         else resolve(stdout);

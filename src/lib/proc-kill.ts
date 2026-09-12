@@ -14,7 +14,7 @@ export interface KillTreeDeps {
 export function killTree(pid: number, deps: KillTreeDeps = {}): void {
   const platform = deps.platform ?? process.platform;
   if (platform === "win32") {
-    const exec = deps.exec ?? ((file, args) => { execFile(file, args, () => {}); });
+    const exec = deps.exec ?? ((file, args) => { execFile(file, args, { windowsHide: true }, () => {}); });
     exec("taskkill", ["/pid", String(pid), "/t", "/f"]);
     return;
   }

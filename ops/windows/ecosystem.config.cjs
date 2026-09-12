@@ -21,6 +21,9 @@ module.exports = {
       max_restarts: 50,
       restart_delay: 5000,
       kill_timeout: 10000,
+      // Safety net for the always-on box: if the server process itself ever leaks past this,
+      // pm2 restarts it (detached executor children are unaffected). Normal footprint is ~300 MB.
+      max_memory_restart: "1500M",
       out_file: path.join(root, "data", "pm2-out.log"),
       error_file: path.join(root, "data", "pm2-err.log"),
       merge_logs: true,

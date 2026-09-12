@@ -152,6 +152,16 @@ export function openDb(file?: string): DB {
   // Same reasoning as idx_jobs_dedup_key above: created here so both old and new DBs get it.
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_duplicate_of ON jobs(duplicate_of)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_board_key ON jobs(board_key)");
+  // The scanner asks `SELECT 1 FROM jobs WHERE apply_url = ?` once per discovered posting (scheduler.ts,
+  // ingest.ts). Without this index that is a full table scan — ~300 ms each on the 78k-row / 434 MB
+  // production db — so a minute's tick ran for many minutes, stayed "in flight" and pinned the server's
+  // single thread at 100% (2026-09-11, first day on the Windows box). Created here rather than in
+  // schema.sql for the same reason as the indexes above: the migration tests build old-shaped dbs
+  // whose jobs table has no apply_url column yet when readSchema() runs.
+  // Guarded because the migration tests open hand-built old-shaped dbs whose jobs table has no
+  // apply_url column at all; every real database has had the column since v1.
+  const jobColsForIndex = (db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name);
+  if (jobColsForIndex.includes("apply_url")) db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_apply_url ON jobs(apply_url)");
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 
   return db;

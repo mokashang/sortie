@@ -243,6 +243,28 @@ describe("executor/runner", () => {
       const row = db.prepare("SELECT status FROM executor_runs WHERE kind='apply'").get() as { status: string };
       expect(row.status).toBe("done");
     });
+
+    it("kills and fails a live headless run whose log has been silent for 30+ minutes", () => {
+      db.prepare("INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('jd_review','running', ?, '/tmp/hung.log')").run(process.pid);
+      const killed: number[] = [];
+      const now = Date.now();
+      reapStaleRuns(db, { now: () => now, mtime: () => now - 31 * 60_000, killTree: (pid) => killed.push(pid) });
+      const row = db.prepare("SELECT status, summary FROM executor_runs WHERE kind='jd_review'").get() as { status: string; summary: string };
+      expect(killed).toEqual([process.pid]);
+      expect(row.status).toBe("failed");
+      expect(row.summary).toMatch(/hung: no log activity for 31 min/);
+    });
+
+    it("leaves a live headless run alone while its log is recent or missing", () => {
+      db.prepare("INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('jd_review','running', ?, '/tmp/live.log')").run(process.pid);
+      const killed: number[] = [];
+      const now = Date.now();
+      reapStaleRuns(db, { now: () => now, mtime: () => now - 5 * 60_000, killTree: (pid) => killed.push(pid) });
+      reapStaleRuns(db, { now: () => now, mtime: () => null, killTree: (pid) => killed.push(pid) });
+      const row = db.prepare("SELECT status FROM executor_runs WHERE kind='jd_review'").get() as { status: string };
+      expect(killed).toEqual([]);
+      expect(row.status).toBe("running");
+    });
   });
 
   describe("hasLiveRun", () => {
