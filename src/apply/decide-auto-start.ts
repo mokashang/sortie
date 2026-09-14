@@ -76,3 +76,60 @@ export function decideAndMaybeAutoStart(
   if (decision !== "approve") return { autoStarted: false };
   return maybeAutoStartApply(db, userId, { resume: true }, deps);
 }
+
+// A resume:true run with nothing else to do — the shape maybeAutoStartApply queues for approvals.
+// A 接力 segment (resume + plan) and a targeted run (jobIds) are real work, not this.
+export function isBareResumeRun(options: unknown): boolean {
+  if (!options || typeof options !== "object") return false;
+  const o = options as StartOptions;
+  const hasPlan = Array.isArray(o.plan) && o.plan.length > 0;
+  const hasJobs = Array.isArray(o.jobIds) && o.jobIds.length > 0;
+  return o.resume === true && !hasPlan && !hasJobs;
+}
+
+function lastApplyRun(db: DB, userId: string): { status: string; options: unknown } | null {
+  const row = db
+    .prepare("SELECT status, options FROM executor_runs WHERE user_id = ? AND kind = 'apply' ORDER BY id DESC LIMIT 1")
+    .get(userId) as { status: string; options: string } | undefined;
+  if (!row) return null;
+  let options: unknown = {};
+  try {
+    options = JSON.parse(row.options);
+  } catch {
+    options = {};
+  }
+  return { status: row.status, options };
+}
+
+// The mirror image of the approve-time auto-start above: an approval that lands while a
+// user_chrome run is marked running is left to that session (hasLiveOrQueuedRun says so), and
+// when the session then ends without submitting it, nobody ever picks the approval up again.
+// Run #71 (2026-09-14) finished ten seconds after the click; run #70 went quiet and reapStaleRuns
+// retired it as "session gone" — both left approved rows sitting at awaiting_confirm while the
+// card promised 助手会接着提交. Called when a run ends (the finish route) and from the dispatcher
+// tick (which also covers reaped runs), this queues a resume run once nothing is live or queued.
+//
+// Bounded on purpose — at most one such run per real run: nothing is queued when the account's
+// latest apply run is itself a bare resume run (it either already handled the approvals or
+// failed, and re-queueing would spawn a session every few minutes until something changed) or
+// was stopped by the user (a stop must not restart itself ten seconds later). In those cases the
+// user restarts from the App; the failed/stopped task is on the assistant card. Never throws.
+export function requeueStrandedApprovals(db: DB, userId: string, deps: DecideAutoStartDeps = {}): DecideAutoStartResult {
+  const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
+  try {
+    if (checkLiveOrQueued(db, userId, "apply")) return { autoStarted: false };
+    const last = lastApplyRun(db, userId);
+    if (last && (last.status === "stopped" || isBareResumeRun(last.options))) return { autoStarted: false };
+    const stranded = db
+      .prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status = 'awaiting_confirm' AND confirm_decision = 'approved'")
+      .get(userId) as { n: number };
+    if (stranded.n === 0) return { autoStarted: false };
+    // A parked 接力 chain gets first claim on the session: its next segment starts with the
+    // resume phase, so it submits the approvals itself.
+    const resumed = resumePausedChainIfReady(db, userId, deps);
+    if (resumed.action === "queued") return { autoStarted: true, runId: resumed.runId, channel: resumed.channel };
+    return maybeAutoStartApply(db, userId, { resume: true }, deps);
+  } catch {
+    return { autoStarted: false };
+  }
+}

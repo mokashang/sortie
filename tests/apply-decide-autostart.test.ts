@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { openDb, DB } from "@/lib/db";
-import { decideAndMaybeAutoStart } from "@/apply/decide-auto-start";
+import { decideAndMaybeAutoStart, requeueStrandedApprovals, isBareResumeRun } from "@/apply/decide-auto-start";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
@@ -143,5 +143,122 @@ describe("decideAndMaybeAutoStart", () => {
       // @ts-expect-error deliberately invalid decision value for the test
       decideAndMaybeAutoStart(db, U, jobId, "bogus", undefined, {})
     ).toThrow();
+  });
+});
+
+function seedApplyRun(db: DB, status: string, options: object, channel = "user_chrome"): number {
+  return db
+    .prepare("INSERT INTO executor_runs (user_id, kind, status, channel, options) VALUES (?, 'apply', ?, ?, ?)")
+    .run(U, status, channel, JSON.stringify(options)).lastInsertRowid as number;
+}
+
+function approve(db: DB, jobId: number): void {
+  db.prepare("UPDATE applications SET confirm_decision = 'approved' WHERE job_id = ?").run(jobId);
+}
+
+describe("isBareResumeRun", () => {
+  it("is only the resume-only shape the approve path queues", () => {
+    expect(isBareResumeRun({ resume: true })).toBe(true);
+    expect(isBareResumeRun({ resume: true, plan: [], jobIds: [] })).toBe(true);
+    expect(isBareResumeRun({ resume: true, plan: [{ direction: "swe_general", count: 3, mode: "direct" }] })).toBe(false);
+    expect(isBareResumeRun({ resume: true, jobIds: [1] })).toBe(false);
+    expect(isBareResumeRun({ jobIds: [1], mode: "direct" })).toBe(false);
+    expect(isBareResumeRun({})).toBe(false);
+    expect(isBareResumeRun(null)).toBe(false);
+  });
+});
+
+// The finish route and the dispatcher tick call this after a run ended: an approval that landed
+// while the run was still marked running was left to that session (decide's auto-start stands
+// down for a live run), and if the session ended without acting on it nobody would ever submit it.
+describe("requeueStrandedApprovals", () => {
+  const start = () => vi.fn(() => ({ id: 99, pid: null, logPath: "/tmp/run-99.log" }));
+  const userChrome = () => "user_chrome" as const;
+
+  it("queues a resume run when an approval was left behind by a run that ended", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    approve(db, jobId);
+    // Run #71's shape (2026-09-14): a targeted run that finished ten seconds after the click.
+    seedApplyRun(db, "done", { jobIds: [jobId], mode: "direct" });
+    const startExecutor = start();
+
+    const result = requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor });
+
+    expect(result).toEqual({ autoStarted: true, runId: 99, channel: "user_chrome" });
+    expect(startExecutor).toHaveBeenCalledWith(db, U, "apply", { resume: true }, {}, "user_chrome");
+  });
+
+  it("also covers a plan run that was reaped as failed (session gone)", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    approve(db, jobId);
+    seedApplyRun(db, "failed", { plan: [{ direction: "swe_general", count: 30, mode: "direct" }], chunk: 10 });
+    const startExecutor = start();
+
+    const result = requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor });
+
+    expect(result.autoStarted).toBe(true);
+    expect(startExecutor).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when no approval is waiting", () => {
+    const db = openDb(":memory:");
+    seedAwaitingConfirm(db); // filled, not decided yet
+    seedApplyRun(db, "done", { jobIds: [1], mode: "direct" });
+    const startExecutor = start();
+
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: () => null, startExecutor })).toEqual({ autoStarted: false });
+    expect(startExecutor).not.toHaveBeenCalled();
+  });
+
+  it("leaves the approval to a run that is live or queued", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    approve(db, jobId);
+    seedApplyRun(db, "running", { jobIds: [jobId], mode: "direct" });
+    const startExecutor = start();
+
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => true, lastRunChannel: userChrome, startExecutor })).toEqual({ autoStarted: false });
+    expect(startExecutor).not.toHaveBeenCalled();
+  });
+
+  it("never re-queues after a bare resume run: one retry per real run, no spawn loop", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    approve(db, jobId);
+    seedApplyRun(db, "done", { jobIds: [jobId], mode: "direct" });
+    seedApplyRun(db, "failed", { resume: true });
+    const startExecutor = start();
+
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor })).toEqual({ autoStarted: false });
+    expect(startExecutor).not.toHaveBeenCalled();
+  });
+
+  it("does not restart a run the user stopped", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    approve(db, jobId);
+    seedApplyRun(db, "stopped", { plan: [{ direction: "swe_general", count: 5, mode: "direct" }] });
+    const startExecutor = start();
+
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor })).toEqual({ autoStarted: false });
+    expect(startExecutor).not.toHaveBeenCalled();
+  });
+
+  it("a start failure is swallowed", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    approve(db, jobId);
+    seedApplyRun(db, "done", { jobIds: [jobId], mode: "direct" });
+
+    const result = requeueStrandedApprovals(db, U, {
+      hasLiveOrQueuedRun: () => false,
+      lastRunChannel: userChrome,
+      startExecutor: () => {
+        throw new Error("spawn ENOENT");
+      },
+    });
+    expect(result).toEqual({ autoStarted: false });
   });
 });
