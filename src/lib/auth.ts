@@ -114,7 +114,12 @@ export function buildAuth() {
     },
     socialProviders: google,
     account: {
-      accountLinking: { enabled: true, trustedProviders: ["google"] },
+      // Google is trusted, so a Google sign-in with the same email links to the existing
+      // password account. Better Auth 1.7 additionally insists the LOCAL email be verified before
+      // linking; without a mailer nobody's local email ever gets verified (verification is not
+      // required then), so that check is waived — Google itself vouches for the address. With a
+      // mailer the check stays on: an unverified local account cannot be entered via Google.
+      accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: mailerConfigured() },
     },
     session: {
       expiresIn: SESSION_TTL_S,
