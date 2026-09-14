@@ -42,8 +42,14 @@
 	}
 }
 
-# Old tailnet URL stays valid: Caddy fetches *.ts.net certificates from the local tailscaled at handshake time
+# Old tailnet URL stays valid: Caddy fetches the *.ts.net certificate from the local tailscaled at handshake time
 # (HTTPS certificates enabled in the tailnet; verified as the interactive user on 2026-09-11). Delete this block to drop it.
+# get_certificate must be explicit here: with the custom-domain site's tls block present, the Caddyfile adapter emits a
+# per-host automation policy for this name too, which bypasses Caddy's automatic .ts.net detection and sends it to ACME
+# (public DNS has no record for ts.net names -> NXDOMAIN, seen 2026-09-13).
 {$TS_HOSTNAME} {
 	import sortie
+	tls {
+		get_certificate tailscale
+	}
 }
