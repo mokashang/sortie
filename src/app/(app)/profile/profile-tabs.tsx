@@ -5,15 +5,17 @@ import { BasicsTab } from "./basics-tab";
 import { ExperiencesTab } from "./experiences-tab";
 import { ResumesTab } from "./resumes-tab";
 import { AnswersTab } from "./answers-tab";
+import { DocumentsTab, type DocumentRow } from "./documents-tab";
 import type { Exp, ResumeRow } from "./profile-types";
 
-export type ProfileTab = "basics" | "experiences" | "resumes" | "answers";
+export type ProfileTab = "basics" | "experiences" | "resumes" | "answers" | "documents";
 
 export function ProfileTabs({
   tab: initialTab,
   experiences,
   resumes,
   answers,
+  documents,
   profile,
   profileComplete,
   welcome,
@@ -23,6 +25,7 @@ export function ProfileTabs({
   experiences: Exp[];
   resumes: ResumeRow[];
   answers: Record<string, string>;
+  documents: DocumentRow[];
   profile: Record<string, unknown>;
   profileComplete: boolean;
   welcome: boolean;
@@ -46,6 +49,7 @@ export function ProfileTabs({
           { key: "experiences", label: "经历", count: experiences.length },
           { key: "resumes", label: "简历", count: resumes.length },
           { key: "answers", label: "标准答案", count: Object.keys(answers).length },
+          { key: "documents", label: "文件", count: documents.length },
         ]}
       />
       {tab === "basics" ? (
@@ -54,6 +58,8 @@ export function ProfileTabs({
         <ExperiencesTab initial={experiences} />
       ) : tab === "resumes" ? (
         <ResumesTab resumes={resumes} hasExperiences={experiences.length > 0} />
+      ) : tab === "documents" ? (
+        <DocumentsTab initial={documents} />
       ) : (
         <AnswersTab initial={answers} />
       )}

@@ -50,7 +50,7 @@ describe("run outcome display", () => {
   });
 
   it("breakdown text lists the non-zero buckets only", () => {
-    expect(runBreakdownText(outcome())).toBe("提交 5 · 需人工 3 · 归档 2 · 待补 1");
+    expect(runBreakdownText(outcome())).toBe("提交 5 · 待处理 1 · 归档 2 · 找不到人 3");
     expect(runBreakdownText(outcome({ submitted: 0, awaiting: 2, manual: 0, archived: 0, info: 0 }))).toBe("待确认 2");
     expect(runBreakdownText(outcome({ submitted: 0, awaiting: 0, manual: 0, archived: 0, info: 0 }))).toBe("");
     expect(runBreakdownText(null)).toBe("");

@@ -51,11 +51,6 @@ export function overview(db: DB, userId: string): Overview {
       `SELECT COUNT(*) n FROM outreach o WHERE o.user_id = ? AND o.status = 'pending_send' AND NOT ${JOB_LINKED_SQL}`,
       userId
     ),
-    manual: count(
-      db,
-      "SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status = 'matched' AND needs_manual_reason IS NOT NULL AND pending_questions IS NULL",
-      userId
-    ),
     queueMatched: queueByDirection(db, userId).reduce((n, g) => n + g.matched, 0),
     submittedToday: todaySubmitted(db, userId).length,
     submittedThisWeek: weekly(db, userId).thisWeek.submittedApplications,

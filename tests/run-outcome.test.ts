@@ -130,9 +130,9 @@ describe("run outcome end to end", () => {
     reportFill(db, U, { jobId: a, status: "awaiting_confirm", filledFields: { Name: "Mengjia Shang" } });
     decide(db, U, a, "approve");
     reportSubmitted(db, U, a);
-    // b: dead link → needs_manual.
+    // b: dead link → closed (archived without a card).
     expect((takeNextApplication(db, U, testProfile(), { direction: "swe_general" }) as { jobId: number }).jobId).toBe(b);
-    reportFill(db, U, { jobId: b, status: "needs_manual", reason: "dead link" });
+    reportFill(db, U, { jobId: b, status: "closed", reason: "dead link" });
     // c: filled, still waiting for the user when the run ends.
     expect((takeNextApplication(db, U, testProfile(), { direction: "swe_general" }) as { jobId: number }).jobId).toBe(c);
     reportFill(db, U, { jobId: c, status: "awaiting_confirm", filledFields: { Name: "Mengjia Shang" } });
@@ -147,8 +147,8 @@ describe("run outcome end to end", () => {
       own: { direct: 2, referral: 0 },
       submitted: 1,
       awaiting: 1,
-      manual: 1,
-      archived: 0,
+      manual: 0,
+      archived: 1,
       info: 0,
       complete: false,
     });
@@ -176,14 +176,26 @@ describe("run outcome end to end", () => {
     expect(runStatusDisplay("done", outcome)).toEqual({ label: "已完成", tone: "good" });
   });
 
-  it("a user-rejected fill still counts as filled (the fill happened) but lands in the manual bucket", () => {
+  it("a user-rejected fill still counts as filled (the fill happened) but shows as a 待处理 card", () => {
     const a = seedJob(db, { score: 95 });
     const runId = startPlanRun([{ direction: "swe_general", count: 1, mode: "direct" }]);
     takeNextApplication(db, U, testProfile(), { direction: "swe_general" });
     reportFill(db, U, { jobId: a, status: "awaiting_confirm", filledFields: { Name: "Mengjia Shang" } });
     decide(db, U, a, "reject", "wrong resume");
     finishRun(db, U, runId, "done");
-    expect(storedOutcome(db, runId)).toMatchObject({ achieved: { direct: 1, referral: 0 }, manual: 1, complete: true });
+    expect(storedOutcome(db, runId)).toMatchObject({ achieved: { direct: 1, referral: 0 }, info: 1, manual: 0, complete: true });
+  });
+
+  it("a login wall or an executor error is a 待处理 card, never an achievement", () => {
+    const a = seedJob(db, { score: 95 });
+    const b = seedJob(db, { score: 90 });
+    const runId = startPlanRun([{ direction: "swe_general", count: 2, mode: "direct" }]);
+    takeNextApplication(db, U, testProfile(), { direction: "swe_general" });
+    reportFill(db, U, { jobId: a, status: "needs_info", questions: [{ kind: "login", key: "x", label: "登录一次", host: "a.example" }] });
+    takeNextApplication(db, U, testProfile(), { direction: "swe_general" });
+    reportFill(db, U, { jobId: b, status: "error", reason: "tab crashed" });
+    finishRun(db, U, runId, "done");
+    expect(storedOutcome(db, runId)).toMatchObject({ achieved: { direct: 0, referral: 0 }, info: 2, manual: 0, complete: false });
   });
 
   it("referral entries: a company with someone to contact counts, a 找不到人 company does not", () => {

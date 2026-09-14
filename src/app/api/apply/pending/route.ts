@@ -14,7 +14,7 @@ export const GET = withUser(async (req, { userId }) => {
     if (jobId) {
       return NextResponse.json(confirmStatus(db, userId, Number(jobId)));
     }
-    // needsInfo: the 待补信息 cards (executor waiting on the user, or timed out with questions kept).
+    // needsInfo: the 待处理 cards (executor waiting on the user, or paused with its to-do items kept).
     return NextResponse.json({ pending: pendingConfirmations(db, userId), needsInfo: pendingInfo(db, userId) });
   } catch (e) {
     return failResponse(e);

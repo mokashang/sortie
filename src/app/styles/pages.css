@@ -501,18 +501,96 @@ td.company {
   padding-top: var(--s-3);
 }
 
-.manual-list,
 .submitted-list {
   border-top: 1px solid var(--line-2);
 }
 
-.manual-row,
 .submitted-row {
   display: flex;
   align-items: center;
   gap: var(--s-3);
   padding: 10px 6px;
   border-bottom: 1px solid var(--line);
+}
+
+/* ---- 待处理 (todo cards) ---- */
+
+.todo-hint {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.todo-jobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+
+.todo-job {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.todo-job .truncate {
+  min-width: 0;
+}
+
+.file-input {
+  font: inherit;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  max-width: 100%;
+}
+
+.file-input::file-selector-button {
+  font: inherit;
+  font-size: var(--t-sm);
+  margin-right: var(--s-2);
+  padding: 4px 10px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line-2);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.doc-upload {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-5);
+  align-items: flex-end;
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.doc-list {
+  border-top: 1px solid var(--line-2);
+}
+
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-row .truncate {
+  min-width: 0;
+  max-width: 360px;
+}
+
+@media (max-width: 880px) {
+  .todo-job {
+    flex-wrap: wrap;
+  }
 }
 
 .submitted-row .truncate {

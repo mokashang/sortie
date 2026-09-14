@@ -37,9 +37,9 @@ export interface RunOutcome {
   own: ModeCounts; // this run's share of achieved
   submitted: number; // of own.direct: already submitted when the run ended
   awaiting: number; // of own.direct: still waiting for the user's confirmation
-  manual: number; // parked for a human (needs_manual, user-rejected fill, referral 找不到人)
-  archived: number; // live page proved the job ineligible → archived
-  info: number; // waiting on / timed out waiting for the user's answers (待补信息)
+  manual: number; // referral companies where nobody could be contacted (找不到人)
+  archived: number; // live page proved the job ineligible, or the posting was gone → archived
+  info: number; // 待处理 cards: missing answers / files, a login wall, something to finish by hand, an error, a rejected fill
   complete: boolean; // achieved >= planned for both modes
   chain?: { root: number; step: number }; // present for continuation segments
 }
@@ -62,14 +62,14 @@ export function runProgressText(outcome?: RunOutcome | null): string {
   return parts.join(" · ");
 }
 
-// "提交 5 · 待确认 1 · 需人工 3 · 归档 2 · 待补 1" — zero buckets omitted; "" when nothing to say.
+// "提交 5 · 待确认 1 · 待处理 3 · 归档 2 · 找不到人 1" — zero buckets omitted; "" when nothing to say.
 export function runBreakdownText(outcome?: RunOutcome | null): string {
   if (!outcome) return "";
   const parts: string[] = [];
   if (outcome.submitted > 0) parts.push(`提交 ${outcome.submitted}`);
   if (outcome.awaiting > 0) parts.push(`待确认 ${outcome.awaiting}`);
-  if (outcome.manual > 0) parts.push(`需人工 ${outcome.manual}`);
+  if (outcome.info > 0) parts.push(`待处理 ${outcome.info}`);
   if (outcome.archived > 0) parts.push(`归档 ${outcome.archived}`);
-  if (outcome.info > 0) parts.push(`待补 ${outcome.info}`);
+  if (outcome.manual > 0) parts.push(`找不到人 ${outcome.manual}`);
   return parts.join(" · ");
 }

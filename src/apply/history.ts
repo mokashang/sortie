@@ -4,7 +4,7 @@ import { DB, logEvent } from "@/lib/db";
 // everything that has actually been sent out (status reached 'submitted') and where it is now.
 // Pre-submit states (matched/prepared/awaiting_confirm, and the needs_manual parking flag) stay
 // in src/apply/queue.ts — this module never touches them except archiveManual, which is the
-// "remove from the needs-manual list" action and deliberately lives next to the other
+// "skip this one from a 待处理 card" action and deliberately lives next to the other
 // user-facing status moves.
 //
 // Time handling: applications.submitted_at / updated_at are sqlite `datetime('now')` — UTC with
@@ -198,20 +198,52 @@ export function todaySubmitted(db: DB, userId: string): TodaySubmittedRow[] {
   }));
 }
 
-export interface ArchiveManualResult {
-  archived: number;
-  skipped: number[]; // jobIds that were not parked (nothing to remove) or don't exist
+// Not a submission Sortie made: the executor found an application already on file at the ATS
+// ('already_applied'), or the user finished the form by hand from a 待处理 card (「我自己投完了」).
+// Lands the row in the post-submit lifecycle dated now so /history can track it; the note says
+// how it got there. Distinct from reportSubmitted (queue.ts) — that one is the red-line gate for
+// submissions the assistant clicks; this records a fact about the outside world. Idempotent on a
+// row that is already past submitted.
+export function recordExternalSubmission(db: DB, userId: string, jobId: number, note: string): void {
+  const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
+    | { status: string }
+    | undefined;
+  if (!row) throw new Error(`recordExternalSubmission: no application for job ${jobId}`);
+  if (isPostSubmitStage(row.status)) return;
+  const allowed = ["matched", "prepared", "needs_info", "awaiting_confirm", "referral_seeking", "referral_ready"];
+  if (!allowed.includes(row.status)) {
+    throw new Error(`recordExternalSubmission: cannot record from status '${row.status}'`);
+  }
+  db.prepare(
+    `UPDATE applications SET status = 'submitted', submitted_at = datetime('now'), confirm_decision = NULL,
+            needs_manual_reason = NULL, pending_questions = NULL WHERE user_id = ? AND job_id = ?`
+  ).run(userId, jobId);
+  logEvent(db, "application_stage", {
+    userId,
+    entity: "application",
+    entityId: jobId,
+    payload: { from: row.status, to: "submitted", note: note.trim() || null, external: true },
+  });
 }
 
-// User -> App from /apply's 需人工清单 "移除" (single) / "移除所选" (batch). Only a parked row —
-// status='matched' with a needs_manual_reason — qualifies; it becomes 'archived' with the reason
-// left intact so the audit trail says why it was parked in the first place. Archived rows are
-// invisible to the picker, the queue and the quota counts, and unlike a hard DELETE the job
-// can't be re-discovered by the next scan and quietly re-enter the queue. /queue's unarchive is
-// the exact inverse if one was removed by mistake.
+export interface ArchiveManualResult {
+  archived: number;
+  skipped: number[]; // jobIds that were not paused (nothing to remove) or don't exist
+}
+
+// User -> App from a 待处理 card's 「跳过这个岗」 (single) or a batch remove. Only a row the
+// assistant stopped on qualifies — paused (status='matched' with a needs_manual_reason) or still
+// waiting on the form (needs_info) — and it becomes 'archived' with the reason left intact (or
+// "user gave up" when there was none) so the audit trail says why. Archived rows are invisible
+// to the picker, the queue and the quota counts, and unlike a hard DELETE the job can't be
+// re-discovered by the next scan and quietly re-enter the queue. /queue's unarchive is the exact
+// inverse if one was removed by mistake; a waiting executor sees 'archived' on its next poll and
+// drops the form.
 export function archiveManual(db: DB, userId: string, jobIds: number[]): ArchiveManualResult {
   const stmt = db.prepare(
-    "UPDATE applications SET status = 'archived' WHERE user_id = ? AND job_id = ? AND status = 'matched' AND needs_manual_reason IS NOT NULL"
+    `UPDATE applications SET status = 'archived', confirm_decision = NULL,
+            needs_manual_reason = COALESCE(needs_manual_reason, 'user gave up')
+     WHERE user_id = ? AND job_id = ? AND ((status = 'matched' AND needs_manual_reason IS NOT NULL) OR status = 'needs_info')`
   );
   const skipped: number[] = [];
   let archived = 0;

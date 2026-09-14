@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { loadProfile } from "@/lib/profile";
 import { takeNextApplication } from "@/apply/queue";
 import { takeNextReferral } from "@/apply/referral";
+import { documentsMap, userDocumentsDir } from "@/lib/documents";
 import { withUser, failResponse } from "@/lib/actor";
 
 // Executor -> App: "give me the next task". {mode:'referral'} returns a ReferralTask (a company
@@ -20,7 +21,7 @@ export const POST = withUser(async (req, { userId }) => {
     if (body?.mode === "referral") {
       return NextResponse.json(takeNextReferral(db, userId, { direction, jobIds }));
     }
-    return NextResponse.json(takeNextApplication(db, userId, loadProfile(db, userId), { direction, jobIds }));
+    return NextResponse.json(takeNextApplication(db, userId, loadProfile(db, userId), { direction, jobIds, documents: documentsMap(userDocumentsDir(db, userId)) }));
   } catch (e) {
     return failResponse(e);
   }

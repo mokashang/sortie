@@ -57,11 +57,19 @@ describe("executor prompts", () => {
       expect(p).toMatch(/绝不编造字段值/);
     });
 
-    it("lists the needs_manual triggers and the error/needs_manual circuit breaker", () => {
+    it("lists the typed stop items, the auto-handled closed/already_applied statuses and the circuit breaker", () => {
       const p = buildApplyPrompt();
-      expect(p).toContain("already applied");
-      expect(p).toContain("dead link");
-      expect(p).toMatch(/连续 3 个 needs_manual 或连续 2 个 error/);
+      expect(p).toContain('"status": "already_applied"');
+      expect(p).toContain('"status": "closed"');
+      expect(p).toContain('"kind": "login"');
+      expect(p).toContain('"kind": "file"');
+      expect(p).toContain('"kind": "action"');
+      expect(p).toContain('"kind": "manual"');
+      expect(p).toMatch(/绝不输入密码、绝不创建账号/);
+      expect(p).toMatch(/连续 3 次暂停.*或连续 2 个 error/);
+      // the confirmation timeout no longer parks the job
+      expect(p).not.toContain("confirmation timed out");
+      expect(p).toMatch(/什么都不回报/);
     });
 
     it("requires a live-page eligibility check before filling: PhD/no-sponsor/citizenship disqualifiers", () => {
@@ -139,13 +147,14 @@ describe("executor prompts", () => {
         expect(p).toMatch(/换下一个方向/);
       });
 
-      it("still carries the unchanged red lines and needs_manual triggers", () => {
+      it("still carries the unchanged red lines and the typed stop items", () => {
         const p = buildApplyPrompt({ plan });
         expect(p).toContain('decision: "approved"');
         expect(p).toMatch(/绝不点最终 Submit/);
-        expect(p).toContain("already applied");
-        expect(p).toContain("dead link");
-        expect(p).toMatch(/连续 3 个 needs_manual 或连续 2 个 error/);
+        expect(p).toContain('"status": "already_applied"');
+        expect(p).toContain('"status": "closed"');
+        expect(p).toContain('"kind": "login"');
+        expect(p).toMatch(/连续 3 次暂停.*或连续 2 个 error/);
       });
     });
 

@@ -56,7 +56,7 @@ export function AnswersTab({ initial }: { initial: Record<string, string> }) {
   return (
     <div>
       <p className="muted small mb-4">
-        助手填表时,联系方式、教育、工作授权和 EEO 之外的问题都从这里取。遇到这里没有的必填题,它会停下来在「待补信息」里问你,答案默认也存进这里。
+        助手填表时,联系方式、教育、工作授权和 EEO 之外的问题都从这里取。遇到这里没有的必填题,它会停下来在投递页「待处理」里问你,答案默认也存进这里。
       </p>
 
       {rows.length === 0 ? (

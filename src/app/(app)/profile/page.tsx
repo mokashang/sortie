@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { listExperiences } from "@/resume/experiences";
 import { emptyProfileData, getProfileData, profileStatus } from "@/lib/profile";
+import { listDocuments, userDocumentsDir } from "@/lib/documents";
 import { PageHeader } from "@/app/components/ui";
 import { ProfileTabs, type ProfileTab } from "./profile-tabs";
 import type { ResumeRow } from "./profile-types";
@@ -9,7 +10,7 @@ import type { ResumeRow } from "./profile-types";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "档案" };
 
-const TABS: ProfileTab[] = ["basics", "experiences", "resumes", "answers"];
+const TABS: ProfileTab[] = ["basics", "experiences", "resumes", "answers", "documents"];
 
 // 档案: 基本信息 (contact / education / work authorization / directions — what matching and the
 // answer pack are built from) · 经历 (what the resumes are built from) · 简历 (generated versions)
@@ -41,6 +42,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   });
   const profile = getProfileData(db, user.id) ?? emptyProfileData({ name: user.name, email: user.email });
   const answers = (profile.standard_answers ?? {}) as Record<string, string>;
+  const documents = listDocuments(userDocumentsDir(db, user.id));
   return (
     <>
       <PageHeader title="档案" />
@@ -49,6 +51,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
         experiences={experiences}
         resumes={resumes}
         answers={answers}
+        documents={documents}
         profile={profile}
         profileComplete={status.complete}
         welcome={sp.welcome === "1"}

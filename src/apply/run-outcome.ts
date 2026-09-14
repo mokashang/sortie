@@ -45,6 +45,7 @@ export interface ClaimedRow {
   needs_manual_reason: string | null;
   pending_questions: string | null;
 }
+// manual = a referral company where nobody could be contacted (找不到人); info = any 待处理 card.
 export type RowBucket = "submitted" | "awaiting" | "manual" | "archived" | "info" | "none";
 
 // What one claimed row means for the run that claimed it. Count semantics follow the protocol
@@ -61,10 +62,12 @@ export function rowResult(r: ClaimedRow): { mode: "direct" | "referral"; achieve
       : { mode: "referral", achieved: true, bucket: "none" };
   }
   if (r.status === "archived") return { mode: "direct", achieved: false, bucket: "archived" };
-  if (r.status === "needs_info" || r.pending_questions) return { mode: "direct", achieved: false, bucket: "info" };
-  // Executor needs_manual, or the user rejected the fill (decide → matched + rejected): the form
-  // was filled in the latter case, so it still counts as achieved.
-  if (r.needs_manual_reason) return { mode: "direct", achieved: r.confirm_decision === "rejected", bucket: "manual" };
+  // A 待处理 card is waiting on the user (spec 2026-09-13-todo-list-design): a missing answer or
+  // file, a login wall, something to finish by hand, an executor error, or a rejected fill. The
+  // rejected fill still counts as achieved — the form was filled — the rest were never filled.
+  if (r.status === "needs_info" || r.pending_questions || r.needs_manual_reason) {
+    return { mode: "direct", achieved: r.confirm_decision === "rejected", bucket: "info" };
+  }
   return { mode: "direct", achieved: false, bucket: "none" };
 }
 

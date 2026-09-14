@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db";
 import { archiveManual } from "@/apply/history";
 import { withUser, failResponse } from "@/lib/actor";
 
-// User -> App from /apply's 需人工清单 "移除"/"移除所选": {jobIds: number[]}. Archives the parked
+// User -> App from a 待处理 card's 「跳过这个岗」 (or a batch remove): {jobIds: number[]}. Archives the paused / waiting
 // rows (reversible via /api/queue/unarchive); rows that aren't parked are reported in `skipped`.
 export const POST = withUser(async (req, { userId }) => {
   const body = await req.json();

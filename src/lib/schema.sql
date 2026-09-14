@@ -63,10 +63,12 @@ CREATE TABLE IF NOT EXISTS applications (
   answer_pack TEXT,                -- JSON: full snapshot of this application's answers (auditable)
   filled_fields TEXT,              -- JSON: field->value list reported back by the executor
   confirm_decision TEXT,           -- NULL | approved | rejected
-  needs_manual_reason TEXT,
+  needs_manual_reason TEXT,        -- set = paused (status matched): the 待处理 card's headline; NULL = pickable
   pinned INTEGER NOT NULL DEFAULT 0,  -- user-priority flag from /queue; sorts first everywhere
-  pending_questions TEXT,          -- JSON: [{key,label,hint?,options?}] the executor needs answered (status needs_info)
-  info_answers TEXT,               -- JSON: {key: value} answers the user gave in-App for this application (merged into answerPack.custom)
+  pending_questions TEXT,          -- JSON InfoQuestion[] (src/apply/queue.ts): the 待处理 card's items — kind text|file|login|action|manual,
+                                   -- while the executor waits on the form (status needs_info) or after it paused the row (matched + reason)
+  info_answers TEXT,               -- JSON: {key: value} answers the user gave in-App for this application (merged into answerPack.custom;
+                                   -- file answers are absolute paths into data/documents, rejection_note carries a rejected fill's reason)
   apply_mode TEXT,                 -- NULL (follow suggestion) | referral | direct — user override from /queue
   referral_info TEXT,              -- JSON {source, link?, code?, note?, at} once a referral is obtained
   referral_reached_at TEXT,        -- when the first referral request was actually sent (UTC)
