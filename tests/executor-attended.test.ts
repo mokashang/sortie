@@ -132,6 +132,7 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(p).toContain("run #12");
     expect(p).toContain("list_connected_browsers");
     expect(p).toContain("claim-next");
+    expect(p).toContain("--data-binary @/tmp/sortie-body.json");
     expect(buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 1, prompt: 'say "hi" $x' })).toContain('say \\"hi\\" \\$x');
   });
 
