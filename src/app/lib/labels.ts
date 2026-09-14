@@ -43,6 +43,31 @@ export const EXPERIENCE_KIND_LABEL: Record<string, string> = {
   publication: "论文",
 };
 
+// 待处理 card item kinds (src/apply/queue.ts InfoKind).
+export const INFO_KIND_LABEL: Record<string, string> = {
+  text: "补信息",
+  file: "传文件",
+  login: "登录一次",
+  action: "现场完成",
+  manual: "亲自完成",
+};
+
+// Friendly names for the standing documents in data/documents (src/lib/documents.ts); any
+// other key is shown as-is.
+export const DOCUMENT_LABELS: Record<string, string> = {
+  transcript: "成绩单(研究生)",
+  transcript_undergrad: "成绩单(本科)",
+  cover_letter: "Cover letter 模板",
+  portfolio: "作品集",
+  headshot: "证件照",
+  writing_sample: "写作样本",
+  diploma: "学位证明",
+};
+
+export function documentLabel(key: string): string {
+  return DOCUMENT_LABELS[key] ?? key;
+}
+
 export const SPONSORSHIP_LABEL: Record<string, string> = {
   yes: "提供签证",
   no: "不提供签证",

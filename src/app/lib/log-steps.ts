@@ -10,7 +10,7 @@ export interface LogStep {
 
 const RULES: [StepKind, RegExp][] = [
   ["error", /失败|错误|error|异常|验证码|限流/i],
-  ["warn", /跳过|needs_manual|需人工|归档|超时|不合格|拦下/],
+  ["warn", /跳过|needs_manual|需人工|暂停|待处理|登录墙|归档|超时|不合格|拦下/],
   ["wait", /等待|心跳|轮询|等你|排队/],
   ["ok", /已提交|成功|完成|已发出|已发送|批准/],
 ];

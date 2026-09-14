@@ -1,10 +1,15 @@
-import { DB } from "@/lib/db";
+import { DB, logEvent } from "@/lib/db";
 import { QUEUE_ORDER_SQL } from "@/apply/rank";
 import { Profile } from "@/lib/profile";
 import { buildAnswerPack, AnswerPack, AnswerPackReferral } from "@/apply/answers";
 import { EFFECTIVE_MODE_SQL, ApplyMode } from "@/apply/mode";
 import { selectResumeForJob } from "@/apply/resume-select";
 import { applyEligibility, Sponsorship, DegreeReq, RoleKind } from "@/apply/eligibility";
+import { recordExternalSubmission } from "@/apply/history";
+import { listExperiences } from "@/resume/experiences";
+import { pickHighlights } from "@/resume/highlights";
+import { muteBoard } from "@/scanner/boards";
+import { directionLabel } from "@/matcher/directions";
 
 // 队列/取数的统一资格过滤(spec 2026-09-03 §3)。以 `j` 为 jobs 别名。所有"用户会看到 / 执行器会取到"
 // 的查询都必须带上它,否则重复行或被判不合格的岗会从某个入口漏回来。
@@ -41,6 +46,7 @@ interface CandidateRow {
   title: string;
   apply_url: string | null;
   ats: string | null;
+  direction: string | null;
   referral_info: string | null;
   referral_person_name: string | null;
 }
@@ -71,8 +77,14 @@ export function parseReferral(json: string | null, personName: string | null): A
 export function takeNextApplication(
   db: DB,
   profile: Profile,
-  opts: { direction?: string; jobIds?: number[] } = {}
+  opts: { direction?: string; jobIds?: number[]; documents?: Record<string, string> } = {}
 ): ApplyTask | { done: true } {
+  // Login walls the user hasn't cleared yet (open `login` items on paused rows), by apply_url
+  // host: a job on the same host is paused with the same item instead of being handed out — the
+  // executor would only hit the same wall again (and trip its circuit breaker). 「我登好了」 on
+  // the card resolves every paused job on that host at once (resolveLogin, src/apply/info.ts).
+  const loginWalls = openLoginWalls(db);
+  const experiences = listExperiences(db);
   // Reclaim jobs stranded at 'prepared' by an executor that died mid-fill (crashed session,
   // killed process, network partition — anything that took a task and never reported back).
   // Without this they're invisible forever: 'prepared' fails the picker's 'matched' filter below,
@@ -100,7 +112,7 @@ export function takeNextApplication(
     const params: unknown[] = targeted ? [...opts.jobIds!] : opts.direction ? [opts.direction] : [];
     const row = db
       .prepare(
-        `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats, a.referral_info, p.name as referral_person_name
+        `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats, m.direction, a.referral_info, p.name as referral_person_name
          FROM applications a
          JOIN jobs j ON j.id = a.job_id
          JOIN matches m ON m.job_id = j.id
@@ -114,8 +126,19 @@ export function takeNextApplication(
     if (!row) return { done: true };
 
     if (!row.apply_url) {
-      db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ?").run("no apply url", row.job_id);
-      continue; // parked row now fails the needs_manual_reason IS NULL filter — try the next one.
+      parkWithItems(
+        db,
+        row.job_id,
+        [manualItem("no_apply_url", "这个岗位没有申请链接", "来源没给出申请页,要么你自己找到入口投,要么跳过。")],
+        "no apply url"
+      );
+      continue; // paused row now fails the needs_manual_reason IS NULL filter — try the next one.
+    }
+
+    const wall = loginWalls.get(hostOf(row.apply_url));
+    if (wall) {
+      parkWithItems(db, row.job_id, [wall], wall.label);
+      continue; // same site, same wall — it joins the existing 「登录一次」 card instead of being tried again.
     }
 
     const selection = selectResumeForJob(db, row.job_id);
@@ -124,15 +147,28 @@ export function takeNextApplication(
         selection.direction != null
           ? `no resume generated for direction '${selection.direction}'`
           : "job has no matched direction";
-      db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ?").run(reason, row.job_id);
-      continue; // parked row now fails the needs_manual_reason IS NULL filter — try the next one.
+      const item =
+        selection.direction != null
+          ? manualItem(
+              "no_resume",
+              `「${directionLabel(selection.direction)}」方向还没有生成简历`,
+              "到档案页「简历」标签生成这个方向的简历,再点「让助手再试一次」。",
+              "/profile?tab=resumes"
+            )
+          : manualItem("no_direction", "这个岗位没有匹配到方向", "先在职位页给它一个方向,或者跳过。");
+      parkWithItems(db, row.job_id, [item], reason);
+      continue; // paused row now fails the needs_manual_reason IS NULL filter — try the next one.
     }
 
     const answerPack = buildAnswerPack(
       profile,
       { company: row.company, title: row.title, apply_url: row.apply_url },
       { version_name: selection.versionName, pdf_path: selection.pdfPath },
-      parseReferral(row.referral_info, row.referral_person_name)
+      parseReferral(row.referral_info, row.referral_person_name),
+      {
+        documents: opts.documents ?? {},
+        experiences: pickHighlights(experiences, row.direction ? [row.direction] : []),
+      }
     );
     // Answers the user gave in-App for THIS job earlier (the 待补信息 flow, "仅本次" ones in
     // particular — remembered ones already live in profile.standard_answers) ride along in
@@ -172,17 +208,123 @@ export function takeNextApplication(
   }
 }
 
+// A to-do item on the 待处理 card (spec 2026-09-13-todo-list-design §1). `text` (the default) is
+// the original 待补信息 question; the other kinds are what used to be dead-end 需人工 reasons:
+//   file   — the form wants a document (transcript, portfolio); answered by uploading it once
+//   login  — a sign-in / registration wall; the user logs in once in their own Chrome
+//   action — something to do in the open tab right now (CAPTCHA, 2FA); the assistant waits
+//   manual — only the user can finish this one (video answer, repeated errors, a rejected fill)
+export type InfoKind = "text" | "file" | "login" | "action" | "manual";
+
 export interface InfoQuestion {
-  key: string; // standard_answers key the answer is stored under (e.g. "high_school")
-  label: string; // the question as the form words it
-  hint?: string; // anything that helps the user answer (e.g. "表单定义 Summer = April–July")
-  options?: string[]; // exact option texts when the form is a select
-  optional?: boolean; // the form doesn't require it (e.g. an optional essay) — the user may leave it blank to skip
+  key: string; // text: standard_answers key (e.g. "high_school"); file: document key (e.g. "transcript"); others: any id
+  label: string; // the question as the form words it, or what the user has to do
+  hint?: string; // anything that helps (e.g. "表单定义 Summer = April–July", or why the assistant stopped)
+  options?: string[]; // text: exact option texts when the form is a select
+  optional?: boolean; // text: the form doesn't require it — the user may leave it blank to skip
+  kind?: InfoKind; // default 'text'
+  multiple?: boolean; // text + options: several may be picked; the answer is the chosen options joined by MULTI_ANSWER_SEP
+  url?: string; // login: the sign-in / registration page; manual: the page to finish by hand (default: the job's apply_url)
+  host?: string; // login: apply_url host the wall belongs to — 「我登好了」 resolves every paused job on it
+  accept?: string; // file: accepted extensions, e.g. ".pdf"
+}
+
+export const MULTI_ANSWER_SEP = "; ";
+const INFO_KINDS: InfoKind[] = ["text", "file", "login", "action", "manual"];
+
+export function infoKind(q: InfoQuestion): InfoKind {
+  return q.kind ?? "text";
+}
+
+// Items the executor doesn't wait for: a login wall or something only the user can finish by
+// hand pause the application right away (status matched + reason + items) and the executor
+// moves on; everything else keeps it on the tab (needs_info) until answered or timed out.
+export function pausesImmediately(questions: InfoQuestion[]): boolean {
+  return questions.some((q) => infoKind(q) === "login" || infoKind(q) === "manual");
+}
+
+export function hostOf(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+// Executor reports are unvalidated JSON: keep only items with a usable key + label, drop unknown
+// kinds back to text, and derive a login item's host from its url when the executor left it out.
+export function normalizeQuestions(input: unknown): InfoQuestion[] {
+  if (!Array.isArray(input)) return [];
+  const out: InfoQuestion[] = [];
+  for (const raw of input as Record<string, unknown>[]) {
+    if (!raw || typeof raw.key !== "string" || !raw.key.trim() || typeof raw.label !== "string") continue;
+    const kind = INFO_KINDS.includes(raw.kind as InfoKind) ? (raw.kind as InfoKind) : "text";
+    const q: InfoQuestion = { key: raw.key.trim(), label: raw.label };
+    if (kind !== "text") q.kind = kind;
+    if (typeof raw.hint === "string" && raw.hint) q.hint = raw.hint;
+    if (Array.isArray(raw.options)) {
+      const options = raw.options.filter((o): o is string => typeof o === "string" && o.length > 0);
+      if (options.length > 0) q.options = options;
+    }
+    if (raw.optional === true) q.optional = true;
+    if (raw.multiple === true && q.options) q.multiple = true;
+    if (typeof raw.url === "string" && raw.url) q.url = raw.url;
+    if (typeof raw.accept === "string" && raw.accept) q.accept = raw.accept;
+    if (kind === "login") {
+      const host = typeof raw.host === "string" && raw.host.trim() ? raw.host.trim() : hostOf(q.url);
+      if (host) q.host = host.toLowerCase();
+    }
+    out.push(q);
+  }
+  return out;
+}
+
+export function manualItem(key: string, label: string, hint?: string, url?: string): InfoQuestion {
+  const q: InfoQuestion = { key, label, kind: "manual" };
+  if (hint) q.hint = hint;
+  if (url) q.url = url;
+  return q;
+}
+
+// Pause an application with its to-do items: status back to matched (the picker skips rows with
+// a reason), the items on pending_questions for the 待处理 card. Every parking site goes through
+// here so no row ever carries a reason without something actionable attached.
+export function parkWithItems(db: DB, jobId: number, items: InfoQuestion[], reason: string): void {
+  db.prepare(
+    "UPDATE applications SET status = 'matched', needs_manual_reason = ?, pending_questions = ? WHERE job_id = ?"
+  ).run(reason, JSON.stringify(items), jobId);
+}
+
+// host -> the login item to reuse, for every open (unresolved) login wall on a paused row.
+export function openLoginWalls(db: DB): Map<string, InfoQuestion> {
+  const rows = db
+    .prepare(
+      `SELECT pending_questions FROM applications
+       WHERE status = 'matched' AND needs_manual_reason IS NOT NULL AND pending_questions LIKE '%"login"%'`
+    )
+    .all() as { pending_questions: string }[];
+  const walls = new Map<string, InfoQuestion>();
+  for (const r of rows) {
+    let items: InfoQuestion[] = [];
+    try {
+      items = JSON.parse(r.pending_questions);
+    } catch {
+      continue;
+    }
+    for (const q of items) if (infoKind(q) === "login" && q.host && !walls.has(q.host)) walls.set(q.host, q);
+  }
+  return walls;
 }
 
 export interface ReportFillInput {
   jobId: number;
-  status: "awaiting_confirm" | "needs_manual" | "needs_info" | "error";
+  // closed = the posting is gone (404 / "no longer available"): archived, never a to-do.
+  // already_applied = the ATS already has an application on file: recorded into /history.
+  status: "awaiting_confirm" | "needs_manual" | "needs_info" | "error" | "closed" | "already_applied";
+  // closed only: the whole board is gone (the company left this ATS), not just this posting —
+  // mute the board so the scanner stops asking it.
+  boardGone?: boolean;
   // needs_info only: what the executor needs from the user before it can finish this form. The
   // App stores them, notifies the user, and the executor polls /api/apply/pending?jobId= until
   // the user has answered on /apply (status back to 'prepared', answers in infoAnswers).
@@ -229,11 +371,38 @@ export function reportFill(db: DB, input: ReportFillInput): void {
   }
 
   if (input.status === "needs_info") {
-    const questions = (input.questions ?? []).filter((q) => q && typeof q.key === "string" && q.key.trim() && typeof q.label === "string");
+    const questions = normalizeQuestions(input.questions);
     if (questions.length === 0) throw new Error("reportFill: needs_info requires at least one question with key+label");
+    if (pausesImmediately(questions)) {
+      // A login wall or something only the user's own hands can do: the executor doesn't wait
+      // on this tab, it moves on; the card re-queues the job once the user has done their part.
+      parkWithItems(db, input.jobId, questions, questions.map((q) => q.label).join(" / "));
+      return;
+    }
     db.prepare("UPDATE applications SET status = 'needs_info', pending_questions = ? WHERE job_id = ?").run(
       JSON.stringify(questions),
       input.jobId
+    );
+    return;
+  }
+
+  // The posting is gone (404, "no longer available", a board that no longer exists). Nothing for
+  // anyone to do — archive it, mark the job's page closed, and if the executor saw the whole
+  // board vanish, mute the board so the scanner stops polling it (user decision 2026-09-13:
+  // dead links never surface as a to-do).
+  if (input.status === "closed") {
+    closeApplication(db, input.jobId, input.reason ?? "closed", !!input.boardGone);
+    return;
+  }
+
+  // The ATS says this candidate already has an application on file (made outside Sortie, or
+  // before it existed). Record it as a submission dated today with a note so /history can
+  // track it — not a failure and not a to-do.
+  if (input.status === "already_applied") {
+    recordExternalSubmission(
+      db,
+      input.jobId,
+      `助手打开申请页时发现此前已投过(${input.reason?.trim() ? input.reason.trim() : "already applied"}),提交日期未知`
     );
     return;
   }
@@ -281,18 +450,56 @@ export function reportFill(db: DB, input: ReportFillInput): void {
     }
   }
 
-  // needs_manual | error: both park the application back at 'matched' with a reason recorded;
-  // 'error' is distinguished only by an "error: " prefix so the confirmation UI/logs can tell
-  // "executor gave up cleanly" apart from "something broke".
-  const reason = input.status === "error" ? `error: ${input.reason ?? ""}` : input.reason ?? "";
   if (input.status === "needs_manual" && input.archive) {
-    archiveWithDuplicates(db, input.jobId, reason);
+    archiveWithDuplicates(db, input.jobId, input.reason ?? "");
     return;
   }
-  db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'matched' WHERE job_id = ?").run(
-    reason,
-    input.jobId
-  );
+
+  // error: something broke (tools failing repeatedly, a crashed tab). The reason keeps its
+  // "error: " prefix for logs; the user gets a card — let the assistant try again / I'll finish
+  // it myself / give up — rather than a silent park.
+  if (input.status === "error") {
+    parkWithItems(
+      db,
+      input.jobId,
+      [manualItem("error", "助手出错,没填成", input.reason?.trim() ? input.reason.trim() : undefined)],
+      `error: ${input.reason ?? ""}`
+    );
+    return;
+  }
+
+  // needs_manual without a disqualifying live-page read: the catch-all pause. Items already on
+  // the row survive (the "info request timed out" case — the user must still be able to answer
+  // the questions the executor asked); otherwise the reason becomes a manual item so the row
+  // shows up as an actionable card, never as a bare reason.
+  const reason = input.reason ?? "";
+  const existing = db.prepare("SELECT pending_questions FROM applications WHERE job_id = ?").get(input.jobId) as
+    | { pending_questions: string | null }
+    | undefined;
+  if (existing?.pending_questions) {
+    db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'matched' WHERE job_id = ?").run(reason, input.jobId);
+    return;
+  }
+  parkWithItems(db, input.jobId, [manualItem("manual", "助手没能完成这份申请", reason || undefined)], reason);
+}
+
+// The executor found the posting gone. Archive the application with the reason, mark the job's
+// page closed so the queue and jd_review leave it alone, and optionally mute its board.
+export function closeApplication(db: DB, jobId: number, reason: string, boardGone = false): void {
+  const job = db.prepare("SELECT board_key FROM jobs WHERE id = ?").get(jobId) as { board_key: string | null } | undefined;
+  if (!job) throw new Error(`closeApplication: no job ${jobId}`);
+  db.transaction(() => {
+    db.prepare(
+      "UPDATE applications SET status = 'archived', needs_manual_reason = ?, pending_questions = NULL, confirm_decision = NULL WHERE job_id = ?"
+    ).run(`closed: ${reason}`, jobId);
+    db.prepare("UPDATE jobs SET jd_status = 'closed' WHERE id = ?").run(jobId);
+    if (boardGone && job.board_key) muteBoard(db, job.board_key, `executor: board gone (${reason.slice(0, 120)})`);
+  })();
+  logEvent(db, "application_closed", {
+    entity: "application",
+    entityId: jobId,
+    payload: { reason, boardGone, boardKey: job.board_key ?? null },
+  });
 }
 
 // reportFill's archive path (see ReportFillInput.archive). The duplicate sweep is scoped to
@@ -335,12 +542,24 @@ export function decide(db: DB, jobId: number, decision: "approve" | "reject", re
   }
 
   if (decision === "reject") {
-    // Parks the application in the same needs_manual_reason mechanism as an executor's own
-    // needs_manual report — the rejected job lands in /apply's 需人工清单 (needs-manual list),
-    // it is NOT silently re-offered to the executor on the next takeNextApplication call.
+    // The user turned the fill down. Pause it as a 待处理 card (「你退回了这份填写」 + the reason)
+    // rather than a bare reason: 「让助手再试一次」 re-queues it, and the reason rides along as
+    // answerPack.custom.rejection_note so the next fill can fix what was wrong. It is NOT
+    // silently re-offered to the executor on the next takeNextApplication call.
+    const why = reason?.trim() ? reason.trim() : "user rejected fill";
+    const prior = db.prepare("SELECT info_answers FROM applications WHERE job_id = ?").get(jobId) as
+      | { info_answers: string | null }
+      | undefined;
+    let answers: Record<string, string> = {};
+    try {
+      answers = prior?.info_answers ? JSON.parse(prior.info_answers) : {};
+    } catch {
+      answers = {};
+    }
+    answers.rejection_note = why;
     db.prepare(
-      "UPDATE applications SET status = 'matched', confirm_decision = 'rejected', needs_manual_reason = ? WHERE job_id = ?"
-    ).run(reason ?? "user rejected fill", jobId);
+      "UPDATE applications SET status = 'matched', confirm_decision = 'rejected', needs_manual_reason = ?, pending_questions = ?, info_answers = ? WHERE job_id = ?"
+    ).run(why, JSON.stringify([manualItem("rejected", "你退回了这份填写", why)]), JSON.stringify(answers), jobId);
     return;
   }
 
@@ -521,7 +740,9 @@ export function unpark(db: DB, jobId: number): void {
   if (row.status !== "matched") {
     throw new Error(`unpark: cannot unpark from status '${row.status}' (must be 'matched')`);
   }
-  db.prepare("UPDATE applications SET needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
+  // The to-do items go too: the next take starts clean and the executor re-derives whatever it
+  // still needs under the current protocol.
+  db.prepare("UPDATE applications SET needs_manual_reason = NULL, pending_questions = NULL WHERE job_id = ?").run(jobId);
 }
 
 // Sentinel used wherever a NULL matches.direction needs a display/routing string — the
@@ -653,7 +874,7 @@ export function unarchive(db: DB, jobId: number): void {
   if (row.status !== "archived") {
     throw new Error(`unarchive: cannot unarchive from status '${row.status}' (must be 'archived')`);
   }
-  db.prepare("UPDATE applications SET status = 'matched', needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
+  db.prepare("UPDATE applications SET status = 'matched', needs_manual_reason = NULL, pending_questions = NULL WHERE job_id = ?").run(jobId);
 }
 
 // User -> App from /queue's ★ "置顶/优先" toggle. Not restricted to any particular status — a

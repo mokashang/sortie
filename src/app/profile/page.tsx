@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { listExperiences } from "@/resume/experiences";
 import { loadProfile } from "@/lib/profile";
+import { listDocuments } from "@/lib/documents";
 import { PageHeader } from "@/app/components/ui";
 import { ProfileTabs, type ProfileTab } from "./profile-tabs";
 import type { ResumeRow } from "./profile-types";
@@ -8,10 +9,11 @@ import type { ResumeRow } from "./profile-types";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "档案" };
 
-const TABS: ProfileTab[] = ["experiences", "resumes", "answers"];
+const TABS: ProfileTab[] = ["experiences", "resumes", "answers", "documents"];
 
 // 档案: 经历 (what the resumes are built from) · 简历 (generated versions) · 标准答案 (what the
-// assistant fills into application forms beyond contact/education/work-auth/EEO).
+// assistant fills into application forms beyond contact/education/work-auth/EEO) · 文件
+// (transcripts and other attachments the assistant uploads on request).
 export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const sp = await searchParams;
   const tab: ProfileTab = TABS.includes(sp.tab as ProfileTab) ? (sp.tab as ProfileTab) : "experiences";
@@ -39,10 +41,11 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   } catch {
     answers = {};
   }
+  const documents = listDocuments();
   return (
     <>
       <PageHeader title="档案" />
-      <ProfileTabs tab={tab} experiences={experiences} resumes={resumes} answers={answers} />
+      <ProfileTabs tab={tab} experiences={experiences} resumes={resumes} answers={answers} documents={documents} />
     </>
   );
 }

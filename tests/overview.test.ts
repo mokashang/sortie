@@ -33,8 +33,7 @@ describe("overview", () => {
     expect(o.counts).toMatchObject({
       awaitingConfirm: 2,
       approvedWaiting: 1,
-      needsInfo: 0,
-      manual: 1,
+      needsInfo: 1, // the paused (login wall) row is a 待处理 card now, not a separate 需人工 count
       networkDrafts: 1,
       networkPendingSend: 0,
       queueMatched: 2,
@@ -47,8 +46,8 @@ describe("overview", () => {
     expect(o.assistant).toBeNull();
     expect(o.liveKinds).toEqual([]);
     expect(o.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // one unapproved confirmation is the only thing waiting on the user
-    expect(attentionTotal(o.counts)).toBe(1);
+    // one unapproved confirmation + one paused card are waiting on the user
+    expect(attentionTotal(o.counts)).toBe(2);
   });
 
   it("surfaces the in-flight task before a finished one", () => {

@@ -16,6 +16,14 @@ export interface AnswerPack {
   eeo: { gender: string; race: string; veteran: string; disability: string };
   resume: { version_name: string; pdf_path: string };
   custom: Record<string, string>;
+  // Standing documents in data/documents (src/lib/documents.ts): key -> absolute path. When a
+  // form demands a transcript / portfolio / etc. the executor uploads documents[key]; a missing
+  // key is a `file` item on the 待处理 card, never a reason to give up.
+  documents: Record<string, string>;
+  // The candidate's most relevant real accomplishments for this job's direction — the ONLY
+  // material for a cover letter or "why us" essay the executor drafts into the form (the user
+  // reviews it on the confirmation card). Never invent beyond these.
+  experiences: AnswerPackExperience[];
   job: { company: string; title: string; apply_url: string };
   // Present only when the user recorded a referral for this job (referralDecide 'won'). When
   // `link` is non-empty the executor opens it INSTEAD of job.apply_url; "Referred by"-type
@@ -29,6 +37,18 @@ export interface AnswerPackReferral {
   link: string;         // referral URL — when non-empty the executor opens THIS instead of job.apply_url
   code: string;         // referral code, if the ATS asks for one
   note: string;
+}
+
+export interface AnswerPackExperience {
+  kind: string; // work | project
+  title: string;
+  organization: string | null;
+  bullet: string;
+}
+
+export interface AnswerPackExtras {
+  documents?: Record<string, string>;
+  experiences?: AnswerPackExperience[];
 }
 
 export interface AnswerPackJob {
@@ -80,7 +100,8 @@ export function buildAnswerPack(
   profile: Profile,
   job: AnswerPackJob,
   resume: AnswerPackResume,
-  referral?: AnswerPackReferral
+  referral?: AnswerPackReferral,
+  extras: AnswerPackExtras = {}
 ): AnswerPack {
   const { first, last } = splitName(profile.name);
 
@@ -110,6 +131,8 @@ export function buildAnswerPack(
     eeo: { ...profile.eeo },
     resume: { version_name: resume.version_name, pdf_path: resume.pdf_path ?? "" },
     custom: { ...profile.standard_answers },
+    documents: { ...(extras.documents ?? {}) },
+    experiences: [...(extras.experiences ?? [])],
     job: { company: job.company, title: job.title, apply_url: job.apply_url ?? "" },
     ...(referral ? { referral } : {}),
   };

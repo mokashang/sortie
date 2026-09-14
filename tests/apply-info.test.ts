@@ -151,6 +151,6 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
     expect(n.title).toContain("Palantir");
     expect(n.title).toContain("2 项");
     expect(n.body).toContain("High School Name");
-    expect(n.body).toContain("待补信息");
+    expect(n.body).toContain("待处理");
   });
 });

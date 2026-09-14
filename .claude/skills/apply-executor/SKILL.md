@@ -18,8 +18,8 @@ with `claude-in-chrome` attached to the user's everyday, already-logged-in Chrom
 `src/executor/prompts.ts`) that runs unattended via `claude -p` against a completely separate,
 dedicated Playwright-driven Chrome profile (`data/browser-profile`) instead of the user's own
 browser — see the README's 投递执行 section. The two never share a browser session; if that
-dedicated profile isn't logged into a site yet, the headless run reports `needs_manual` and the
-user logs in once via the App's [打开浏览器档案(登录一次)] button rather than this skill's Chrome.
+dedicated profile isn't logged into a site yet, the headless run reports a `login` item and the
+user logs in once via the App's 后台浏览器 button rather than this skill's Chrome.
 
 When the App's 值守会话 channel is selected (the default), it enqueues a run instead of spawning
 anything: poll `GET /api/executor/claim-next?channel=user_chrome` to claim it, work the loop below,
@@ -28,10 +28,10 @@ call `POST /api/executor/log` as you go and `POST /api/executor/finish` when don
 
 **Never ask the user for missing answers in the Claude session** (AskUserQuestion or chat) — the
 user wants every interaction in the App. A required question with no answer-pack value is a
-`needs_info` report (`{jobId, status:'needs_info', questions:[{key,label,hint?,options?}]}`): the
-App notifies the user, they answer on /apply's 待补信息 card, and you keep the tab open and poll
-`GET /api/apply/pending?jobId=` until status is back to `prepared` with `infoAnswers`, then
-continue the fill. See CLAUDE.md §3.4 for the timeout rule.
+`needs_info` report (`{jobId, status:'needs_info', questions:[{key,label,hint?,kind?,...}]}`, kinds
+in §5): the App notifies the user, they act on /apply's 待处理 card, and for text / file / action
+items you keep the tab open and poll `GET /api/apply/pending?jobId=` until status is back to
+`prepared` with `infoAnswers`, then continue the fill. See CLAUDE.md §3.4 for the timeout rule.
 
 **The authoritative, up-to-date attended-session protocol is CLAUDE.md §3** (count = number of
 fills reported awaiting_confirm, not attempts; `archive:true` for hard ineligibility found on the
@@ -138,12 +138,20 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
      values the actual filled text. Include an `unanswered` note as one of the entries (e.g.
      `"Unanswered questions": "Why do you want to work here? (essay, not in answer pack)"`) if
      anything was left blank on purpose.
-   - Cannot proceed: same endpoint with
-     `{ "jobId": task.jobId, "status": "needs_manual", "reason": "..." }` (see §5 triggers — this
-     includes "already applied" pages and dead/expired apply links, see §5), close the tab, and
-     continue the loop with the next task. Add `"archive": true` when the live page proves the job
-     is a hard no (explicit no-sponsorship, citizens/clearance-only, PhD-only): the App archives it
-     and every still-queued duplicate (same company + title) instead of parking it for a human.
+   - Stopped on something only the user can move (a missing answer or file, a login wall, a
+     CAPTCHA, a video question): `{ "jobId": task.jobId, "status": "needs_info", "questions": [...] }`
+     with typed items — see §5 for exactly which kind to use and whether you keep the tab open.
+     There is no "needs a human" bucket any more: every stop becomes a 待处理 card with a button
+     that hands the job back to you.
+   - Hard no on the live page (explicit no-sponsorship, citizens/clearance-only, PhD-only):
+     `{ "jobId", "status": "needs_manual", "reason", "eligibility": {...} }` (§3 in CLAUDE.md, or
+     `"archive": true`): the App archives it and every still-queued duplicate (same company +
+     title). Close the tab, next task.
+   - Dead / expired link (404, "no longer available", a board that no longer exists):
+     `{ "jobId", "status": "closed", "reason", "boardGone": true|false }` — the App archives it
+     and mutes the board when `boardGone`. Never a card, never an error. Close the tab, next task.
+   - "You have already applied" page: `{ "jobId", "status": "already_applied", "reason" }` — the
+     App records it in /history as submitted (date unknown). Close the tab, next task.
    - Something broke unexpectedly (page crashed, a tool errored repeatedly, the App itself returned
      an unexpected error): report `{ "jobId": task.jobId, "status": "error", "reason": "..." }`
      instead, close the tab, and count it toward the error circuit breaker in §7. Don't use
@@ -158,9 +166,10 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    - `decision === "approved"`: proceed to submit — see §4.
    - `decision === "rejected"`: the user rejected this fill in the App. Close the tab (do not
      submit) and continue the loop with the next task.
-   - `decision === null` after 30 minutes: treat as a timeout. Report
-     `{ "jobId": task.jobId, "status": "needs_manual", "reason": "confirmation timed out after 30 minutes" }`,
-     close the tab, and move on — don't leave the loop stuck waiting on one job forever.
+   - `decision === null` after 30 minutes: the user just isn't at the computer. Do NOT report
+     anything — the application stays on the 待确认 card with everything you filled; leave the tab
+     open and move on. When the user approves later the App queues a resume run that submits it
+     (CLAUDE.md §3.7 b).
 
 6. **Throttle, then repeat from step 1.** Wait 5-10 seconds before taking the next task (see §7).
 
@@ -273,11 +282,13 @@ No reliable field map exists for these. Use a generic, conservative strategy:
 3. Resume upload: same as Tier A, `file_upload` with `answerPack.resume.pdf_path`, if a resume
    upload control exists on the current screen.
 4. If the flow requires creating an account (a new username/password) before you can even see the
-   application form, or gates further pages behind an account you don't have — stop, that's a
-   `needs_manual` trigger (§5), don't invent credentials.
-5. Never invent a value for a screening question just to get past required-field validation. If a
-   required field has no safe mapping, that's exactly what `needs_manual` is for — better to park
-   the job than to submit fabricated data.
+   application form, or gates further pages behind an account you don't have — stop: never invent
+   credentials, never type a password. Report a `login` item (§5): the user signs in once in this
+   same Chrome and the App hands the job back to you.
+5. Never invent a value for a screening question just to get past required-field validation. A
+   required field with no safe mapping is a `text` item (§5) — better to ask than to submit
+   fabricated data. A required attachment (transcript, portfolio) is `answerPack.documents[key]`
+   if the user already uploaded one, otherwise a `file` item.
 
 ---
 
@@ -320,33 +331,36 @@ The App archives the job **and every duplicate in its cluster**; it does not go 
 
 ---
 
-## 5. `needs_manual` triggers
+## 5. When you have to stop: which item to report
 
-Report `needs_manual` (never try to power through these) whenever you hit:
+Never power through any of these. Fill everything you safely can first, then report
+`{ "jobId", "status": "needs_info", "questions": [ ...items ] }`. Each item is
+`{ key, label, hint?, kind?, ... }` (CLAUDE.md §3.4 is authoritative):
 
-- A login wall / account-creation requirement you can't satisfy with existing credentials.
-- A CAPTCHA or other bot-detection challenge.
-- A video-response question ("record a 60-second video answering...").
-- A multi-page account-required flow (e.g. Workday asking you to create a candidate profile
-  before the actual application form is reachable).
-- Any field demanding information that is not in the answer pack and cannot be safely inferred
-  (visa specifics beyond `work_auth`, salary expectations, start date logistics, essay questions,
-  etc.).
-- A cover letter requirement — this version of the skill does not generate cover letters.
-- **"You've already applied" / "You have already submitted an application for this job" pages** —
-  report `needs_manual` with reason `"already applied"`. This is not a failure of the fill
-  attempt, so it must not be reported as `status: "error"` — it doesn't belong in the error
-  circuit breaker in §7, and mislabeling it there can trip that breaker and stop the session for
-  a completely benign reason.
-- **A dead or expired apply link** — the URL 404s, redirects to a generic "this posting is no
-  longer available" page, or otherwise never renders an application form. Report `needs_manual`
-  with reason `"dead link"`. Same rule: this is a data problem with the job listing, not an
-  executor error — use `needs_manual`, not `error`.
-- Anything else where filling it out would require guessing rather than reading from the answer
-  pack.
+| Situation | Item | Then |
+| --- | --- | --- |
+| A required question the answer pack can't answer (high school, GPA, sponsorship type, tech stacks used, a yes/no the user must decide) | `text` (default): `{ key: <standard_answers key>, label, hint?, options?: [exact option texts], multiple?: true, optional?: true }` | keep the tab open, poll |
+| A required attachment (transcript, portfolio, headshot) not in `answerPack.documents` | `file`: `{ kind: "file", key: "transcript", label, accept: ".pdf" }` — the answer you get back is an absolute path for `file_upload` | keep the tab open, poll |
+| A CAPTCHA / bot check / 2FA prompt the user can clear in the open tab | `action`: `{ kind: "action", key: "captcha", label, hint }` | keep the tab open, poll |
+| A login wall or "create a candidate account" (Workday, SuccessFactors, iCIMS, Apple Jobs...) — you never type passwords or create accounts | `login`: `{ kind: "login", host: <hostname of task.applyUrl>, url: <sign-in / registration page>, label: "在求职 Chrome 里登录 …", hint }` | close the tab, next task (the App pauses every job on that host; 「我登好了」 re-queues them) |
+| Only a human can do it: a video answer, an assessment that must be taken live, a form that never renders in this browser | `manual`: `{ kind: "manual", key, label, hint, url? }` | close the tab, next task |
 
-Always include a short, specific `reason` string — it's what the user sees in the App's 需人工清单
-(needs-manual list), so "CAPTCHA on submit page" is far more useful than "blocked".
+Polling (text / file / action): every 5 s `GET /api/apply/pending?jobId=` until `status` is
+`prepared` — `infoAnswers` holds the answers, continue the fill; `archived` / `matched` means the
+user skipped it or handed it back — close the tab, next task. Log a heartbeat line at least every
+5 minutes while waiting. After 30 minutes with no answer report
+`{ "status": "needs_manual", "reason": "info request timed out after 30 minutes" }` (the items stay
+on the card; the App re-queues the job when the user answers) and move on.
+
+Not items at all (the App handles these without a card): a dead link is `status: "closed"`, an
+"already applied" page is `status: "already_applied"` (§2 step 4). Free-text essays and cover
+letters are not missing answers either: draft them from `answerPack.experiences` and the profile
+facts only, put the text in `filledFields`, and the user reviews it on the confirmation card. If
+`answerPack.custom.rejection_note` is present the user rejected your previous fill of this job
+for that reason — it's an instruction to you, not a form answer.
+
+Always write a short, specific `label`/`hint` — it's what the user reads on the card, so
+"在打开的标签页里完成人机验证(提交页)" beats "blocked".
 
 ---
 
@@ -373,9 +387,9 @@ Always include a short, specific `reason` string — it's what the user sees in 
 - Wait **5-10 seconds** between finishing one application (report sent, tab closed) and starting
   the next `takeNextApplication` call. This isn't optional pacing dressing — it keeps the session
   from looking like a bot hammering ATS endpoints back to back.
-- **3 consecutive `needs_manual` reports** or **2 consecutive `error` reports** → stop the loop
-  immediately, do not take another task, and report a summary to the user: what got submitted so
-  far this session, and what the last few needs_manual/error reasons were. Let the user decide
-  whether to keep going, fix something (e.g. missing resume direction), or investigate.
-- A single `needs_manual` or `error` in isolation does not trip the breaker — only a run of
-  consecutive ones. A successful `awaiting_confirm` report resets the consecutive counters.
+- **3 consecutive pauses** (login / manual items, info-request timeouts, hard-no archives) or
+  **2 consecutive `error` reports** → stop the loop immediately, do not take another task, and
+  report a summary to the user: what got submitted so far this session, and what the last few
+  stops were. `closed` / `already_applied` never count.
+- A single pause or `error` in isolation does not trip the breaker — only a run of consecutive
+  ones. A successful `awaiting_confirm` report resets the consecutive counters.
