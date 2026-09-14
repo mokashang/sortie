@@ -69,6 +69,7 @@ Mengjia Shang(USC M.S. ECE 2027/05,F-1)的 2026 秋招求职作战系统。本�
 ## 5. 数据与路径
 - 信息源种子 `config/boards.seed.json`(80 行:28 家原 watchlist + NVIDIA/Jane Street/Waymo + 方向补缺 40 家 + 6 份清单 + 字节两门户 + Amazon + LinkedIn 游客 + chrome:* 三站);`config/watchlist.seed.json` 已不再被扫描读取(companies 表保留但不驱动轮询)。
 - 个人数据(gitignored):`profile/profile.yaml`(含 eeo、standard_answers:城市 LA、Q2 2027 入职、地点偏好、工程方向偏好、offer 截止日答案、relocation、intern_important_factors;可在档案页「标准答案」标签里改)、`data/`(库、简历 PDF、执行器日志、浏览器档案)。LinkedIn 正确链接 `www.linkedin.com/in/mengjia-shang-b5123029a`。
+- **简历文件路径(2026-09-13)**:`resumes.pdf_path/tex_path` 新生成的行存相对 data 目录的路径(`resumes/<version>.pdf`);2026-09-02 在 Mac 编译的 12 行存的仍是 Mac 绝对路径,**不用改库**——所有读取处(取件答案包 `selectResumeForJob`、`GET /api/apply/task` 里的旧答案包、简历列表 / PDF 下载路由)都经 `src/lib/paths.ts` 的 `resolveResumePath` 落到当前 `DATA_DIR/resumes/<basename>`(存的绝对路径若在本机存在则原样用)。`dataDir()` 也在这个文件里,是 DATA_DIR 规则的唯一出处。
 - 用户 Chrome 档案(**Windows,2026-09-11 起**):Default=shangmengjiajiajia(Meng jia)、Profile 3=usc.edu、**Profile 4=求职用**(Google 账号 mjtheevil,Claude in Chrome 扩展装在这里,登录任务 `start-chrome.cmd` 打开的就是它);值守会话只在 Windows 上接单。Mac 上历史档案:Default=shangmengjiajiajia、Profile 1=USC、Profile 2=求职用。用户 Chrome 装有 Simplify 扩展(不用)。
 - 原始简历素材:`~/Documents/job/`、`~/Documents/resume/`(已导入 Profile,不再需要)。
 

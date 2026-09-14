@@ -4,6 +4,7 @@ import { Profile } from "@/lib/profile";
 import { buildAnswerPack, AnswerPack, AnswerPackReferral } from "@/apply/answers";
 import { EFFECTIVE_MODE_SQL, ApplyMode } from "@/apply/mode";
 import { selectResumeForJob } from "@/apply/resume-select";
+import { resolveResumePath } from "@/lib/paths";
 import { applyEligibility, Sponsorship, DegreeReq, RoleKind } from "@/apply/eligibility";
 
 // 队列/取数的统一资格过滤(spec 2026-09-03 §3)。以 `j` 为 jobs 别名。所有"用户会看到 / 执行器会取到"
@@ -476,6 +477,10 @@ export function getApplyTask(db: DB, jobId: number): ApplyTask | { error: string
   } catch {
     return { error: `getApplyTask: job ${jobId} has a corrupt stored answer_pack` };
   }
+  // The stored pack is a snapshot from when the job was prepared, possibly on another machine (the
+  // Mac, before 2026-09-11): re-resolve the resume path against the current data dir exactly as a
+  // fresh takeNextApplication would.
+  if (answerPack && answerPack.resume) answerPack.resume.pdf_path = resolveResumePath(answerPack.resume.pdf_path);
 
   return {
     jobId,
