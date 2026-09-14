@@ -84,7 +84,8 @@ Register-SortieTask "Sortie Backup" `
 
 # 4. Caddy (phase 2, custom domain) - only with -WithCaddy. This registers the task and the firewall rules;
 #    ops\windows\caddy-switch.ps1 does the hand-over of port 443 (tailscale serve off, start, verify, roll back).
-#    Re-registering stops a running Caddy: start the task again afterwards (caddy-switch.ps1 does).
+#    Re-registering does not end a Caddy that is already running under the old definition (it keeps port
+#    443 without a task); caddy-switch.ps1 stops leftovers and starts the task again afterwards.
 if ($WithCaddy) {
   if (-not (Test-Path $CaddyExe)) { throw "Caddy not found at $CaddyExe (download a build with the cloudflare DNS module - README section 8)" }
   $mods = @(& $CaddyExe list-modules)

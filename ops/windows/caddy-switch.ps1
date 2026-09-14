@@ -136,10 +136,25 @@ if ($null -ne $p.ExitCode -and $p.ExitCode -ne 0) { throw "setup.ps1 -WithCaddy 
 if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) { throw "task '$TaskName' is not registered after setup.ps1 (UAC declined?); nothing was switched" }
 
 # ---- 3. hand 443 over ----
-Write-Host "==> tailscale serve off"
-& tailscale serve off
-if ($LASTEXITCODE -ne 0) { throw "tailscale serve off failed; nothing was switched" }
-Start-Sleep -Seconds 2
+# On a re-run (task refreshed after a setup.ps1 change) Serve is already off and `tailscale serve off`
+# fails with "handler does not exist" - and setup.ps1 has just stopped the running Caddy by
+# re-registering the task, so from here on the task must be started no matter what (seen 2026-09-14).
+if (@(& tailscale serve status 2>&1) -match "No serve config") {
+  Write-Host "==> tailscale serve is already off"
+} else {
+  Write-Host "==> tailscale serve off"
+  & tailscale serve off
+  if ($LASTEXITCODE -ne 0) { throw "tailscale serve off failed; nothing was switched" }
+  Start-Sleep -Seconds 2
+}
+# Re-registering the task does NOT end a Caddy that was already running under the old definition: it
+# lives on without a task and keeps port 443, so the fresh start would fail to bind (seen 2026-09-14).
+$leftover = @(Get-Process -Name caddy -ErrorAction SilentlyContinue)
+if ($leftover.Count -gt 0) {
+  Write-Host "==> stopping $($leftover.Count) caddy.exe left over from the previous task definition"
+  $leftover | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+}
 
 # ---- 4. start Caddy and wait for the names; any error from here on rolls back to Tailscale Serve ----
 $okDomain = $false; $okTs = $false
