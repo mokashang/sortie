@@ -10,7 +10,7 @@ export const metadata = { title: "人脉" };
 export default function NetworkPage() {
   return (
     <>
-      <PageHeader title="人脉" subtitle="联系人和探索性的请教消息。助手只发送你批准过的原文;找内推在投递页处理。" />
+      <PageHeader title="人脉" subtitle="联系人与请教消息;找内推在投递页。" />
       <NetworkAssistant />
       <NetworkClient />
     </>

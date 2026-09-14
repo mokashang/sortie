@@ -12,7 +12,7 @@ export default function HistoryPage() {
   const rows = applicationHistory(getDb());
   return (
     <>
-      <PageHeader title="历史" subtitle={`已提交 ${rows.length} 份。状态由你手动更新,每次变更都会留一条记录。`} />
+      <PageHeader title="历史" kicker={`已提交 ${rows.length} 份`} />
       <HistoryClient rows={rows} />
     </>
   );

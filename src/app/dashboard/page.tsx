@@ -44,7 +44,7 @@ export default function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="统计" subtitle="申请与人脉的漏斗、分方向进展、内推与海投的对比。" />
+      <PageHeader title="统计" />
 
       <StatStrip>
         <Stat label="已投递" value={f.submitted.toLocaleString()} sub={`${wk.thisWeek.submittedApplications} 份在最近 7 天`} />

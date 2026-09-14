@@ -115,7 +115,7 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
         }
       }}
     >
-      <div className={cx("job-score", (row.score ?? 0) >= 85 && "is-top", row.score == null && "is-none")} title="匹配分">
+      <div className={cx("job-score", (row.score ?? 0) >= 90 && "is-top", row.score == null && "is-none")} title="匹配分">
         {row.score ?? "—"}
       </div>
       <div className="job-main">

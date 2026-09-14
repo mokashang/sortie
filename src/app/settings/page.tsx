@@ -19,7 +19,7 @@ export default function SettingsPage() {
   }
   return (
     <>
-      <PageHeader title="设置" subtitle="助手怎么操作、界面外观、通知与信息源。" />
+      <PageHeader title="设置" />
       <SettingsClient ntfyConfigured={Boolean(process.env.NTFY_TOPIC)} lastTick={lastTick} />
     </>
   );

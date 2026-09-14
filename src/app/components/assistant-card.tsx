@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ListChecks, Square } from "lucide-react";
+import { ListChecks, Square } from "lucide-react";
+import { LogoMark } from "./shell/logo";
 import type { RunStatusRow } from "@/executor/runner";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
 import { RUN_STATUS_LABEL, RUN_STATUS_TONE, RUN_KIND_LABEL, CHANNEL_LABEL, labelOf } from "@/app/lib/labels";
@@ -84,7 +85,7 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
         <div className="assistant-head">
           <div className="assistant-name">
             <span className={cx("dot", run?.status === "running" && "is-running", run?.status === "queued" && "is-queued")} aria-hidden />
-            <Bot size={16} aria-hidden />
+            <LogoMark size={16} />
             <span>助手</span>
             {statusChip}
             {run ? (
@@ -134,9 +135,11 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
           <div className="assistant-body muted small">
             {run ? (
               <>
-                上次:{labelOf(RUN_KIND_LABEL, run.kind, run.kind)} · {labelOf(RUN_STATUS_LABEL, run.status, run.status)} ·{" "}
-                <RelativeTime value={run.endedAt ?? run.startedAt} />
-                {run.summary ? <span className="assistant-summary"> · {run.summary}</span> : null}
+                <div>
+                  上次:{labelOf(RUN_KIND_LABEL, run.kind, run.kind)} · {labelOf(RUN_STATUS_LABEL, run.status, run.status)} ·{" "}
+                  <RelativeTime value={run.endedAt ?? run.startedAt} />
+                </div>
+                {run.summary ? <RunSummary text={run.summary} /> : null}
               </>
             ) : (
               "还没有执行过任务。"
@@ -199,6 +202,22 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
         confirmLabel="停止"
       />
     </>
+  );
+}
+
+// A run summary can be a paragraph (jd_review lists every job it read); show two lines, expand on demand.
+function RunSummary({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 140;
+  return (
+    <div>
+      <div className={cx("assistant-summary", long && !open && "is-clamped")}>{text}</div>
+      {long ? (
+        <button type="button" className="link-btn" onClick={() => setOpen((o) => !o)}>
+          {open ? "收起" : "展开全文"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -276,9 +295,9 @@ export function AssistantPill() {
   const { data } = useOverview();
   const run = data?.assistant ?? null;
   const live = !!run && isLive(run.status);
-  const text = live && run ? `助手 · ${labelOf(RUN_STATUS_LABEL, run.status, run.status)} · ${labelOf(RUN_KIND_LABEL, run.kind, run.kind)}` : "助手空闲";
+  const text = live && run ? `助手 · ${labelOf(RUN_KIND_LABEL, run.kind, run.kind)} · ${labelOf(RUN_STATUS_LABEL, run.status, run.status)}` : "助手空闲";
   return (
-    <Link href="/apply" className="assistant-pill" title={text}>
+    <Link href="/apply" className={cx("assistant-pill", live && "is-live")} title={text}>
       <span className={cx("dot", run?.status === "running" && "is-running", run?.status === "queued" && "is-queued")} aria-hidden />
       <span className="truncate">{text}</span>
     </Link>

@@ -1,7 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { History } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
 import { POST_SUBMIT_STAGES, STAGE_LABELS, type HistoryRow, type PostSubmitStage } from "@/apply/stages";
 import { postJson, errorMessage } from "@/app/lib/api";
@@ -50,6 +49,9 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
     return m;
   }, [visible]);
 
+  // The stage ledger only earns its place once something has moved past 已提交.
+  const stageTiles = POST_SUBMIT_STAGES.filter((s) => (stageCounts.get(s) ?? 0) > 0 || s === "submitted");
+
   const days = useMemo(() => {
     const groups: { day: string; rows: HistoryRow[] }[] = [];
     for (const r of visible) {
@@ -78,7 +80,7 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
   if (rows.length === 0) {
     return (
       <EmptyState
-        icon={<History size={26} />}
+        art="ledger"
         title="还没有投出去的申请"
         description="在投递页确认提交后,申请会记到这里,之后的 OA、面试、Offer 也在这里更新。"
         action={<LinkButton href="/apply">去投递</LinkButton>}
@@ -88,11 +90,13 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
 
   return (
     <div>
-      <StatStrip compact>
-        {POST_SUBMIT_STAGES.filter((s) => (stageCounts.get(s) ?? 0) > 0 || s === "submitted").map((s) => (
-          <Stat key={s} label={STAGE_LABELS[s]} value={stageCounts.get(s) ?? 0} tone={stageTone(s) === "warn" ? "warn" : stageTone(s) === "good" ? "good" : undefined} />
-        ))}
-      </StatStrip>
+      {stageTiles.length > 1 ? (
+        <StatStrip compact>
+          {stageTiles.map((s) => (
+            <Stat key={s} label={STAGE_LABELS[s]} value={stageCounts.get(s) ?? 0} tone={stageTone(s) === "warn" ? "warn" : stageTone(s) === "good" ? "good" : undefined} />
+          ))}
+        </StatStrip>
+      ) : null}
 
       <HistorySankey rows={visible} />
 
