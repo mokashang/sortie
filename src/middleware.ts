@@ -15,6 +15,16 @@ function isPublicPage(pathname: string): boolean {
   return PUBLIC_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+// The origin the browser actually used. `req.url` in production middleware carries the
+// hostname the server was started with (`next start -H 127.0.0.1` reports localhost:3000), so a
+// redirect built from it sends a visitor on https://usesortie.com to https://localhost:3000 —
+// seen 2026-09-14 right after the Google callback. Caddy forwards the real host and scheme.
+function requestOrigin(req: NextRequest): string {
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? req.nextUrl.host;
+  const proto = req.headers.get("x-forwarded-proto") ?? req.nextUrl.protocol.replace(/:$/, "");
+  return `${proto}://${host}`;
+}
+
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   if (pathname.startsWith("/api/auth")) return NextResponse.next();
@@ -30,13 +40,13 @@ export function middleware(req: NextRequest) {
     // A signed-in user landing on /login goes home (the reset/verify pages stay reachable).
     if (hasSession && (pathname === "/login" || pathname === "/signup")) {
       const next = req.nextUrl.searchParams.get("next");
-      return NextResponse.redirect(new URL(next && next.startsWith("/") ? next : "/", req.url));
+      return NextResponse.redirect(new URL(next && next.startsWith("/") ? next : "/", requestOrigin(req)));
     }
     return NextResponse.next();
   }
 
   if (!hasSession) {
-    const url = new URL("/login", req.url);
+    const url = new URL("/login", requestOrigin(req));
     const wanted = `${pathname}${req.nextUrl.search}`;
     if (wanted !== "/") url.searchParams.set("next", wanted);
     return NextResponse.redirect(url);
