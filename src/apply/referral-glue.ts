@@ -13,16 +13,17 @@ import { maybeAutoStartApply, DecideAutoStartDeps, DecideAutoStartResult } from 
 // outreach; see CLAUDE.md §3.10). Coffee-chat outreach keeps the old behaviour (network_send).
 export function approveOutreachAndMaybeAutoStart(
   db: DB,
+  userId: string,
   outreachId: number,
   deps: DecideAutoStartDeps = {}
 ): DecideAutoStartResult {
-  approveOutreach(db, outreachId);
+  approveOutreach(db, userId, outreachId);
   if (outreachJobIds(db, outreachId).length === 0) return { autoStarted: false };
-  return maybeAutoStartApply(db, { resume: true }, deps);
+  return maybeAutoStartApply(db, userId, { resume: true }, deps);
 }
 
 // POST /api/network/report sent: the red-line gate first, then the referral clock.
-export function reportSentAndMarkReached(db: DB, outreachId: number, sentText?: string): void {
-  reportSent(db, outreachId, sentText);
-  markReached(db, outreachId);
+export function reportSentAndMarkReached(db: DB, userId: string, outreachId: number, sentText?: string): void {
+  reportSent(db, userId, outreachId, sentText);
+  markReached(db, userId, outreachId);
 }

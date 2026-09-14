@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Newsreader, IBM_Plex_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./components/providers";
-import { AppShell } from "./components/shell/app-shell";
 import { ThemeScript } from "./components/shell/theme-script";
 
 const newsreader = Newsreader({
@@ -42,6 +41,8 @@ export const viewport: Viewport = {
   ],
 };
 
+// The root layout only sets up fonts, theme and providers. The signed-in shell (sidebar,
+// overview polling) lives in (app)/layout.tsx; the sign-in pages in (auth)/layout.tsx.
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh" className={`${newsreader.variable} ${plexSans.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
@@ -49,9 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeScript />
       </head>
       <body>
-        <Providers>
-          <AppShell>{children}</AppShell>
-        </Providers>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

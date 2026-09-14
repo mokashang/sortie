@@ -3,7 +3,8 @@ import { DB } from "@/lib/db";
 
 // Networking CRM data layer (Plan 5 §7). people/outreach tables already exist (Plan 1 schema.sql).
 // This module is the only thing that touches those two tables directly — draft.ts, gate.ts, and
-// the API routes all go through it.
+// the API routes all go through it. Both tables are per account (user_id, spec 2026-09-13 §3):
+// readers filter by the acting user; writers stamp it.
 
 export const RELATIONS = ["recruiter", "alum", "hiring_manager", "engineer", "other"] as const;
 export type Relation = (typeof RELATIONS)[number];
@@ -82,25 +83,27 @@ interface PersonRow {
   created_at: string;
 }
 
+const PERSON_COLS = "id, name, company, role_title, linkedin_url, email, email_status, relation, source, notes, created_at";
+
 function rowToPerson(r: PersonRow): Person {
   return { ...r };
 }
 
-// Upsert keyed on linkedin_url (the table's UNIQUE column): when a non-empty linkedin_url
-// matches an existing row, that row's id is returned and any currently-empty (null) fields on it
-// are filled in from `input` — fields the existing row already has a value for are left alone.
-// The one exception is `notes`: it is an observation, not an identity field, so a fresh non-empty
-// value replaces the old one (the session re-reads the profile every time it contacts someone).
-// Without a linkedin_url there's no dedup key, so every call inserts a fresh row (e.g. the
-// find-people executor mode may not have a profile URL yet).
-export function upsertPerson(db: DB, input: PersonInput): number {
+// Upsert keyed on (user, linkedin_url) (the table's UNIQUE pair): when a non-empty linkedin_url
+// matches one of this user's existing rows, that row's id is returned and any currently-empty
+// (null) fields on it are filled in from `input` — fields the existing row already has a value
+// for are left alone. The one exception is `notes`: it is an observation, not an identity
+// field, so a fresh non-empty value replaces the old one (the session re-reads the profile every
+// time it contacts someone). Without a linkedin_url there's no dedup key, so every call inserts
+// a fresh row (e.g. the find-people executor mode may not have a profile URL yet).
+export function upsertPerson(db: DB, userId: string, input: PersonInput): number {
   const p = PersonInputSchema.parse(input);
   const notes = p.notes?.trim() || null;
 
   if (p.linkedin_url) {
     const existing = db
-      .prepare("SELECT * FROM people WHERE linkedin_url = ?")
-      .get(p.linkedin_url) as PersonRow | undefined;
+      .prepare(`SELECT ${PERSON_COLS} FROM people WHERE user_id = ? AND linkedin_url = ?`)
+      .get(userId, p.linkedin_url) as PersonRow | undefined;
     if (existing) {
       const merged = {
         company: existing.company ?? p.company ?? null,
@@ -120,10 +123,11 @@ export function upsertPerson(db: DB, input: PersonInput): number {
 
   const info = db
     .prepare(
-      `INSERT INTO people (name, company, role_title, linkedin_url, email, email_status, relation, source, notes)
-       VALUES (?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO people (user_id, name, company, role_title, linkedin_url, email, email_status, relation, source, notes)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
+      userId,
       p.name,
       p.company ?? null,
       p.role_title ?? null,
@@ -137,9 +141,14 @@ export function upsertPerson(db: DB, input: PersonInput): number {
   return Number(info.lastInsertRowid);
 }
 
-export function listPeople(db: DB, filter?: { company?: string; relation?: string }): Person[] {
-  let sql = "SELECT * FROM people WHERE 1=1";
-  const params: unknown[] = [];
+export function getPerson(db: DB, userId: string, id: number): Person | null {
+  const row = db.prepare(`SELECT ${PERSON_COLS} FROM people WHERE user_id = ? AND id = ?`).get(userId, id) as PersonRow | undefined;
+  return row ? rowToPerson(row) : null;
+}
+
+export function listPeople(db: DB, userId: string, filter?: { company?: string; relation?: string }): Person[] {
+  let sql = `SELECT ${PERSON_COLS} FROM people WHERE user_id = ?`;
+  const params: unknown[] = [userId];
   if (filter?.company) {
     sql += " AND company = ?";
     params.push(filter.company);
@@ -245,22 +254,31 @@ function rowToOutreach(r: OutreachRawRow): OutreachRow {
 }
 
 // New outreach always starts life at status='draft' — the send gate (gate.ts) is the only thing
-// allowed to move it forward from there.
-export function createOutreach(db: DB, input: OutreachInput): number {
+// allowed to move it forward from there. The person must belong to the same account.
+export function createOutreach(db: DB, userId: string, input: OutreachInput): number {
   const o = OutreachInputSchema.parse(input);
+  const owner = db.prepare("SELECT user_id FROM people WHERE id = ?").get(o.personId) as { user_id: string } | undefined;
+  if (!owner || owner.user_id !== userId) throw new Error(`createOutreach: unknown person ${o.personId}`);
   const primary = o.jobId ?? o.jobIds?.[0] ?? null;
   return db.transaction(() => {
     const info = db
       .prepare(
-        `INSERT INTO outreach (person_id, job_id, playbook, channel, draft, draft_note, status)
-         VALUES (?,?,?,?,?,?, 'draft')`
+        `INSERT INTO outreach (user_id, person_id, job_id, playbook, channel, draft, draft_note, status)
+         VALUES (?,?,?,?,?,?,?, 'draft')`
       )
-      .run(o.personId, primary, o.playbook, o.channel, o.draft ?? null, o.draftNote ?? null);
+      .run(userId, o.personId, primary, o.playbook, o.channel, o.draft ?? null, o.draftNote ?? null);
     const id = Number(info.lastInsertRowid);
     const link = db.prepare("INSERT OR IGNORE INTO outreach_jobs (outreach_id, job_id) VALUES (?,?)");
     for (const jobId of o.jobIds ?? []) link.run(id, jobId);
     return id;
   })();
+}
+
+// Who owns an outreach row (null when it doesn't exist). Callers that take a bare outreach id
+// (routes, gate.ts) use this to refuse another account's row.
+export function outreachOwner(db: DB, outreachId: number): string | null {
+  const row = db.prepare("SELECT user_id FROM outreach WHERE id = ?").get(outreachId) as { user_id: string } | undefined;
+  return row?.user_id ?? null;
 }
 
 // Every job an outreach covers, in insertion order (the primary first).
@@ -271,31 +289,31 @@ export function outreachJobIds(db: DB, outreachId: number): number[] {
 }
 
 // Latest outreach that covers this job (via outreach_jobs, or the legacy single job_id column).
-export function outreachForJob(db: DB, jobId: number): OutreachRow | null {
+export function outreachForJob(db: DB, userId: string, jobId: number): OutreachRow | null {
   const row = db
     .prepare(
       `SELECT o.*, p.name as person_name, p.company as person_company
        FROM outreach o JOIN people p ON p.id = o.person_id
-       WHERE o.job_id = ? OR o.id IN (SELECT outreach_id FROM outreach_jobs WHERE job_id = ?)
+       WHERE o.user_id = ? AND (o.job_id = ? OR o.id IN (SELECT outreach_id FROM outreach_jobs WHERE job_id = ?))
        ORDER BY o.id DESC LIMIT 1`
     )
-    .get(jobId, jobId) as OutreachRawRow | undefined;
+    .get(userId, jobId, jobId) as OutreachRawRow | undefined;
   return row ? rowToOutreach(row) : null;
 }
 
 // Every outreach that covers any of these jobs (referral pipeline: several people per company
 // are contacted in parallel, each with their own row), newest first.
-export function outreachesForJobs(db: DB, jobIds: number[]): OutreachRow[] {
+export function outreachesForJobs(db: DB, userId: string, jobIds: number[]): OutreachRow[] {
   if (jobIds.length === 0) return [];
   const ph = jobIds.map(() => "?").join(",");
   const rows = db
     .prepare(
       `SELECT o.*, p.name as person_name, p.company as person_company
        FROM outreach o JOIN people p ON p.id = o.person_id
-       WHERE o.job_id IN (${ph}) OR o.id IN (SELECT outreach_id FROM outreach_jobs WHERE job_id IN (${ph}))
+       WHERE o.user_id = ? AND (o.job_id IN (${ph}) OR o.id IN (SELECT outreach_id FROM outreach_jobs WHERE job_id IN (${ph})))
        ORDER BY o.id DESC`
     )
-    .all(...jobIds, ...jobIds) as OutreachRawRow[];
+    .all(userId, ...jobIds, ...jobIds) as OutreachRawRow[];
   return rows.map(rowToOutreach);
 }
 
@@ -322,11 +340,12 @@ export function appendThread(db: DB, outreachId: number, entry: { dir: "sent" | 
 
 export function listOutreach(
   db: DB,
+  userId: string,
   filter?: { personId?: number; jobId?: number; status?: string; jobLinked?: boolean }
 ): OutreachRow[] {
   let sql = `SELECT o.*, p.name as person_name, p.company as person_company
-             FROM outreach o JOIN people p ON p.id = o.person_id WHERE 1=1`;
-  const params: unknown[] = [];
+             FROM outreach o JOIN people p ON p.id = o.person_id WHERE o.user_id = ?`;
+  const params: unknown[] = [userId];
   if (filter?.personId) {
     sql += " AND o.person_id = ?";
     params.push(filter.personId);

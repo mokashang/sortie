@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { withUser } from "@/lib/actor";
 
-export async function GET() {
+export const GET = withUser(async (_req, { userId }) => {
   const rows = getDb()
-    .prepare("SELECT id, version_name, directions, pdf_path, compiled_at FROM resumes ORDER BY compiled_at DESC")
-    .all();
+    .prepare("SELECT id, version_name, directions, pdf_path, compiled_at FROM resumes WHERE user_id = ? ORDER BY compiled_at DESC")
+    .all(userId);
   return NextResponse.json({ resumes: rows });
-}
+});

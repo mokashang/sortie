@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { pagedQueue, pagedAllJobs, ALL_JOBS_DIRECTION, QueueSort, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { isApplyMode } from "@/apply/mode";
 import { QUEUE_ORDER_SQL } from "@/apply/rank";
+import { withUser } from "@/lib/actor";
 
 const VALID_SORTS: QueueSort[] = ["composite", "score", "fresh", "company"];
 
@@ -13,9 +14,10 @@ const VALID_SORTS: QueueSort[] = ["composite", "score", "fresh", "company"];
 // pagedQueue — {rows,total,pages}, honoring ?page=/?pageSize=/?sort= too). Without ?direction=
 // it stays the flat, unpaged list the executor prompt polls via ?min= (unchanged response shape:
 // {queue:[...]}) — see src/executor/prompts.ts's own curl example of this exact contract.
-export async function GET(req: Request) {
+export const GET = withUser(async (req, { userId }) => {
   const url = new URL(req.url);
   const direction = url.searchParams.get("direction");
+  const db = getDb();
 
   if (direction) {
     const page = Number(url.searchParams.get("page") ?? "1") || 1;
@@ -31,24 +33,24 @@ export async function GET(req: Request) {
     // not — same {rows,total,pages} shape, rows additionally carry source/created_at/in_queue.
     const result =
       direction === ALL_JOBS_DIRECTION
-        ? pagedAllJobs(getDb(), { page, pageSize, sort, q })
-        : pagedQueue(getDb(), { direction, page, pageSize, sort, mode, q });
+        ? pagedAllJobs(db, userId, { page, pageSize, sort, q })
+        : pagedQueue(db, userId, { direction, page, pageSize, sort, mode, q });
     return NextResponse.json(result);
   }
 
   let minScore = Number(url.searchParams.get("min") ?? "0");
   if (Number.isNaN(minScore)) minScore = 0;
-  const rows = getDb()
+  const rows = db
     .prepare(
       `SELECT j.id, j.company, j.title, j.location, j.apply_url, j.source, j.posted_at,
               m.direction, m.score, m.tier, m.reason, a.status
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND ${QUEUE_ELIGIBLE_SQL} AND m.score >= ?
+       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.status = 'matched' AND ${QUEUE_ELIGIBLE_SQL} AND m.score >= ?
        ORDER BY ${QUEUE_ORDER_SQL}
        LIMIT 1000`
     )
-    .all(minScore);
+    .all(userId, minScore);
   return NextResponse.json({ queue: rows });
-}
+});

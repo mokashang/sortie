@@ -4,6 +4,9 @@ import { COMPOSITE_SCORE_SQL, TIME_PENALTY_SQL } from "@/apply/rank";
 import { pagedQueue } from "@/apply/queue";
 import { timePenalty, TIME_PENALTY_RULE } from "@/app/lib/time-penalty";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
 function seed(db: DB, rows: { title: string; score: number; ageDays: number | null; big?: boolean }[]) {
@@ -36,7 +39,7 @@ describe("composite ranking (2026-09-11 relaxed time penalty)", () => {
     expect(rows.map((r) => r.title)).toEqual(["fresh90", "null85", "fresh80", "old88"]);
     expect(rows.find((r) => r.title === "old88")!.c).toBe(78); // capped at −10
     expect(rows.find((r) => r.title === "null85")!.c).toBe(82); // 30 days → floor(16/5) = 3
-    const paged = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 10, sort: "composite" });
+    const paged = pagedQueue(db, U, { direction: "swe_general", page: 1, pageSize: 10, sort: "composite" });
     expect(paged.rows.map((r) => r.title)).toEqual(["fresh90", "null85", "fresh80", "old88"]);
   });
 

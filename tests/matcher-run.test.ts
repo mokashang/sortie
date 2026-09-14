@@ -3,6 +3,9 @@ import { openDb } from "@/lib/db";
 import { runMatching } from "@/matcher/run";
 import { LlmBackend } from "@/llm/types";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 function seedJobs(db: ReturnType<typeof openDb>) {
   const ins = db.prepare(
     "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
@@ -62,7 +65,7 @@ describe("runMatching", () => {
       Paralegal: { direction: null, score: 4, skip: true },
     });
 
-    const summary = await runMatching(db, {
+    const summary = await runMatching(db, { userId: U,
       backend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 10,
@@ -102,7 +105,7 @@ describe("runMatching", () => {
       }),
     };
 
-    const summary = await runMatching(db, {
+    const summary = await runMatching(db, { userId: U,
       backend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 10,
@@ -118,7 +121,7 @@ describe("runMatching", () => {
     const db = openDb(":memory:");
     const ids = seedJobs(db);
     const backend = scriptedBackend({ "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false }, Paralegal: { direction: null, score: 4, skip: true } });
-    const opts = { backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } }, batchSize: 10, threshold: 40 };
+    const opts = { userId: U, backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } }, batchSize: 10, threshold: 40 };
     await runMatching(db, opts);
     const second = await runMatching(db, opts);
     expect(second.scored).toBe(0);
@@ -128,7 +131,7 @@ describe("runMatching", () => {
     const db = openDb(":memory:");
     seedJobs(db);
     const boom: LlmBackend = { name: "boom", complete: async () => { throw new Error("backend down"); } };
-    const summary = await runMatching(db, { backend: boom, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } }, batchSize: 1, threshold: 40 });
+    const summary = await runMatching(db, { userId: U, backend: boom, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } }, batchSize: 1, threshold: 40 });
     expect(summary.scored).toBe(0);
     expect(summary.errors.length).toBeGreaterThan(0);
   });
@@ -154,7 +157,7 @@ describe("runMatching", () => {
       }),
     };
 
-    await runMatching(db, {
+    await runMatching(db, { userId: U,
       backend: dupBackend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 10,
@@ -197,13 +200,13 @@ describe("runMatching", () => {
 
     // Default (rescoreArchived unset/false): the archived job already has a match row, so it's
     // never revisited by the resumable gate.
-    const untouched = await runMatching(db, opts);
+    const untouched = await runMatching(db, { userId: U, ...opts });
     expect(untouched.scored).toBe(0);
     const stillOld = db.prepare("SELECT score FROM matches WHERE job_id=?").get(jobId) as any;
     expect(stillOld.score).toBe(20);
 
     // rescoreArchived:true rescues it.
-    const summary = await runMatching(db, { ...opts, rescoreArchived: true });
+    const summary = await runMatching(db, { userId: U, ...opts, rescoreArchived: true });
     expect(summary.scored).toBe(1);
     const m = db.prepare("SELECT score, direction FROM matches WHERE job_id=?").get(jobId) as any;
     expect(m.score).toBe(80);
@@ -219,7 +222,7 @@ describe("runMatching", () => {
       Paralegal: { direction: "swe_backend", score: 20, skip: false }, // below threshold, model didn't set skip
     });
 
-    await runMatching(db, {
+    await runMatching(db, { userId: U,
       backend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 10,
@@ -249,7 +252,7 @@ describe("runMatching", () => {
       }),
     };
 
-    const summary = await runMatching(db, {
+    const summary = await runMatching(db, { userId: U,
       backend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 10,
@@ -294,7 +297,7 @@ describe("runMatching", () => {
       },
     };
 
-    const summary = await runMatching(db, {
+    const summary = await runMatching(db, { userId: U,
       backend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 1,
@@ -349,7 +352,7 @@ describe("runMatching", () => {
 
     const dbSeq = openDb(":memory:");
     const seqIds = seedSix(dbSeq);
-    const seqSummary = await runMatching(dbSeq, {
+    const seqSummary = await runMatching(dbSeq, { userId: U,
       backend: makeBackend(),
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 1,
@@ -359,7 +362,7 @@ describe("runMatching", () => {
 
     const dbPar = openDb(":memory:");
     const parIds = seedSix(dbPar);
-    const parSummary = await runMatching(dbPar, {
+    const parSummary = await runMatching(dbPar, { userId: U,
       backend: makeBackend(),
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 1,
@@ -412,7 +415,7 @@ describe("runMatching", () => {
       },
     };
 
-    const summary = await runMatching(db, {
+    const summary = await runMatching(db, { userId: U,
       backend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
       batchSize: 1,
@@ -442,7 +445,7 @@ describe("runMatching", () => {
       "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false, degree: "phd_only" },
       Paralegal: { direction: null, score: 60, skip: false, role: "non_tech" },
     });
-    await runMatching(db, { backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
+    await runMatching(db, { userId: U, backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
     const m = db.prepare("SELECT skip_reason FROM matches WHERE job_id=?").get(ids.backend) as any;
     expect(m.skip_reason).toBe("PhD only");
     const j = db.prepare("SELECT degree_req, elig_source FROM jobs WHERE id=?").get(ids.backend) as any;
@@ -457,7 +460,7 @@ describe("runMatching", () => {
     const ids = seedJobs(db);
     db.prepare("UPDATE jobs SET duplicate_of=? WHERE id=?").run(ids.backend, ids.paralegal);
     const backend = scriptedBackend({ "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false } });
-    const s = await runMatching(db, { backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
+    const s = await runMatching(db, { userId: U, backend, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
     expect(s.scored).toBe(1);
   });
 
@@ -472,7 +475,7 @@ describe("runMatching", () => {
       "Backend Engineer New Grad": { direction: "swe_backend", score: 20, skip: true },       // low score → stays matched
       Paralegal: { direction: null, score: 10, skip: true, role: "non_tech" },                 // fails but pinned → stays
     });
-    const s = await runMatching(db, { backend, rescoreMatched: true, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
+    const s = await runMatching(db, { userId: U, backend, rescoreMatched: true, profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } } });
     expect(s.scored).toBe(2);
     expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(ids.backend) as any).status).toBe("matched");
     expect((db.prepare("SELECT score FROM matches WHERE job_id=?").get(ids.backend) as any).score).toBe(20);
@@ -492,7 +495,7 @@ describe("runMatching", () => {
       "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false },
       Paralegal: { direction: null, score: 60, skip: false, role: "non_tech" },
     });
-    const s = await runMatching(db, {
+    const s = await runMatching(db, { userId: U,
       backend,
       rescoreArchived: true,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
@@ -516,7 +519,7 @@ describe("runMatching", () => {
     const backend = scriptedBackend({
       "Backend Engineer New Grad": { direction: "swe_backend", score: 84, skip: false },
     });
-    const s = await runMatching(db, {
+    const s = await runMatching(db, { userId: U,
       backend,
       profile: { directions: { swe_backend: 1 }, work_auth: { status: "F-1", needs_sponsorship: true } },
     });

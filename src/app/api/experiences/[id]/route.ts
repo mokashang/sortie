@@ -1,18 +1,23 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { updateExperience, deleteExperience, ExperienceInputSchema } from "@/resume/experiences";
+import { withUser, failResponse } from "@/lib/actor";
 
-export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export const PUT = withUser(async (req, { userId }, { params }) => {
   const { id } = await params;
   const body = await req.json();
   const parsed = ExperienceInputSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
-  updateExperience(getDb(), Number(id), parsed.data);
-  return NextResponse.json({ ok: true });
-}
+  try {
+    updateExperience(getDb(), userId, Number(id), parsed.data);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return failResponse(e, 404);
+  }
+});
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withUser(async (_req, { userId }, { params }) => {
   const { id } = await params;
-  deleteExperience(getDb(), Number(id));
+  deleteExperience(getDb(), userId, Number(id));
   return NextResponse.json({ ok: true });
-}
+});

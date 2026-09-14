@@ -3,6 +3,9 @@ import { openDb, DB } from "@/lib/db";
 import { overview, attentionTotal } from "@/apply/overview";
 import { upsertPerson, createOutreach } from "@/network/crm";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 function seedJob(
   db: DB,
   status: string,
@@ -27,9 +30,9 @@ describe("overview", () => {
     seedJob(db, "awaiting_confirm", { confirm_decision: "approved" });
     seedJob(db, "matched", { needs_manual_reason: "login wall" });
     seedJob(db, "submitted", { submitted_at: new Date().toISOString().slice(0, 19).replace("T", " ") });
-    const personId = upsertPerson(db, { name: "Pat", company: "Acme", source: "manual" });
-    createOutreach(db, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "hi" });
-    const o = overview(db);
+    const personId = upsertPerson(db, U, { name: "Pat", company: "Acme", source: "manual" });
+    createOutreach(db, U, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "hi" });
+    const o = overview(db, U);
     expect(o.counts).toMatchObject({
       awaitingConfirm: 2,
       approvedWaiting: 1,
@@ -62,7 +65,7 @@ describe("overview", () => {
     db.prepare("INSERT INTO executor_runs (kind, status, channel, options, started_at) VALUES (?,?,?,?,?)").run(
       "apply", "running", "user_chrome", "{}", "2026-09-06 11:05:00"
     );
-    const o = overview(db);
+    const o = overview(db, U);
     expect(o.assistant?.status).toMatch(/queued|running/);
     expect(o.liveKinds.sort()).toEqual(["apply", "scan"]);
   });

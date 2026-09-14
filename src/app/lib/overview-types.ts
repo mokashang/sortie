@@ -23,6 +23,8 @@ export interface Overview {
   // Kinds of every task currently queued or running (an apply run can be queued while a scan runs).
   liveKinds: string[];
   counts: OverviewCounts;
+  // false until the account's 档案 basics validate — the assistant can't match or apply before that.
+  profileComplete: boolean;
 }
 
 // Things only the user can move forward: unapproved confirmations, unanswered questions,

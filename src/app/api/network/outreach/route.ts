@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { listOutreach } from "@/network/crm";
 import { updateDraft } from "@/network/gate";
+import { withUser, failResponse } from "@/lib/actor";
 
 // GET ?personId=&jobId=&status= — the CRM UI's outreach history / draft-approval feed.
-export async function GET(req: Request) {
+export const GET = withUser(async (req, { userId }) => {
   const url = new URL(req.url);
   const personId = url.searchParams.get("personId");
   const jobId = url.searchParams.get("jobId");
@@ -14,7 +15,7 @@ export async function GET(req: Request) {
   const jobLinkedParam = url.searchParams.get("jobLinked");
   const jobLinked = jobLinkedParam === "false" ? false : jobLinkedParam === "true" ? true : undefined;
   try {
-    const outreach = listOutreach(getDb(), {
+    const outreach = listOutreach(getDb(), userId, {
       personId: personId ? Number(personId) : undefined,
       jobId: jobId ? Number(jobId) : undefined,
       status,
@@ -22,24 +23,25 @@ export async function GET(req: Request) {
     });
     return NextResponse.json({ outreach });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return failResponse(e);
   }
-}
+});
 
 // PUT {outreachId, draft} — save an edited draft. Only legal while the outreach is still in
 // 'draft' status (updateDraft's own gate enforces this); this is Task 4's "edit before approve"
 // flow, implemented here on the outreach route per the plan's note.
-export async function PUT(req: Request) {
+export const PUT = withUser(async (req, { userId }) => {
   try {
     const body = await req.json();
     updateDraft(
       getDb(),
+      userId,
       Number(body.outreachId),
       String(body.draft),
       body.draftNote === undefined ? undefined : body.draftNote == null ? null : String(body.draftNote)
     );
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return failResponse(e);
   }
-}
+});

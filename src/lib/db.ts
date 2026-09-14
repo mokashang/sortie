@@ -22,7 +22,61 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
+
+function columnsOf(db: DB, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+}
+
+// Cuts one table's CREATE TABLE statement out of schema.sql (each table ends with a `);` line —
+// the convention the file's header documents) so the rebuild migration never duplicates DDL.
+export function tableDdl(schema: string, table: string): string {
+  const re = new RegExp(`CREATE TABLE IF NOT EXISTS "?${table}"? \\([\\s\\S]*?\\n\\);`);
+  const m = schema.match(re);
+  if (!m) throw new Error(`schema.sql has no CREATE TABLE for ${table}`);
+  return m[0];
+}
+
+// v14 -> v15: accounts (spec 2026-09-13 accounts §3). Every per-user table gains
+// user_id TEXT NOT NULL DEFAULT 'legacy' — the bucket holding everything written before accounts
+// existed, which the first account claims (src/lib/users.ts). The four tables whose UNIQUE
+// constraint changes (job_id → (user_id, job_id), linkedin_url → (user_id, linkedin_url),
+// version_name → (user_id, version_name)) are rebuilt the way the sqlite docs prescribe: create
+// the new shape under a temporary name, copy the common columns, drop the old table, rename —
+// with foreign keys off so the drop performs no implicit deletes. The others just get the column.
+// Re-runnable: a table that already has user_id is left alone.
+const V15_REBUILD = ["matches", "applications", "people", "resumes"] as const;
+const V15_ADD_COLUMN = ["outreach", "experiences", "executor_runs"] as const;
+export function migrateV15(db: DB, schema: string): { rebuilt: string[] } {
+  const rebuilt = V15_REBUILD.filter((t) => !columnsOf(db, t).includes("user_id"));
+  if (rebuilt.length > 0) {
+    db.pragma("foreign_keys = OFF");
+    try {
+      db.transaction(() => {
+        for (const t of rebuilt) {
+          const tmp = `${t}__v15`;
+          db.exec(tableDdl(schema, t).replace(/CREATE TABLE IF NOT EXISTS "?\w+"? \(/, `CREATE TABLE ${tmp} (`));
+          const newCols = columnsOf(db, tmp);
+          const common = columnsOf(db, t).filter((c) => newCols.includes(c)).join(", ");
+          db.exec(`INSERT INTO ${tmp} (${common}) SELECT ${common} FROM ${t}`);
+          db.exec(`DROP TABLE ${t}`);
+          db.exec(`ALTER TABLE ${tmp} RENAME TO ${t}`);
+        }
+      })();
+      const violations = db.pragma("foreign_key_check") as unknown[];
+      if (violations.length > 0) console.warn(`[db] v15 rebuild: ${violations.length} foreign key violation(s) remain (pre-existing dangling references)`);
+    } finally {
+      db.pragma("foreign_keys = ON");
+    }
+    // Dropping a table drops its trigger and indexes; the schema recreates them (IF NOT EXISTS).
+    db.exec(schema);
+  }
+  for (const t of V15_ADD_COLUMN) {
+    if (!columnsOf(db, t).includes("user_id")) db.exec(`ALTER TABLE ${t} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'legacy'`);
+  }
+  if (!columnsOf(db, "events").includes("user_id")) db.exec("ALTER TABLE events ADD COLUMN user_id TEXT");
+  return { rebuilt: [...rebuilt] };
+}
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -36,8 +90,12 @@ export function openDb(file?: string): DB {
   // Migration hook: read the schema version actually on disk before touching it, so future
   // plans can branch on `found` to run incremental migrations instead of blindly overwriting.
   const found = db.pragma("user_version", { simple: true }) as number;
-  db.exec(readSchema());
+  const schema = readSchema();
+  db.exec(schema);
   if (found > 0 && found < SCHEMA_VERSION) {
+    // v15's events.user_id goes first: the v12 step below calls retierAll(), which logs an event
+    // through logEvent() — and that INSERT names the column.
+    if (!columnsOf(db, "events").includes("user_id")) db.exec("ALTER TABLE events ADD COLUMN user_id TEXT");
     // v2 -> v3: applications gained answer_pack/filled_fields/confirm_decision/needs_manual_reason.
     // CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so old DBs need explicit
     // ALTER TABLE ADD COLUMN — guarded per-column so this is safe to run more than once.
@@ -149,7 +207,19 @@ export function openDb(file?: string): DB {
       // 已经出过高分岗的板块直接成为 core,不用等第二天凌晨的重算。
       retierAll(db);
     }
+    // v14 -> v15: accounts. Must stay last — the rebuild copies whatever columns the steps above
+    // have already added. See migrateV15.
+    migrateV15(db, schema);
   }
+  // Tenant indexes (schema v15). Created here rather than in schema.sql for the same reason as
+  // the job indexes below: schema.sql runs before an old db has gained user_id.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_applications_user_status ON applications(user_id, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_matches_job ON matches(job_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_people_user ON people(user_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_outreach_user_status ON outreach(user_id, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_runs_user_status ON executor_runs(user_id, status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_experiences_user ON experiences(user_id, kind, sort_order)");
   // New DBs (found === 0) skip the migration block above but still need the index — it can't
   // live in schema.sql's CREATE INDEX IF NOT EXISTS because that runs via db.exec(readSchema())
   // before old DBs have gained the dedup_key column, so it's created here unconditionally instead.
@@ -179,12 +249,15 @@ export function getDb(): DB {
   return (globalForDb.__jsdb ??= openDb());
 }
 
+// `userId` scopes an event to one account (application stage moves, info answers, referral
+// decisions); machine-wide events (scan ticks, retiers, job eligibility) leave it NULL.
 export function logEvent(
   db: DB,
   kind: string,
-  opts: { entity?: string; entityId?: number; payload?: unknown } = {}
+  opts: { entity?: string; entityId?: number; payload?: unknown; userId?: string | null } = {}
 ): void {
-  db.prepare("INSERT INTO events (kind, entity, entity_id, payload) VALUES (?,?,?,?)").run(
+  db.prepare("INSERT INTO events (user_id, kind, entity, entity_id, payload) VALUES (?,?,?,?,?)").run(
+    opts.userId ?? null,
     kind,
     opts.entity ?? null,
     opts.entityId ?? null,

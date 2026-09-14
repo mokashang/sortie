@@ -14,6 +14,9 @@ import {
   ApplyTask,
 } from "@/apply/queue";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 const baseYaml = `
 name: Mengjia Shang
 email: shangmengjiajiajia@gmail.com
@@ -113,7 +116,7 @@ function getApplication(db: DB, jobId: number) {
 describe("takeNextApplication", () => {
   it("returns { done: true } when there is nothing in the matched queue", () => {
     const db = openDb(":memory:");
-    const result = takeNextApplication(db, testProfile());
+    const result = takeNextApplication(db, U, testProfile());
     expect(result).toEqual({ done: true });
   });
 
@@ -122,7 +125,7 @@ describe("takeNextApplication", () => {
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
     seedJob(db, { company: "LondonCo", tier: 1, score: 99, locFlag: "non_us" });
     const usJob = seedJob(db, { company: "USCo", tier: 2, score: 10 });
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
     expect(result.jobId).toBe(usJob);
   });
 
@@ -146,7 +149,7 @@ describe("takeNextApplication", () => {
     void lowTier;
     void highTierLowScore;
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(highTierHighScore);
     expect(result.company).toBe("HighTierHighScore");
@@ -159,7 +162,7 @@ describe("takeNextApplication", () => {
     const tiered = seedJob(db, { company: "Tiered", tier: 3, score: 1 });
     void nullTier;
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(tiered);
   });
@@ -170,11 +173,11 @@ describe("takeNextApplication", () => {
     const first = seedJob(db, { company: "First", tier: 1, score: 90 });
     const second = seedJob(db, { company: "Second", tier: 1, score: 50 });
 
-    const firstTask = takeNextApplication(db, testProfile()) as ApplyTask;
+    const firstTask = takeNextApplication(db, U, testProfile()) as ApplyTask;
     expect(firstTask.jobId).toBe(first);
     expect(getApplication(db, first).status).toBe("prepared");
 
-    const secondTask = takeNextApplication(db, testProfile()) as ApplyTask;
+    const secondTask = takeNextApplication(db, U, testProfile()) as ApplyTask;
     expect(secondTask.jobId).toBe(second);
   });
 
@@ -188,7 +191,7 @@ describe("takeNextApplication", () => {
       ats: "greenhouse",
     });
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result).toMatchObject({
       jobId,
@@ -206,7 +209,7 @@ describe("takeNextApplication", () => {
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
     const jobId = seedJob(db, {});
 
-    takeNextApplication(db, testProfile());
+    takeNextApplication(db, U, testProfile());
 
     const row = getApplication(db, jobId);
     expect(JSON.parse(row.answer_pack as string).contact.email).toBe("shangmengjiajiajia@gmail.com");
@@ -219,7 +222,7 @@ describe("takeNextApplication", () => {
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
     const hasResume = seedJob(db, { company: "HasResumeCo", direction: "ai_infra", tier: 2, score: 1 });
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(hasResume);
     const parked = getApplication(db, noResume);
@@ -232,7 +235,7 @@ describe("takeNextApplication", () => {
     const noResume = seedJob(db, { company: "NoResumeCo", direction: "quant" });
     void noResume;
 
-    const result = takeNextApplication(db, testProfile());
+    const result = takeNextApplication(db, U, testProfile());
 
     expect(result).toEqual({ done: true });
   });
@@ -243,7 +246,7 @@ describe("takeNextApplication", () => {
     const noUrl = seedJob(db, { company: "NoUrlCo", applyUrl: "" });
     const hasUrl = seedJob(db, { company: "HasUrlCo" });
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(hasUrl);
     const parked = getApplication(db, noUrl);
@@ -260,7 +263,7 @@ describe("takeNextApplication", () => {
       updatedAt: "2020-01-01 00:00:00",
     });
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(stranded);
   });
@@ -271,7 +274,7 @@ describe("takeNextApplication", () => {
     const fresh = seedJob(db, { company: "FreshCo", status: "prepared" });
     void fresh;
 
-    const result = takeNextApplication(db, testProfile());
+    const result = takeNextApplication(db, U, testProfile());
 
     // Nothing else in the matched queue, and the fresh 'prepared' row must not be touched.
     expect(result).toEqual({ done: true });
@@ -285,7 +288,7 @@ describe("takeNextApplication", () => {
     const aiJob = seedJob(db, { company: "AiCo", direction: "ai_infra", tier: 1, score: 99 });
     const quantJob = seedJob(db, { company: "QuantCo", direction: "quant", tier: 2, score: 10 });
 
-    const result = takeNextApplication(db, testProfile(), { direction: "quant" }) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile(), { direction: "quant" }) as ApplyTask;
 
     expect(result.jobId).toBe(quantJob);
     // The higher-priority ai_infra job must be left untouched (still 'matched').
@@ -297,7 +300,7 @@ describe("takeNextApplication", () => {
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
     seedJob(db, { company: "AiCo", direction: "ai_infra", tier: 1, score: 99 });
 
-    const result = takeNextApplication(db, testProfile(), { direction: "quant" });
+    const result = takeNextApplication(db, U, testProfile(), { direction: "quant" });
 
     expect(result).toEqual({ done: true });
   });
@@ -309,7 +312,7 @@ describe("takeNextApplication", () => {
     const aiJob = seedJob(db, { company: "AiCo", direction: "ai_infra", tier: 1, score: 99 });
     seedJob(db, { company: "QuantCo", direction: "quant", tier: 2, score: 10 });
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(aiJob);
   });
@@ -320,7 +323,7 @@ describe("reportFill", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
-    reportFill(db, { jobId, status: "awaiting_confirm", filledFields: { email: "a@b.c" } });
+    reportFill(db, U, { jobId, status: "awaiting_confirm", filledFields: { email: "a@b.c" } });
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("awaiting_confirm");
@@ -333,7 +336,7 @@ describe("reportFill", () => {
     const jobId = seedJob(db, { status: "awaiting_confirm" });
 
     expect(() =>
-      reportFill(db, { jobId, status: "awaiting_confirm", filledFields: { email: "x@y.z" } })
+      reportFill(db, U, { jobId, status: "awaiting_confirm", filledFields: { email: "x@y.z" } })
     ).not.toThrow();
     expect(getApplication(db, jobId).status).toBe("awaiting_confirm");
   });
@@ -342,7 +345,7 @@ describe("reportFill", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
-    reportFill(db, { jobId, status: "needs_manual", reason: "registration wall" });
+    reportFill(db, U, { jobId, status: "needs_manual", reason: "registration wall" });
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("matched");
@@ -353,7 +356,7 @@ describe("reportFill", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
-    reportFill(db, { jobId, status: "error", reason: "upload timed out" });
+    reportFill(db, U, { jobId, status: "error", reason: "upload timed out" });
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("matched");
@@ -367,9 +370,9 @@ describe("reportFill", () => {
     db.prepare("UPDATE jobs SET duplicate_of=? WHERE id=?").run(main, sib);
     db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(sib);
     seedResume(db, "ai_infra-v1", ["ai_infra"]); // seedJob 默认 direction ai_infra;没有简历会被停车而不是取到
-    const task = takeNextApplication(db, testProfile()) as ApplyTask;
+    const task = takeNextApplication(db, U, testProfile()) as ApplyTask;
     expect(task.jobId).toBe(main);
-    reportFill(db, { jobId: main, status: "needs_manual", reason: "no sponsorship (live page)", eligibility: { sponsorship: "no", evidence: "We cannot sponsor" } });
+    reportFill(db, U, { jobId: main, status: "needs_manual", reason: "no sponsorship (live page)", eligibility: { sponsorship: "no", evidence: "We cannot sponsor" } });
     const a = db.prepare("SELECT status, needs_manual_reason FROM applications WHERE job_id=?").get(main) as any;
     expect(a).toEqual({ status: "archived", needs_manual_reason: null });
     const j = db.prepare("SELECT sponsorship, elig_source FROM jobs WHERE id=?").get(main) as any;
@@ -381,8 +384,8 @@ describe("reportFill", () => {
     const db = openDb(":memory:");
     const id = seedJob(db, { fingerprint: "m", title: "SWE" });
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
-    takeNextApplication(db, testProfile());
-    reportFill(db, { jobId: id, status: "needs_manual", reason: "login wall", eligibility: { sponsorship: "unknown" } });
+    takeNextApplication(db, U, testProfile());
+    reportFill(db, U, { jobId: id, status: "needs_manual", reason: "login wall", eligibility: { sponsorship: "unknown" } });
     const a = db.prepare("SELECT status, needs_manual_reason FROM applications WHERE job_id=?").get(id) as any;
     expect(a).toEqual({ status: "matched", needs_manual_reason: "login wall" });
   });
@@ -391,21 +394,21 @@ describe("reportFill", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "matched" });
 
-    expect(() => reportFill(db, { jobId, status: "awaiting_confirm", filledFields: {} })).toThrow();
+    expect(() => reportFill(db, U, { jobId, status: "awaiting_confirm", filledFields: {} })).toThrow();
   });
 
   it("rejects a report from an invalid from-state (e.g. submitted)", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "submitted" });
 
-    expect(() => reportFill(db, { jobId, status: "needs_manual", reason: "x" })).toThrow();
+    expect(() => reportFill(db, U, { jobId, status: "needs_manual", reason: "x" })).toThrow();
   });
 
   it("coerces non-string filledFields values (array/number/object) to strings so the confirm UI never crashes on them", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared", direction: "ai_infra", score: 1 });
 
-    reportFill(db, {
+    reportFill(db, U, {
       jobId,
       status: "awaiting_confirm",
       // Deliberately not Record<string,string> at the type level — this is exactly what an
@@ -413,7 +416,7 @@ describe("reportFill", () => {
       filledFields: { a: [1, 2], b: 5, c: { x: 1 } } as unknown as Record<string, string>,
     });
 
-    const rows = pendingConfirmations(db);
+    const rows = pendingConfirmations(db, U);
     expect(rows).toHaveLength(1);
     for (const value of Object.values(rows[0].filledFields)) {
       expect(typeof value).toBe("string");
@@ -426,13 +429,13 @@ describe("reportFill", () => {
   it("RED LINE regression: re-reporting awaiting_confirm after approval resets confirm_decision to NULL (voids the approval)", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
-    decide(db, jobId, "approve");
+    decide(db, U, jobId, "approve");
     expect(getApplication(db, jobId).confirm_decision).toBe("approved");
 
-    reportFill(db, { jobId, status: "awaiting_confirm", filledFields: { email: "new@value.com" } });
+    reportFill(db, U, { jobId, status: "awaiting_confirm", filledFields: { email: "new@value.com" } });
 
     expect(getApplication(db, jobId).confirm_decision).toBeNull();
-    expect(() => reportSubmitted(db, jobId)).toThrow();
+    expect(() => reportSubmitted(db, U, jobId)).toThrow();
   });
 });
 
@@ -441,7 +444,7 @@ describe("decide", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
 
-    decide(db, jobId, "approve");
+    decide(db, U, jobId, "approve");
 
     const row = getApplication(db, jobId);
     expect(row.confirm_decision).toBe("approved");
@@ -452,7 +455,7 @@ describe("decide", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
 
-    decide(db, jobId, "reject", "bad fill");
+    decide(db, U, jobId, "reject", "bad fill");
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("matched");
@@ -464,7 +467,7 @@ describe("decide", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
 
-    decide(db, jobId, "reject");
+    decide(db, U, jobId, "reject");
 
     expect(getApplication(db, jobId).needs_manual_reason).toBe("user rejected fill");
   });
@@ -473,7 +476,7 @@ describe("decide", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
 
-    expect(() => decide(db, jobId, "maybe" as unknown as "approve")).toThrow();
+    expect(() => decide(db, U, jobId, "maybe" as unknown as "approve")).toThrow();
     // Must not have mutated the row at all.
     const row = getApplication(db, jobId);
     expect(row.status).toBe("awaiting_confirm");
@@ -486,16 +489,16 @@ describe("reportSubmitted — red line", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
 
-    expect(() => reportSubmitted(db, jobId)).toThrow();
+    expect(() => reportSubmitted(db, U, jobId)).toThrow();
     expect(getApplication(db, jobId).status).toBe("awaiting_confirm");
   });
 
   it("throws when confirm_decision is 'rejected'", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
-    decide(db, jobId, "reject");
+    decide(db, U, jobId, "reject");
 
-    expect(() => reportSubmitted(db, jobId)).toThrow();
+    expect(() => reportSubmitted(db, U, jobId)).toThrow();
   });
 
   it("throws when status has drifted away from awaiting_confirm even if somehow approved", () => {
@@ -503,15 +506,15 @@ describe("reportSubmitted — red line", () => {
     const jobId = seedJob(db, { status: "prepared" });
     db.prepare("UPDATE applications SET confirm_decision='approved' WHERE job_id=?").run(jobId);
 
-    expect(() => reportSubmitted(db, jobId)).toThrow();
+    expect(() => reportSubmitted(db, U, jobId)).toThrow();
   });
 
   it("succeeds after approve: status -> submitted, submitted_at set", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
-    decide(db, jobId, "approve");
+    decide(db, U, jobId, "approve");
 
-    reportSubmitted(db, jobId);
+    reportSubmitted(db, U, jobId);
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("submitted");
@@ -535,7 +538,7 @@ describe("pendingConfirmations", () => {
       jobId
     );
 
-    const rows = pendingConfirmations(db);
+    const rows = pendingConfirmations(db, U);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -555,7 +558,7 @@ describe("pendingConfirmations", () => {
     const db = openDb(":memory:");
     seedJob(db, { direction: "quant", tier: 2, status: "awaiting_confirm" });
 
-    const rows = pendingConfirmations(db);
+    const rows = pendingConfirmations(db, U);
 
     expect(rows).toHaveLength(1);
     expect(rows[0].tier).toBe(2);
@@ -569,7 +572,7 @@ describe("pendingConfirmations", () => {
       .run("Jane Doe").lastInsertRowid as number;
     db.prepare("UPDATE applications SET referral_person_id = ? WHERE job_id = ?").run(personId, jobId);
 
-    const rows = pendingConfirmations(db);
+    const rows = pendingConfirmations(db, U);
     expect(rows).toHaveLength(1);
     expect(rows[0].referralPersonName).toBe("Jane Doe");
   });
@@ -578,9 +581,9 @@ describe("pendingConfirmations", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
 
-    decide(db, jobId, "approve");
+    decide(db, U, jobId, "approve");
 
-    const rows = pendingConfirmations(db);
+    const rows = pendingConfirmations(db, U);
     expect(rows).toHaveLength(1);
     expect(rows[0].decision).toBe("approved");
   });
@@ -591,7 +594,7 @@ describe("pendingConfirmations", () => {
     seedJob(db, { status: "prepared" });
     seedJob(db, { status: "submitted" });
 
-    expect(pendingConfirmations(db)).toEqual([]);
+    expect(pendingConfirmations(db, U)).toEqual([]);
   });
 });
 
@@ -599,16 +602,16 @@ describe("confirmStatus", () => {
   it("returns decision and status for a job", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "awaiting_confirm" });
-    decide(db, jobId, "approve");
+    decide(db, U, jobId, "approve");
 
-    expect(confirmStatus(db, jobId)).toEqual({ decision: "approved", status: "awaiting_confirm", infoAnswers: null });
+    expect(confirmStatus(db, U, jobId)).toEqual({ decision: "approved", status: "awaiting_confirm", infoAnswers: null });
   });
 
   it("returns a null decision before any decide() call", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
-    expect(confirmStatus(db, jobId)).toEqual({ decision: null, status: "prepared", infoAnswers: null });
+    expect(confirmStatus(db, U, jobId)).toEqual({ decision: null, status: "prepared", infoAnswers: null });
   });
 });
 
@@ -623,8 +626,8 @@ describe("getApplyTask", () => {
       ats: "greenhouse",
     });
 
-    const taken = takeNextApplication(db, testProfile()) as ApplyTask;
-    const task = getApplyTask(db, taken.jobId) as ApplyTask;
+    const taken = takeNextApplication(db, U, testProfile()) as ApplyTask;
+    const task = getApplyTask(db, U, taken.jobId) as ApplyTask;
 
     expect(task).toEqual(taken);
     expect(getApplication(db, taken.jobId).status).toBe("prepared");
@@ -634,10 +637,10 @@ describe("getApplyTask", () => {
     const db = openDb(":memory:");
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
     seedJob(db, { company: "Acme" });
-    const taken = takeNextApplication(db, testProfile()) as ApplyTask;
-    reportFill(db, { jobId: taken.jobId, status: "awaiting_confirm", filledFields: { name: "Mengjia" } });
+    const taken = takeNextApplication(db, U, testProfile()) as ApplyTask;
+    reportFill(db, U, { jobId: taken.jobId, status: "awaiting_confirm", filledFields: { name: "Mengjia" } });
 
-    const task = getApplyTask(db, taken.jobId) as ApplyTask;
+    const task = getApplyTask(db, U, taken.jobId) as ApplyTask;
 
     expect(task.jobId).toBe(taken.jobId);
     expect(task.answerPack).toEqual(taken.answerPack);
@@ -645,21 +648,21 @@ describe("getApplyTask", () => {
 
   it("returns an error for an unknown jobId", () => {
     const db = openDb(":memory:");
-    const result = getApplyTask(db, 999) as { error: string };
+    const result = getApplyTask(db, U, 999) as { error: string };
     expect(result.error).toMatch(/no application/);
   });
 
   it("returns an error when the application is not prepared/awaiting_confirm (e.g. still 'matched')", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "matched" });
-    const result = getApplyTask(db, jobId) as { error: string };
+    const result = getApplyTask(db, U, jobId) as { error: string };
     expect(result.error).toMatch(/not prepared\/awaiting_confirm/);
   });
 
   it("returns an error when there is no stored answer_pack", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
-    const result = getApplyTask(db, jobId) as { error: string };
+    const result = getApplyTask(db, U, jobId) as { error: string };
     expect(result.error).toMatch(/no stored answer_pack/);
   });
 });
@@ -673,7 +676,7 @@ describe("unpark", () => {
       jobId
     );
 
-    unpark(db, jobId);
+    unpark(db, U, jobId);
 
     expect(getApplication(db, jobId).needs_manual_reason).toBeNull();
   });
@@ -682,14 +685,14 @@ describe("unpark", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { company: "QuantCo", direction: "quant" });
     // takeNextApplication parks it (no resume for 'quant' yet).
-    expect(takeNextApplication(db, testProfile())).toEqual({ done: true });
+    expect(takeNextApplication(db, U, testProfile())).toEqual({ done: true });
     expect(getApplication(db, jobId).needs_manual_reason).toBeTruthy();
 
     // User generates the missing-direction resume in Studio, then unparks.
     seedResume(db, "quant-v1", ["quant"]);
-    unpark(db, jobId);
+    unpark(db, U, jobId);
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
     expect(result.jobId).toBe(jobId);
   });
 
@@ -697,19 +700,19 @@ describe("unpark", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "submitted" });
 
-    expect(() => unpark(db, jobId)).toThrow();
+    expect(() => unpark(db, U, jobId)).toThrow();
   });
 
   it("throws for an unknown jobId", () => {
     const db = openDb(":memory:");
-    expect(() => unpark(db, 999)).toThrow();
+    expect(() => unpark(db, U, 999)).toThrow();
   });
 });
 
 describe("queueByDirection", () => {
   it("returns [] when there are no matched applications", () => {
     const db = openDb(":memory:");
-    expect(queueByDirection(db)).toEqual([]);
+    expect(queueByDirection(db, U)).toEqual([]);
   });
 
   it("groups matched (non-parked) applications by direction, ordered by tier then matched count", () => {
@@ -720,7 +723,7 @@ describe("queueByDirection", () => {
     seedJob(db, { company: "AiCo1", direction: "ai_infra", tier: 1, score: 90 });
     seedJob(db, { company: "AiCo2", direction: "ai_infra", tier: 1, score: 70 });
 
-    const groups = queueByDirection(db);
+    const groups = queueByDirection(db, U);
 
     expect(groups.map((g) => g.direction)).toEqual(["ai_infra", "quant"]);
     expect(groups[0]).toMatchObject({ direction: "ai_infra", tier: 1, matched: 2 });
@@ -735,7 +738,7 @@ describe("queueByDirection", () => {
     const good = seedJob(db, { company: "GoodCo", direction: "quant", tier: 1, score: 70 });
     void good;
 
-    const groups = queueByDirection(db);
+    const groups = queueByDirection(db, U);
 
     expect(groups).toEqual([{ direction: "quant", tier: 1, matched: 1, referralSuggested: 0, directSuggested: 1, top: expect.any(Array) }]);
     expect(groups[0].matched).toBe(1);
@@ -748,7 +751,7 @@ describe("queueByDirection", () => {
     seedJob(db, { company: "C", title: "SWE C", direction: "quant", tier: 1, score: 70 });
     seedJob(db, { company: "D", title: "SWE D", direction: "quant", tier: 1, score: 60 });
 
-    const groups = queueByDirection(db);
+    const groups = queueByDirection(db, U);
 
     expect(groups[0].matched).toBe(4);
     expect(groups[0].top).toHaveLength(3);
@@ -761,7 +764,7 @@ describe("queueByDirection", () => {
     seedJob(db, { company: "NoDir", direction: null, tier: null, score: 50 });
     seedJob(db, { company: "Tiered", direction: "quant", tier: 3, score: 10 });
 
-    const groups = queueByDirection(db);
+    const groups = queueByDirection(db, U);
 
     expect(groups.map((g) => g.direction)).toEqual(["quant", "未分类"]);
     expect(groups[1]).toMatchObject({ direction: "未分类", matched: 1 });
@@ -780,9 +783,9 @@ describe("apply modes in the picker", () => {
     const ref = seedJob(db, { company: "Google", score: 95 });
     const direct = seedJob(db, { company: "Acme", score: 70 });
     setFit(db, ref, 1);
-    const t = takeNextApplication(db, testProfile()) as ApplyTask;
+    const t = takeNextApplication(db, U, testProfile()) as ApplyTask;
     expect(t.jobId).toBe(direct);
-    expect(takeNextApplication(db, testProfile())).toEqual({ done: true });
+    expect(takeNextApplication(db, U, testProfile())).toEqual({ done: true });
   });
 
   it("a user override to 'direct' puts a referral-suggested job back in the batch pool", () => {
@@ -790,7 +793,7 @@ describe("apply modes in the picker", () => {
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
     const ref = seedJob(db, { company: "Google", score: 95 });
     setFit(db, ref, 1, "direct");
-    expect((takeNextApplication(db, testProfile()) as ApplyTask).jobId).toBe(ref);
+    expect((takeNextApplication(db, U, testProfile()) as ApplyTask).jobId).toBe(ref);
   });
 
   it("jobIds-targeted pick accepts referral_ready and ignores mode; other ids are not touched", () => {
@@ -803,13 +806,13 @@ describe("apply modes in the picker", () => {
       JSON.stringify({ source: "wechat", link: "https://g.example/ref/abc", at: "2026-09-03T00:00:00Z" }),
       ready
     );
-    const t = takeNextApplication(db, testProfile(), { jobIds: [ready] }) as ApplyTask;
+    const t = takeNextApplication(db, U, testProfile(), { jobIds: [ready] }) as ApplyTask;
     expect(t.jobId).toBe(ready);
     expect(t.answerPack.referral?.link).toBe("https://g.example/ref/abc");
     expect(t.answerPack.referral?.source).toBe("wechat");
     expect(getApplication(db, ready).status).toBe("prepared");
     expect(getApplication(db, other).status).toBe("matched");
-    expect(takeNextApplication(db, testProfile(), { jobIds: [ready] })).toEqual({ done: true });
+    expect(takeNextApplication(db, U, testProfile(), { jobIds: [ready] })).toEqual({ done: true });
   });
 
   it("queueByDirection reports referral/direct suggested counts", () => {
@@ -817,7 +820,7 @@ describe("apply modes in the picker", () => {
     setFit(db, seedJob(db, { direction: "ai_infra" }), 1);
     setFit(db, seedJob(db, { direction: "ai_infra" }), 0);
     seedJob(db, { direction: "ai_infra" }); // unclassified → direct
-    const g = queueByDirection(db).find((x) => x.direction === "ai_infra")!;
+    const g = queueByDirection(db, U).find((x) => x.direction === "ai_infra")!;
     expect(g.matched).toBe(3);
     expect(g.referralSuggested).toBe(1);
     expect(g.directSuggested).toBe(2);

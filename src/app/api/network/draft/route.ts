@@ -3,15 +3,18 @@ import { getDb } from "@/lib/db";
 import { getBackend } from "@/llm/registry";
 import { loadProfile } from "@/lib/profile";
 import { generateDraft } from "@/network/draft";
+import { withUser, failResponse } from "@/lib/actor";
 
 // POST {personId, playbook, jobId?, channel?} — the "AI 草稿" button (Task 4). Runs the live
 // backend synchronously; the plan's own budget for this is 30s.
-export async function POST(req: Request) {
+export const POST = withUser(async (req, { userId }) => {
   try {
     const body = await req.json();
-    const result = await generateDraft(getDb(), {
+    const db = getDb();
+    const result = await generateDraft(db, {
+      userId,
       backend: getBackend(),
-      profile: loadProfile(),
+      profile: loadProfile(db, userId),
       personId: Number(body.personId),
       playbook: body.playbook,
       jobId: body.jobId ? Number(body.jobId) : undefined,
@@ -19,6 +22,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json(result, { status: 201 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return failResponse(e);
   }
-}
+});

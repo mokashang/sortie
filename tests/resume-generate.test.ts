@@ -6,6 +6,9 @@ import { createExperience } from "@/resume/experiences";
 import { generateResume, isSafeVersionName } from "@/resume/generate";
 import { LlmBackend } from "@/llm/types";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 // Scratch output dirs under os.tmpdir() rather than a literal /tmp, which on Windows would resolve to
 // <current drive>:	mp (not creatable when the repo lives on a drive whose root is read-only).
 const TMP_OUT = path.join(os.tmpdir(), "sortie-resumes-test");
@@ -15,10 +18,10 @@ const TMP_X = path.join(os.tmpdir(), "sortie-resumes-x");
 // project, skill. Kept deliberately distinct per kind so tests can assert deterministic section
 // separation (Experience vs Projects) rather than relying on LLM-chosen headings.
 function seed(db: ReturnType<typeof openDb>) {
-  createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
-  createExperience(db, { kind: "work", title: "SWE Intern", organization: "Acme", bullets: [{ text: "Shipped a backend service", directions: ["swe_backend"] }], sort_order: 0 });
-  createExperience(db, { kind: "project", title: "Distributed Trainer", organization: "USC", bullets: [{ text: "Sharded training across 8 GPUs", directions: ["ai_infra"] }, { text: "Wrote a React dashboard", directions: ["swe_general"] }], sort_order: 0 });
-  createExperience(db, { kind: "skill", title: "Languages", organization: null, bullets: [{ text: "C++, Python", directions: [] }], sort_order: 0 });
+  createExperience(db, U, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
+  createExperience(db, U, { kind: "work", title: "SWE Intern", organization: "Acme", bullets: [{ text: "Shipped a backend service", directions: ["swe_backend"] }], sort_order: 0 });
+  createExperience(db, U, { kind: "project", title: "Distributed Trainer", organization: "USC", bullets: [{ text: "Sharded training across 8 GPUs", directions: ["ai_infra"] }, { text: "Wrote a React dashboard", directions: ["swe_general"] }], sort_order: 0 });
+  createExperience(db, U, { kind: "skill", title: "Languages", organization: null, bullets: [{ text: "C++, Python", directions: [] }], sort_order: 0 });
 }
 
 const contact = { name: "M S", email: "m@x.com", phone: "+1", linkedin: "in/x", github: "gh/x" };
@@ -51,7 +54,7 @@ describe("generateResume", () => {
     const compiled: { tex: string; pdfPath: string }[] = [];
     const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex, pdfPath: outPath }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
-    const res = await generateResume(db, {
+    const res = await generateResume(db, { userId: U,
       backend: fakeBackend(selection),
       contact,
       direction: "ai_infra",
@@ -78,7 +81,7 @@ describe("generateResume", () => {
     seed(db);
     const selection = { include: [{ id: 9999, bullets: ["ghost"] }] };
     await expect(
-      generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: TMP_X })
+      generateResume(db, { userId: U, backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: TMP_X })
     ).rejects.toThrow(/unknown experience id|9999/i);
   });
 
@@ -89,7 +92,7 @@ describe("generateResume", () => {
     const workId = exps.find((e) => e.kind === "work")!.id;
     const selection = { include: [{ id: workId, bullets: ["", "Shipped a backend service"] }] };
     await expect(
-      generateResume(db, { backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: TMP_X })
+      generateResume(db, { userId: U, backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "v", compile: onePageCompile, extractText: noText, outDir: TMP_X })
     ).rejects.toThrow();
   });
 
@@ -103,20 +106,20 @@ describe("generateResume", () => {
     const eduId = exps.find((e) => e.kind === "education")!.id;
     const selection = { include: [{ id: eduId, bullets: [] }] };
 
-    const first = await generateResume(db, {
+    const first = await generateResume(db, { userId: U,
       backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "dup_v1",
       compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
     });
 
     // Advance last_insert_rowid on this connection past dup_v1's row by generating an unrelated
     // second version.
-    await generateResume(db, {
+    await generateResume(db, { userId: U,
       backend: fakeBackend(selection), contact, direction: "mle", versionName: "other_v2",
       compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
     });
 
     // Regenerate dup_v1 with a different direction — this hits the ON CONFLICT DO UPDATE path.
-    const regenerated = await generateResume(db, {
+    const regenerated = await generateResume(db, { userId: U,
       backend: fakeBackend(selection), contact, direction: "swe_backend", versionName: "dup_v1",
       compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
     });
@@ -151,7 +154,7 @@ describe("generateResume", () => {
       const compiled: { tex: string }[] = [];
       const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
-      await generateResume(db, {
+      await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v1",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -190,7 +193,7 @@ describe("generateResume", () => {
       const compiled: { tex: string }[] = [];
       const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
-      await generateResume(db, {
+      await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "struct_v2",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -203,8 +206,8 @@ describe("generateResume", () => {
 
     it("orders entries within a kind by their position in the model's `include` array, not by DB sort_order", async () => {
       const db = openDb(":memory:");
-      createExperience(db, { kind: "work", title: "Entry A", organization: "Acme", bullets: [{ text: "a1", directions: [] }], sort_order: 0 });
-      createExperience(db, { kind: "work", title: "Entry B", organization: "Acme", bullets: [{ text: "b1", directions: [] }], sort_order: 1 });
+      createExperience(db, U, { kind: "work", title: "Entry A", organization: "Acme", bullets: [{ text: "a1", directions: [] }], sort_order: 0 });
+      createExperience(db, U, { kind: "work", title: "Entry B", organization: "Acme", bullets: [{ text: "b1", directions: [] }], sort_order: 1 });
       const exps = db.prepare("SELECT id, title FROM experiences ORDER BY id").all() as { id: number; title: string }[];
       const idA = exps.find((e) => e.title === "Entry A")!.id;
       const idB = exps.find((e) => e.title === "Entry B")!.id;
@@ -213,7 +216,7 @@ describe("generateResume", () => {
       const compiled: { tex: string }[] = [];
       const fakeCompile = async (tex: string, outPath: string) => { compiled.push({ tex }); return { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 }; };
 
-      await generateResume(db, {
+      await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "struct_v3",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -235,7 +238,7 @@ describe("generateResume", () => {
           return { text: JSON.stringify({ include: [] }), backend: "capture" };
         },
       };
-      await generateResume(db, {
+      await generateResume(db, { userId: U,
         backend: capturingBackend, contact, direction: "gpu_cuda", versionName: "prompt_v1",
         compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -254,17 +257,17 @@ describe("generateResume", () => {
 
   describe("one-page trim loop", () => {
     function seedTrimmable(db: ReturnType<typeof openDb>) {
-      createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
-      createExperience(db, {
+      createExperience(db, U, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
+      createExperience(db, U, {
         kind: "work", title: "Entry A", organization: "Acme",
         bullets: [{ text: "a1", directions: [] }, { text: "a2", directions: [] }, { text: "a3", directions: [] }], sort_order: 0,
       });
-      createExperience(db, {
+      createExperience(db, U, {
         kind: "work", title: "Entry B", organization: "Acme",
         bullets: [{ text: "b1", directions: [] }, { text: "b2", directions: [] }, { text: "b3", directions: [] }], sort_order: 1,
       });
-      createExperience(db, { kind: "project", title: "Entry C", organization: "X", bullets: [{ text: "c1", directions: [] }], sort_order: 0 });
-      createExperience(db, { kind: "project", title: "Entry D", organization: "X", bullets: [{ text: "d1", directions: [] }], sort_order: 1 });
+      createExperience(db, U, { kind: "project", title: "Entry C", organization: "X", bullets: [{ text: "c1", directions: [] }], sort_order: 0 });
+      createExperience(db, U, { kind: "project", title: "Entry D", organization: "X", bullets: [{ text: "d1", directions: [] }], sort_order: 1 });
     }
 
     function trimmableSelection(exps: { id: number }[]) {
@@ -293,7 +296,7 @@ describe("generateResume", () => {
         return { pdfPath: outPath, pages: callCount <= 3 ? 2 : 1, overfullCount: 0, worstOverfullPt: 0 };
       };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v1",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -317,12 +320,12 @@ describe("generateResume", () => {
       // all of Experience's bullets combined. The long-bullet entry should be trimmed first,
       // even though it has fewer bullet *items* than the short-bulleted Experience entry.
       const db = openDb(":memory:");
-      createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
-      createExperience(db, {
+      createExperience(db, U, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
+      createExperience(db, U, {
         kind: "work", title: "Short Bullets Co", organization: "Acme",
         bullets: [{ text: "did x", directions: [] }, { text: "did y", directions: [] }, { text: "did z", directions: [] }], sort_order: 0,
       });
-      createExperience(db, {
+      createExperience(db, U, {
         kind: "project", title: "Long Bullet Project", organization: "X",
         bullets: [
           { text: "short one", directions: [] },
@@ -347,7 +350,7 @@ describe("generateResume", () => {
         return { pdfPath: outPath, pages: calls === 1 ? 2 : 1, overfullCount: 0, worstOverfullPt: 0 };
       };
 
-      await generateResume(db, {
+      await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_chars_v1",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -372,7 +375,7 @@ describe("generateResume", () => {
       let callCount = 0;
       const fakeCompile = async (_tex: string, outPath: string) => { callCount++; return { pdfPath: outPath, pages: 2, overfullCount: 0, worstOverfullPt: 0 }; };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v2",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -384,13 +387,13 @@ describe("generateResume", () => {
 
     it("never exceeds the trim attempt cap even with unlimited content to trim", async () => {
       const db = openDb(":memory:");
-      createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
+      createExperience(db, U, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
       // 10 experience entries with 3 bullets each — far more content than any realistic
       // one-pager, guaranteeing trimOneStep never runs dry within the cap.
       const entryIds: number[] = [];
       for (let i = 0; i < 10; i++) {
         entryIds.push(
-          createExperience(db, {
+          createExperience(db, U, {
             kind: "work", title: `Entry ${i}`, organization: "Acme",
             bullets: [{ text: `${i}-a`, directions: [] }, { text: `${i}-b`, directions: [] }, { text: `${i}-c`, directions: [] }],
             sort_order: i,
@@ -406,7 +409,7 @@ describe("generateResume", () => {
       };
       let callCount = 0;
       const fakeCompile = async (_tex: string, outPath: string) => { callCount++; return { pdfPath: outPath, pages: 2, overfullCount: 0, worstOverfullPt: 0 }; };
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "trim_v3",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -418,8 +421,8 @@ describe("generateResume", () => {
 
   describe("overfull hbox detection (safety net)", () => {
     function seedOverfullable(db: ReturnType<typeof openDb>) {
-      createExperience(db, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
-      createExperience(db, {
+      createExperience(db, U, { kind: "education", title: "M.S. ECE", organization: "USC", start_date: "2025", end_date: "2027", bullets: [], sort_order: 0 });
+      createExperience(db, U, {
         kind: "work", title: "Entry A", organization: "Acme",
         bullets: [{ text: "a1", directions: [] }, { text: "a2", directions: [] }], sort_order: 0,
       });
@@ -446,7 +449,7 @@ describe("generateResume", () => {
           : { pdfPath: outPath, pages: 1, overfullCount: 0, worstOverfullPt: 0 };
       };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v1",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -475,7 +478,7 @@ describe("generateResume", () => {
         return { pdfPath: outPath, pages: 1, overfullCount: 1, worstOverfullPt: 1.5 };
       };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v2",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -502,7 +505,7 @@ describe("generateResume", () => {
         return { pdfPath: outPath, pages: 1, overfullCount: 2, worstOverfullPt: 40 };
       };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "swe_general", versionName: "overfull_v3",
         compile: fakeCompile, extractText: noText, outDir: TMP_OUT,
       });
@@ -521,7 +524,7 @@ describe("generateResume", () => {
       const eduId = exps.find((e) => e.kind === "education")!.id;
       const selection = { include: [{ id: eduId, bullets: [] }] };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v1",
         compile: onePageCompile, extractText: async () => "Someone Else\nEducation\nM.S. ECE", outDir: TMP_OUT,
       });
@@ -535,7 +538,7 @@ describe("generateResume", () => {
       const eduId = exps.find((e) => e.kind === "education")!.id;
       const selection = { include: [{ id: eduId, bullets: [] }] };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v2",
         compile: onePageCompile, extractText: async () => "M S\n\\resumeItem{broken}", outDir: TMP_OUT,
       });
@@ -549,7 +552,7 @@ describe("generateResume", () => {
       const eduId = exps.find((e) => e.kind === "education")!.id;
       const selection = { include: [{ id: eduId, bullets: [] }] };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v3",
         compile: onePageCompile, extractText: async () => "  ", outDir: TMP_OUT,
       });
@@ -563,7 +566,7 @@ describe("generateResume", () => {
       const eduId = exps.find((e) => e.kind === "education")!.id;
       const selection = { include: [{ id: eduId, bullets: [] }] };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v4",
         compile: onePageCompile, extractText: async () => "M S\nEducation\nM.S. ECE University of Southern California, Los Angeles, CA 2025-2027", outDir: TMP_OUT,
       });
@@ -577,7 +580,7 @@ describe("generateResume", () => {
       const eduId = exps.find((e) => e.kind === "education")!.id;
       const selection = { include: [{ id: eduId, bullets: [] }] };
 
-      const res = await generateResume(db, {
+      const res = await generateResume(db, { userId: U,
         backend: fakeBackend(selection), contact, direction: "ai_infra", versionName: "content_v5",
         compile: onePageCompile, extractText: noText, outDir: TMP_OUT,
       });

@@ -5,25 +5,30 @@ import { visaFlag } from "@/scanner/visa-filter";
 
 export interface JdReviewTask { jobId: number; company: string; title: string; applyUrl: string; }
 
+// A job is pending when ANY account has it queued (matched, not parked) and its JD is still
+// missing — the JD is a shared fact, so one read serves everyone (spec 2026-09-13 accounts §3).
 const PENDING_WHERE =
-  `a.status = 'matched' AND a.needs_manual_reason IS NULL AND j.jd_status = 'missing' AND j.apply_url IS NOT NULL AND ${QUEUE_ELIGIBLE_SQL}`;
+  `j.jd_status = 'missing' AND j.apply_url IS NOT NULL AND ${QUEUE_ELIGIBLE_SQL}
+   AND EXISTS (SELECT 1 FROM applications a JOIN matches m ON m.job_id = a.job_id AND m.user_id = a.user_id
+               WHERE a.job_id = j.id AND a.status = 'matched' AND a.needs_manual_reason IS NULL)`;
+// 同队列顺序:置顶 > 梯队 > 分数 > 新(跨账号取最强的那一行)。不设 claim 状态 —— 同 kind 只允许一个活 run,没回报的行下次自然再发。
+const PENDING_ORDER = `ORDER BY (SELECT MAX(a.pinned) FROM applications a WHERE a.job_id = j.id) DESC,
+   (SELECT MIN(COALESCE(m.tier, 9)) FROM matches m WHERE m.job_id = j.id) ASC,
+   (SELECT MAX(m.score) FROM matches m WHERE m.job_id = j.id) DESC, j.created_at DESC`;
 
-// 同队列顺序:置顶 > 梯队 > 分数 > 新。不设 claim 状态 —— 同 kind 只允许一个活 run,没回报的行下次自然再发。
 export function nextJdReviewBatch(db: DB, limit: number): JdReviewTask[] {
   const rows = db.prepare(
     `SELECT j.id as jobId, j.company, j.title, j.apply_url as applyUrl
-     FROM applications a JOIN jobs j ON j.id = a.job_id JOIN matches m ON m.job_id = j.id
+     FROM jobs j
      WHERE ${PENDING_WHERE}
-     ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
+     ${PENDING_ORDER}
      LIMIT ?`
   ).all(Math.max(1, Math.min(200, limit))) as JdReviewTask[];
   return rows;
 }
 
 export function pendingJdReviewCount(db: DB): number {
-  return (db.prepare(
-    `SELECT COUNT(*) n FROM applications a JOIN jobs j ON j.id = a.job_id JOIN matches m ON m.job_id = j.id WHERE ${PENDING_WHERE}`
-  ).get() as { n: number }).n;
+  return (db.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${PENDING_WHERE}`).get() as { n: number }).n;
 }
 
 export type JdReviewStatus = "reviewed" | "login_wall" | "unreachable" | "closed";

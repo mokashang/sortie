@@ -10,22 +10,25 @@ import { appendThread, JOB_LINKED_SQL } from "@/network/crm";
 //
 // State machine on outreach.status: draft -> pending_send -> sent -> replied
 // (draft -> archived is the reject path, a dead end.)
+//
+// Every function takes the acting account: an outreach id that belongs to another account is
+// reported as unknown, never touched.
 
 interface StatusRow {
   status: string;
   draft: string | null;
 }
 
-function getStatus(db: DB, id: number): StatusRow {
-  const row = db.prepare("SELECT status, draft FROM outreach WHERE id = ?").get(id) as StatusRow | undefined;
+function getStatus(db: DB, userId: string, id: number): StatusRow {
+  const row = db.prepare("SELECT status, draft FROM outreach WHERE user_id = ? AND id = ?").get(userId, id) as StatusRow | undefined;
   if (!row) throw new Error(`network/gate: unknown outreach ${id}`);
   return row;
 }
 
 // User approves a drafted message from the CRM UI. Only a 'draft' row may be approved — this is
 // what actually admits it to the send queue (sendables()).
-export function approveOutreach(db: DB, id: number): void {
-  const row = getStatus(db, id);
+export function approveOutreach(db: DB, userId: string, id: number): void {
+  const row = getStatus(db, userId, id);
   if (row.status !== "draft") {
     throw new Error(`approveOutreach: cannot approve from status '${row.status}' (must be 'draft')`);
   }
@@ -36,8 +39,8 @@ export function approveOutreach(db: DB, id: number): void {
 // re-approved (e.g. the attended session found the recipient only reachable via a LinkedIn
 // connection note, whose 280-char cap the approved text can't meet). Only from 'pending_send' —
 // once reportSent has run there is nothing to take back.
-export function unapproveOutreach(db: DB, id: number): void {
-  const row = getStatus(db, id);
+export function unapproveOutreach(db: DB, userId: string, id: number): void {
+  const row = getStatus(db, userId, id);
   if (row.status !== "pending_send") {
     throw new Error(`unapproveOutreach: cannot unapprove from status '${row.status}' (must be 'pending_send')`);
   }
@@ -47,8 +50,8 @@ export function unapproveOutreach(db: DB, id: number): void {
 // User rejects a drafted message. Parks it at 'archived' with outcome='rejected' — a dead end,
 // distinct from the send pipeline entirely (unlike apply's reject-and-reoffer, there's no retry
 // path here; the user can always generate a fresh draft for the same person/playbook).
-export function rejectOutreach(db: DB, id: number): void {
-  const row = getStatus(db, id);
+export function rejectOutreach(db: DB, userId: string, id: number): void {
+  const row = getStatus(db, userId, id);
   if (row.status !== "draft") {
     throw new Error(`rejectOutreach: cannot reject from status '${row.status}' (must be 'draft')`);
   }
@@ -58,8 +61,8 @@ export function rejectOutreach(db: DB, id: number): void {
 // Lets the user (or Task 4's UI) edit the draft text before approving. Only while status='draft'
 // — once approved/sent, the draft is what was (or will be) actually sent and must not silently
 // change out from under an in-flight approval/send.
-export function updateDraft(db: DB, id: number, draft: string, draftNote?: string | null): void {
-  const row = getStatus(db, id);
+export function updateDraft(db: DB, userId: string, id: number, draft: string, draftNote?: string | null): void {
+  const row = getStatus(db, userId, id);
   if (row.status !== "draft") {
     throw new Error(`updateDraft: cannot edit draft from status '${row.status}' (must be 'draft')`);
   }
@@ -96,7 +99,7 @@ interface SendableRawRow {
 // Executor's polling endpoint: every outreach the user has approved and is waiting to be sent,
 // joined with just the person fields the executor needs (linkedin_url to open, email as a
 // mailto: fallback) — it never needs to touch the people table directly.
-export function sendables(db: DB, opts: { jobLinked?: boolean } = {}): SendableRow[] {
+export function sendables(db: DB, userId: string, opts: { jobLinked?: boolean } = {}): SendableRow[] {
   const linked =
     opts.jobLinked === true ? ` AND ${JOB_LINKED_SQL}` : opts.jobLinked === false ? ` AND NOT ${JOB_LINKED_SQL}` : "";
   const rows = db
@@ -104,10 +107,10 @@ export function sendables(db: DB, opts: { jobLinked?: boolean } = {}): SendableR
       `SELECT o.id, o.person_id, p.name as person_name, p.linkedin_url, p.email,
               o.channel, o.playbook, o.draft, o.draft_note, o.job_id
        FROM outreach o JOIN people p ON p.id = o.person_id
-       WHERE o.status = 'pending_send'${linked}
+       WHERE o.user_id = ? AND o.status = 'pending_send'${linked}
        ORDER BY o.created_at ASC`
     )
-    .all() as SendableRawRow[];
+    .all(userId) as SendableRawRow[];
   return rows.map((r) => ({
     id: r.id,
     personId: r.person_id,
@@ -133,8 +136,8 @@ export function sendables(db: DB, opts: { jobLinked?: boolean } = {}): SendableR
 // that was never sent, which then feeds a wrong tail into a later `followup` draft prompt. When
 // omitted (DM sends, where the full draft always goes out unmodified), falls back to `draft` as
 // before. The `draft` column itself is never touched here either way.
-export function reportSent(db: DB, id: number, sentText?: string): void {
-  const row = getStatus(db, id);
+export function reportSent(db: DB, userId: string, id: number, sentText?: string): void {
+  const row = getStatus(db, userId, id);
   if (row.status !== "pending_send") {
     throw new Error(
       `reportSent red line: outreach ${id} is not approved+pending_send (status=${row.status})`
@@ -147,8 +150,8 @@ export function reportSent(db: DB, id: number, sentText?: string): void {
 // Reply-harvesting: records an incoming reply and advances sent -> replied. Only valid from
 // 'sent' — a reply to something never reported as sent (or already replied/archived) has no
 // well-defined prior state to advance from.
-export function reportReply(db: DB, id: number, text: string): void {
-  const row = getStatus(db, id);
+export function reportReply(db: DB, userId: string, id: number, text: string): void {
+  const row = getStatus(db, userId, id);
   if (row.status !== "sent") {
     throw new Error(`reportReply: cannot record a reply from status '${row.status}' (must be 'sent')`);
   }
@@ -178,11 +181,11 @@ interface OutcomeRow {
 // applications row (shouldn't normally happen since job_id references jobs, but defensive rather
 // than throwing — recording the outcome itself must not fail because of a downstream linkage
 // gap).
-export function recordOutcome(db: DB, id: number, outcome: Outcome): void {
+export function recordOutcome(db: DB, userId: string, id: number, outcome: Outcome): void {
   if (!(OUTCOMES as readonly string[]).includes(outcome)) {
     throw new Error(`recordOutcome: invalid outcome '${outcome}' (must be one of ${OUTCOMES.join(", ")})`);
   }
-  const row = db.prepare("SELECT status, person_id, job_id FROM outreach WHERE id = ?").get(id) as
+  const row = db.prepare("SELECT status, person_id, job_id FROM outreach WHERE user_id = ? AND id = ?").get(userId, id) as
     | OutcomeRow
     | undefined;
   if (!row) throw new Error(`recordOutcome: unknown outreach ${id}`);
@@ -193,6 +196,6 @@ export function recordOutcome(db: DB, id: number, outcome: Outcome): void {
   db.prepare("UPDATE outreach SET status = ? WHERE id = ?").run(outcome, id);
 
   if (outcome === "referral_won" && row.job_id) {
-    db.prepare("UPDATE applications SET referral_person_id = ? WHERE job_id = ?").run(row.person_id, row.job_id);
+    db.prepare("UPDATE applications SET referral_person_id = ? WHERE user_id = ? AND job_id = ?").run(row.person_id, userId, row.job_id);
   }
 }

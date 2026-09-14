@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { withUser } from "@/lib/actor";
 
-export async function GET(req: Request) {
+export const GET = withUser(async (req) => {
   const url = new URL(req.url);
   const includeVisaFlagged = url.searchParams.get("all") === "1";
   const db = getDb();
@@ -13,4 +14,4 @@ export async function GET(req: Request) {
     )
     .all();
   return NextResponse.json({ jobs });
-}
+});

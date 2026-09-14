@@ -4,6 +4,9 @@ import { parseProfile } from "@/lib/profile";
 import { takeNextApplication, reportFill, confirmStatus } from "@/apply/queue";
 import { pendingInfo, answerInfo, needsInfoNotification } from "@/apply/info";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 const yaml = `
 name: Mengjia Shang
 email: shangmengjiajiajia@gmail.com
@@ -43,11 +46,11 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
   it("reportFill needs_info stores the questions and moves prepared -> needs_info", () => {
     const db = openDb(":memory:");
     const jobId = seed(db);
-    reportFill(db, { jobId, status: "needs_info", questions: QUESTIONS });
+    reportFill(db, U, { jobId, status: "needs_info", questions: QUESTIONS });
     expect(app(db, jobId).status).toBe("needs_info");
     expect(JSON.parse(app(db, jobId).pending_questions as string)).toEqual(QUESTIONS);
-    expect(confirmStatus(db, jobId)).toEqual({ decision: null, status: "needs_info", infoAnswers: null });
-    const pending = pendingInfo(db);
+    expect(confirmStatus(db, U, jobId)).toEqual({ decision: null, status: "needs_info", infoAnswers: null });
+    const pending = pendingInfo(db, U);
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ jobId, company: "Palantir", status: "needs_info", questions: QUESTIONS });
   });
@@ -55,18 +58,19 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
   it("refuses needs_info without questions, and from a status that isn't mid-fill", () => {
     const db = openDb(":memory:");
     const jobId = seed(db);
-    expect(() => reportFill(db, { jobId, status: "needs_info", questions: [] })).toThrow();
+    expect(() => reportFill(db, U, { jobId, status: "needs_info", questions: [] })).toThrow();
     const matched = seed(db, "matched");
-    expect(() => reportFill(db, { jobId: matched, status: "needs_info", questions: QUESTIONS })).toThrow();
+    expect(() => reportFill(db, U, { jobId: matched, status: "needs_info", questions: QUESTIONS })).toThrow();
   });
 
   it("answerInfo: persists remembered answers, keeps 仅本次 ones on the row, flips needs_info -> prepared with infoAnswers for the executor", () => {
     const db = openDb(":memory:");
     const jobId = seed(db);
-    reportFill(db, { jobId, status: "needs_info", questions: QUESTIONS });
+    reportFill(db, U, { jobId, status: "needs_info", questions: QUESTIONS });
     const persisted: Record<string, string>[] = [];
     const result = answerInfo(
       db,
+      U,
       jobId,
       { high_school: { value: " Chengdu No.7 " }, high_school_grad_year: { value: "2021", remember: false } },
       (r) => persisted.push(r)
@@ -75,24 +79,24 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
     expect(persisted).toEqual([{ high_school: "Chengdu No.7" }]);
     expect(app(db, jobId).status).toBe("prepared");
     expect(app(db, jobId).pending_questions).toBeNull();
-    expect(confirmStatus(db, jobId)).toEqual({
+    expect(confirmStatus(db, U, jobId)).toEqual({
       decision: null,
       status: "prepared",
       infoAnswers: { high_school: "Chengdu No.7", high_school_grad_year: "2021" },
     });
-    expect(pendingInfo(db)).toEqual([]);
+    expect(pendingInfo(db, U)).toEqual([]);
     // the executor can now carry on and report the fill as usual
-    reportFill(db, { jobId, status: "awaiting_confirm", filledFields: { "High School": "Chengdu No.7" } });
+    reportFill(db, U, { jobId, status: "awaiting_confirm", filledFields: { "High School": "Chengdu No.7" } });
     expect(app(db, jobId).status).toBe("awaiting_confirm");
   });
 
   it("answerInfo validates: every question answered, select answers must be one of the options", () => {
     const db = openDb(":memory:");
     const jobId = seed(db);
-    reportFill(db, { jobId, status: "needs_info", questions: QUESTIONS });
-    expect(() => answerInfo(db, jobId, { high_school: { value: "X" } }, () => {})).toThrow(/missing answer/);
+    reportFill(db, U, { jobId, status: "needs_info", questions: QUESTIONS });
+    expect(() => answerInfo(db, U, jobId, { high_school: { value: "X" } }, () => {})).toThrow(/missing answer/);
     expect(() =>
-      answerInfo(db, jobId, { high_school: { value: "X" }, high_school_grad_year: { value: "1999" } }, () => {})
+      answerInfo(db, U, jobId, { high_school: { value: "X" }, high_school_grad_year: { value: "1999" } }, () => {})
     ).toThrow(/not one of the options/);
     expect(app(db, jobId).status).toBe("needs_info");
   });
@@ -100,15 +104,16 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
   it("executor timeout: needs_manual keeps the questions; answering then unparks the job and the next take carries the answers", () => {
     const db = openDb(":memory:");
     const jobId = seed(db);
-    reportFill(db, { jobId, status: "needs_info", questions: QUESTIONS });
-    reportFill(db, { jobId, status: "needs_manual", reason: "info request timed out after 30 minutes" });
+    reportFill(db, U, { jobId, status: "needs_info", questions: QUESTIONS });
+    reportFill(db, U, { jobId, status: "needs_manual", reason: "info request timed out after 30 minutes" });
     expect(app(db, jobId).status).toBe("matched");
     expect(app(db, jobId).pending_questions).not.toBeNull();
-    const pending = pendingInfo(db);
+    const pending = pendingInfo(db, U);
     expect(pending[0]).toMatchObject({ status: "matched", needsManualReason: "info request timed out after 30 minutes" });
 
     const result = answerInfo(
       db,
+      U,
       jobId,
       { high_school: { value: "Chengdu No.7", remember: false }, high_school_grad_year: { value: "2021", remember: false } },
       () => {
@@ -124,7 +129,7 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
       "/tmp/r.pdf",
       "2026-01-01 00:00:00"
     );
-    const task = takeNextApplication(db, parseProfile(yaml), { direction: "swe_general" });
+    const task = takeNextApplication(db, U, parseProfile(yaml), { direction: "swe_general" });
     expect("jobId" in task && task.jobId).toBe(jobId);
     expect("answerPack" in task && task.answerPack.custom).toMatchObject({
       city: "Los Angeles, CA",
@@ -136,14 +141,14 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
   it("optional questions may be left blank and are then simply not stored", () => {
     const db = openDb(":memory:");
     const jobId = seed(db);
-    reportFill(db, {
+    reportFill(db, U, {
       jobId,
       status: "needs_info",
       questions: [{ key: "high_school", label: "High School" }, { key: "essay_numbers", label: "Three numbers", optional: true }],
     });
-    const r = answerInfo(db, jobId, { high_school: { value: "X" }, essay_numbers: { value: "  " } }, () => {});
+    const r = answerInfo(db, U, jobId, { high_school: { value: "X" }, essay_numbers: { value: "  " } }, () => {});
     expect(r.status).toBe("prepared");
-    expect(confirmStatus(db, jobId).infoAnswers).toEqual({ high_school: "X" });
+    expect(confirmStatus(db, U, jobId).infoAnswers).toEqual({ high_school: "X" });
   });
 
   it("needsInfoNotification names the company, count and where to go", () => {

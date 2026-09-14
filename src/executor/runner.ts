@@ -1,6 +1,5 @@
 import { spawn as nodeSpawn } from "child_process";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { DB } from "@/lib/db";
 import {
@@ -10,12 +9,19 @@ import {
   buildJdReviewPrompt,
   ApplyPlanEntry,
 } from "@/executor/prompts";
+import { createRunToken, revokeRunTokens, pruneExpiredTokens } from "@/lib/api-tokens";
+import { ownerId } from "@/lib/users";
 
 // The process manager for headless `claude -p` executor sessions launched from the App's UI.
 // See docs on the API routes (src/app/api/executor/*) and README's 投递执行/人脉 sections for the
 // end-to-end picture: the user clicks a button in the App, this module spawns a detached
 // `claude -p` process wired to prompts.ts's prompt for the requested kind, and the App polls
 // executorStatus() to show progress until the process exits.
+//
+// Every run belongs to one account (executor_runs.user_id, spec 2026-09-13 accounts §3): the
+// listing/claim/log/finish/stop functions take the acting user and never touch another
+// account's rows. A headless run's prompt carries a run token so its curl calls act as that
+// account (src/lib/api-tokens.ts).
 
 // scan = Chrome 扫描 run(值守会话在用户 Chrome 里找岗:LinkedIn 登录态 / Handshake / Tesla,只读,经 /api/scan/ingest 入库)。仅 user_chrome。
 export type ExecutorKind = "apply" | "network_send" | "network_find" | "jd_review" | "scan" | "referral_check";
@@ -94,16 +100,16 @@ function isAlive(pid: number | null | undefined): boolean {
   }
 }
 
-function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
+function buildPrompt(kind: ExecutorKind, options: StartOptions, token: string): string {
   switch (kind) {
     case "apply":
-      return buildApplyPrompt({ limit: options.limit, plan: options.plan, resume: options.resume });
+      return buildApplyPrompt({ limit: options.limit, plan: options.plan, resume: options.resume, token });
     case "network_send":
-      return buildNetworkSendPrompt();
+      return buildNetworkSendPrompt({ token });
     case "network_find":
-      return buildNetworkFindPrompt({ companies: options.companies });
+      return buildNetworkFindPrompt({ companies: options.companies, token });
     case "jd_review":
-      return buildJdReviewPrompt({ limit: options.limit });
+      return buildJdReviewPrompt({ limit: options.limit, token });
     case "scan":
       throw new Error("scan runs are attended-only (user_chrome); no headless prompt exists");
     case "referral_check":
@@ -137,6 +143,7 @@ export interface ReapDeps {
   killTree?: (pid: number) => void;
 }
 
+// Machine-wide (every account's runs): a dead process is dead whoever owns it.
 export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
   const now = deps.now ?? (() => Date.now());
   const mtime =
@@ -155,43 +162,41 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
     channel: string;
     log_path: string | null;
   }[];
+  const fail = (id: number, summary: string) => {
+    db.prepare("UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?").run(summary, id);
+    revokeRunTokens(db, id);
+  };
   for (const row of rows) {
     if (row.channel === "user_chrome") {
       const mt = row.log_path ? mtime(row.log_path) : null;
-      if (mt != null && now() - mt > STALE_USER_CHROME_MS) {
-        db.prepare(
-          "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
-        ).run("session gone", row.id);
-      }
+      if (mt != null && now() - mt > STALE_USER_CHROME_MS) fail(row.id, "session gone");
       continue;
     }
     if (!isAlive(row.pid)) {
-      db.prepare(
-        "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
-      ).run("process gone", row.id);
+      fail(row.id, "process gone");
       continue;
     }
     const mt = row.log_path ? mtime(row.log_path) : null;
     if (mt != null && now() - mt > STALE_HEADLESS_MS) {
       const quietMin = Math.round((now() - mt) / 60_000);
       (deps.killTree ?? killTree)(row.pid as number);
-      db.prepare(
-        "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
-      ).run(`hung: no log activity for ${quietMin} min, process tree killed`, row.id);
+      fail(row.id, `hung: no log activity for ${quietMin} min, process tree killed`);
     }
   }
+  pruneExpiredTokens(db, new Date(now()));
 }
 
-// True if there is currently a 'running' executor_runs row of the given kind whose pid is
-// genuinely alive (same liveness check as reapStaleRuns/startExecutor's duplicate-kind guard,
-// factored out for callers that only need a yes/no answer — e.g. the /api/apply/decide route's
-// auto-start-on-approve check: does NOT reap stale rows itself, since a caller that only wants
-// the liveness answer shouldn't have the side effect of mutating run rows as a side channel).
+// True if there is currently a 'running' executor_runs row of the given kind for this account
+// whose pid is genuinely alive (same liveness check as reapStaleRuns/startExecutor's
+// duplicate-kind guard, factored out for callers that only need a yes/no answer — e.g. the
+// /api/apply/decide route's auto-start-on-approve check: does NOT reap stale rows itself, since
+// a caller that only wants the liveness answer shouldn't have the side effect of mutating run
+// rows as a side channel).
 //
 // user_chrome rows never count here (they have no pid) — see hasLiveOrQueuedRun for the check
 // that also covers queued/attended runs.
-export function hasLiveRun(db: DB, kind: ExecutorKind): boolean {
-  const rows = db.prepare("SELECT pid FROM executor_runs WHERE kind=? AND status='running'").all(kind) as {
+export function hasLiveRun(db: DB, userId: string, kind: ExecutorKind): boolean {
+  const rows = db.prepare("SELECT pid FROM executor_runs WHERE user_id=? AND kind=? AND status='running'").all(userId, kind) as {
     pid: number | null;
   }[];
   return rows.some((row) => isAlive(row.pid));
@@ -206,19 +211,19 @@ export function hasLiveRun(db: DB, kind: ExecutorKind): boolean {
 // and while it's marked running that session is the one polling /api/apply/pending for the
 // approval — auto-starting a second run alongside it just produces a duplicate 'resume' row (as
 // happened with run #8 on 2026-09-03). Only reapStaleRuns's log-mtime check may retire it.
-export function hasLiveOrQueuedRun(db: DB, kind: ExecutorKind): boolean {
+export function hasLiveOrQueuedRun(db: DB, userId: string, kind: ExecutorKind): boolean {
   const rows = db
-    .prepare("SELECT pid, status, channel FROM executor_runs WHERE kind=? AND status IN ('running','queued')")
-    .all(kind) as { pid: number | null; status: string; channel: string }[];
+    .prepare("SELECT pid, status, channel FROM executor_runs WHERE user_id=? AND kind=? AND status IN ('running','queued')")
+    .all(userId, kind) as { pid: number | null; status: string; channel: string }[];
   return rows.some((row) => row.status === "queued" || row.channel === "user_chrome" || isAlive(row.pid));
 }
 
-// The channel of the most recent run of `kind` (any status), or null if there has never been one.
-// Used by decideAndMaybeAutoStart to decide which channel to auto-start on approve: it follows
-// whatever channel the user last used for that kind, defaulting to user_chrome (the app's default
-// channel) when there's no prior run to follow.
-export function lastRunChannel(db: DB, kind: ExecutorKind): ExecutorChannel | null {
-  const row = db.prepare("SELECT channel FROM executor_runs WHERE kind=? ORDER BY id DESC LIMIT 1").get(kind) as
+// The channel of the account's most recent run of `kind` (any status), or null if there has
+// never been one. Used by decideAndMaybeAutoStart to decide which channel to auto-start on
+// approve: it follows whatever channel the user last used for that kind, defaulting to
+// user_chrome (the app's default channel) when there's no prior run to follow.
+export function lastRunChannel(db: DB, userId: string, kind: ExecutorKind): ExecutorChannel | null {
+  const row = db.prepare("SELECT channel FROM executor_runs WHERE user_id=? AND kind=? ORDER BY id DESC LIMIT 1").get(userId, kind) as
     | { channel: string }
     | undefined;
   return (row?.channel as ExecutorChannel | undefined) ?? null;
@@ -230,17 +235,18 @@ export interface StartResult {
   logPath: string;
 }
 
-// Refuses to start a second run of the same `kind`+`channel` while one is genuinely still running
-// (checked by PID liveness for headless, by presence for user_chrome) or already queued. A stale
-// headless duplicate (dead pid) is reclaimed (marked 'failed') rather than blocking the new start;
-// a queued/running user_chrome duplicate is never "stale" in that sense — it's still waiting for
-// an attended session, so it always blocks.
+// Refuses to start a second run of the same `kind`+`channel` for the same account while one is
+// genuinely still running (checked by PID liveness for headless, by presence for user_chrome) or
+// already queued. A stale headless duplicate (dead pid) is reclaimed (marked 'failed') rather than
+// blocking the new start; a queued/running user_chrome duplicate is never "stale" in that sense —
+// it's still waiting for an attended session, so it always blocks.
 //
 // channel='user_chrome' takes the "值守会话" path: no process is spawned. A 'queued' row is
 // inserted (pid NULL) with an empty log file ready for the attended session to append to via
 // claimNextRun/appendRunLog once it claims the run.
 export function startExecutor(
   db: DB,
+  userId: string,
   kind: ExecutorKind,
   options: StartOptions = {},
   deps: RunnerDeps = {},
@@ -254,8 +260,8 @@ export function startExecutor(
     throw new Error("扫描 run 仅支持值守会话(user_chrome)——LinkedIn/Handshake/Tesla 需要用户登录的 Chrome");
   }
   const existing = db
-    .prepare("SELECT id, pid, status FROM executor_runs WHERE kind=? AND channel=? AND status IN ('running','queued')")
-    .all(kind, channel) as { id: number; pid: number | null; status: string }[];
+    .prepare("SELECT id, pid, status FROM executor_runs WHERE user_id=? AND kind=? AND channel=? AND status IN ('running','queued')")
+    .all(userId, kind, channel) as { id: number; pid: number | null; status: string }[];
   for (const row of existing) {
     // user_chrome rows have no pid to check liveness on — any 'running' or 'queued' row of the
     // channel always blocks (only reapStaleRuns's mtime-staleness check can clear one out, and
@@ -267,6 +273,7 @@ export function startExecutor(
     db.prepare(
       "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
     ).run("process gone", row.id);
+    revokeRunTokens(db, row.id);
   }
 
   const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
@@ -274,8 +281,8 @@ export function startExecutor(
 
   if (channel === "user_chrome") {
     const insert = db
-      .prepare("INSERT INTO executor_runs (kind, status, channel, pid, options) VALUES (?, 'queued', 'user_chrome', NULL, ?)")
-      .run(kind, JSON.stringify(options));
+      .prepare("INSERT INTO executor_runs (user_id, kind, status, channel, pid, options) VALUES (?, ?, 'queued', 'user_chrome', NULL, ?)")
+      .run(userId, kind, JSON.stringify(options));
     const runId = Number(insert.lastInsertRowid);
     const logPath = path.join(logDir, `run-${runId}.log`);
     fs.closeSync(fs.openSync(logPath, "a"));
@@ -283,12 +290,15 @@ export function startExecutor(
     return { id: runId, pid: null, logPath };
   }
 
-  const prompt = buildPrompt(kind, options);
-
   const insert = db
-    .prepare("INSERT INTO executor_runs (kind, status, channel, options) VALUES (?, 'running', 'headless', ?)")
-    .run(kind, JSON.stringify(options));
+    .prepare("INSERT INTO executor_runs (user_id, kind, status, channel, options) VALUES (?, ?, 'running', 'headless', ?)")
+    .run(userId, kind, JSON.stringify(options));
   const runId = Number(insert.lastInsertRowid);
+
+  // The run token is what makes this session act as `userId` on every API call (see prompts.ts's
+  // curlCmd). Minted before the prompt so it can be baked into the text; revoked at finish/reap.
+  const token = createRunToken(db, userId, runId);
+  const prompt = buildPrompt(kind, options, token);
 
   const logPath = path.join(logDir, `run-${runId}.log`);
   // Ensure the file exists up front (and is truncated) even before the child process — or the
@@ -298,6 +308,8 @@ export function startExecutor(
 
   const spawnFn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
   const bin = resolveClaudeBin();
+  // The owner keeps the pre-accounts data/browser-profile; every other account gets its own.
+  const profileDir = browserProfileDir(process.cwd(), ownerId(db) === userId ? null : userId);
   const args = [
     "-p",
     "--output-format",
@@ -307,10 +319,10 @@ export function startExecutor(
     "claude-sonnet-5",
     "--allowedTools",
     ALLOWED_TOOLS,
-    // Exactly one MCP server (playwright on data/browser-profile), registered inline; every other
-    // MCP config on the machine is ignored — see src/executor/mcp-config.ts.
+    // Exactly one MCP server (playwright on the account's browser profile), registered inline;
+    // every other MCP config on the machine is ignored — see src/executor/mcp-config.ts.
     "--mcp-config",
-    playwrightMcpConfig(browserProfileDir()),
+    playwrightMcpConfig(profileDir),
     "--strict-mcp-config",
   ];
 
@@ -338,6 +350,7 @@ export function startExecutor(
     db.prepare(
       "UPDATE executor_runs SET status=?, ended_at=datetime('now') WHERE id=? AND status='running'"
     ).run(status, runId);
+    revokeRunTokens(db, runId);
     try {
       fs.closeSync(logFd);
     } catch {
@@ -354,8 +367,8 @@ export function startExecutor(
 // Windows) so a detached `claude` and any sub-processes it spawned all go, not just the immediate
 // child. Marks the row 'stopped' regardless — the point is to record the user's intent to stop,
 // not to guarantee the OS-level kill succeeded.
-export function stopExecutor(db: DB, runId: number): void {
-  const row = db.prepare("SELECT pid, status, channel FROM executor_runs WHERE id=?").get(runId) as
+export function stopExecutor(db: DB, userId: string, runId: number): void {
+  const row = db.prepare("SELECT pid, status, channel FROM executor_runs WHERE user_id=? AND id=?").get(userId, runId) as
     | { pid: number | null; status: string; channel: string }
     | undefined;
   if (!row) throw new Error(`stopExecutor: no run #${runId}`);
@@ -373,6 +386,7 @@ export function stopExecutor(db: DB, runId: number): void {
   }
 
   db.prepare("UPDATE executor_runs SET status='stopped', ended_at=datetime('now') WHERE id=?").run(runId);
+  revokeRunTokens(db, runId);
 }
 
 export interface ClaimedRun {
@@ -383,17 +397,17 @@ export interface ClaimedRun {
 }
 
 // The attended session's poll loop calls this (GET /api/executor/claim-next?channel=user_chrome)
-// to pick up the oldest queued run of that channel: atomically flips it queued -> running (the
-// `AND status='queued'` guard means a race between two attended sessions polling at once loses
-// gracefully — the loser's UPDATE affects 0 rows and it gets null back, not someone else's run).
-// Returns null when there's nothing queued.
+// to pick up the account's oldest queued run of that channel: atomically flips it queued ->
+// running (the `AND status='queued'` guard means a race between two attended sessions polling at
+// once loses gracefully — the loser's UPDATE affects 0 rows and it gets null back, not someone
+// else's run). Returns null when there's nothing queued.
 // `kinds` (optional) restricts which run kinds this claimer takes — an attended session that only
 // knows the apply/referral protocols must not swallow a queued 'scan' run meant for another.
-export function claimNextRun(db: DB, channel: ExecutorChannel = "user_chrome", kinds?: ExecutorKind[]): ClaimedRun | null {
+export function claimNextRun(db: DB, userId: string, channel: ExecutorChannel = "user_chrome", kinds?: ExecutorKind[]): ClaimedRun | null {
   const kindFilter = kinds && kinds.length > 0 ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
   const row = db
-    .prepare(`SELECT id, kind, options, log_path FROM executor_runs WHERE channel=? AND status='queued'${kindFilter} ORDER BY id ASC LIMIT 1`)
-    .get(channel, ...(kinds ?? [])) as { id: number; kind: string; options: string; log_path: string | null } | undefined;
+    .prepare(`SELECT id, kind, options, log_path FROM executor_runs WHERE user_id=? AND channel=? AND status='queued'${kindFilter} ORDER BY id ASC LIMIT 1`)
+    .get(userId, channel, ...(kinds ?? [])) as { id: number; kind: string; options: string; log_path: string | null } | undefined;
   if (!row) return null;
 
   const result = db
@@ -410,16 +424,27 @@ export function claimNextRun(db: DB, channel: ExecutorChannel = "user_chrome", k
   return { id: row.id, kind: row.kind as ExecutorKind, options, logPath: row.log_path };
 }
 
+// The oldest queued user_chrome run for an account, without claiming it (the dispatcher's view).
+export function nextQueuedRun(db: DB, userId: string): { id: number; kind: ExecutorKind } | null {
+  const row = db
+    .prepare("SELECT id, kind FROM executor_runs WHERE user_id=? AND channel='user_chrome' AND status='queued' ORDER BY id ASC LIMIT 1")
+    .get(userId) as { id: number; kind: string } | undefined;
+  return row ? { id: row.id, kind: row.kind as ExecutorKind } : null;
+}
+
+function ownedRun<T>(db: DB, userId: string, runId: number, cols: string, what: string): T {
+  const row = db.prepare(`SELECT ${cols} FROM executor_runs WHERE user_id=? AND id=?`).get(userId, runId) as T | undefined;
+  if (!row) throw new Error(`${what}: no run #${runId}`);
+  return row;
+}
+
 // Appends one timestamped line to a run's log file — how an attended session reports progress
 // back (POST /api/executor/log), mirroring what tailLines()/the App's status poll read from a
 // headless run's stdout-redirected log. Throws for an unknown run or one with no log_path yet
 // (should never happen: startExecutor always creates the file before returning) rather than
 // silently dropping the line.
-export function appendRunLog(db: DB, runId: number, line: string): void {
-  const row = db.prepare("SELECT log_path FROM executor_runs WHERE id=?").get(runId) as
-    | { log_path: string | null }
-    | undefined;
-  if (!row) throw new Error(`appendRunLog: no run #${runId}`);
+export function appendRunLog(db: DB, userId: string, runId: number, line: string): void {
+  const row = ownedRun<{ log_path: string | null }>(db, userId, runId, "log_path", "appendRunLog");
   if (!row.log_path) throw new Error(`appendRunLog: run #${runId} has no log_path`);
   const ts = new Date().toTimeString().slice(0, 8); // HH:MM:SS
   fs.appendFileSync(row.log_path, `[${ts}] ${line}\n`);
@@ -430,9 +455,8 @@ export function appendRunLog(db: DB, runId: number, line: string): void {
 // 'queued' (a session might finish immediately without ever logging progress); anything else
 // (already done/failed/stopped) is a no-op-that-throws so a duplicate finish call surfaces rather
 // than silently overwriting a terminal status.
-export function finishRun(db: DB, runId: number, status: "done" | "failed" | "stopped", summary?: string): void {
-  const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(runId) as { status: string } | undefined;
-  if (!row) throw new Error(`finishRun: no run #${runId}`);
+export function finishRun(db: DB, userId: string, runId: number, status: "done" | "failed" | "stopped", summary?: string): void {
+  const row = ownedRun<{ status: string }>(db, userId, runId, "status", "finishRun");
   if (row.status !== "running" && row.status !== "queued") {
     throw new Error(`finishRun: run #${runId} is not running/queued (status='${row.status}')`);
   }
@@ -441,6 +465,7 @@ export function finishRun(db: DB, runId: number, status: "done" | "failed" | "st
     summary ?? null,
     runId
   );
+  revokeRunTokens(db, runId);
 }
 
 export interface RunStatusRow {
@@ -458,16 +483,57 @@ export interface RunStatusRow {
   logTail?: string[];
 }
 
+interface RawRunRow {
+  id: number;
+  kind: string;
+  status: string;
+  channel: string;
+  pid: number | null;
+  log_path: string | null;
+  options: string;
+  summary: string | null;
+  started_at: string;
+  claimed_at: string | null;
+  ended_at: string | null;
+}
+
+const RUN_COLS = "id, kind, status, channel, pid, log_path, options, summary, started_at, claimed_at, ended_at";
+
+function toStatusRow(r: RawRunRow): RunStatusRow {
+  let options: unknown = {};
+  try {
+    options = JSON.parse(r.options);
+  } catch {
+    options = {};
+  }
+  return {
+    id: r.id,
+    kind: r.kind,
+    status: r.status,
+    channel: r.channel,
+    pid: r.pid,
+    logPath: r.log_path,
+    options,
+    summary: r.summary,
+    startedAt: r.started_at,
+    claimedAt: r.claimed_at,
+    endedAt: r.ended_at,
+  };
+}
+
+// One run row (GET /api/executor/run?id=), or null when it is not this account's.
+export function getRun(db: DB, userId: string, runId: number): RunStatusRow | null {
+  const row = db.prepare(`SELECT ${RUN_COLS} FROM executor_runs WHERE user_id=? AND id=?`).get(userId, runId) as RawRunRow | undefined;
+  return row ? toStatusRow(row) : null;
+}
+
 // The App's "详情" view of one run (GET /api/executor/log?id=): the whole log, not a tail, for
 // running and finished runs alike — an attended session logs every step it takes (claim, open
 // page, eligibility check, each field group, upload, read-back, report, wait, submit), and the
 // user wants to be able to read all of it after the fact. Throws for an unknown run; a missing
 // log file (deleted out of band) reads as empty rather than an error.
-export function runLogLines(db: DB, runId: number): string[] {
-  const row = db.prepare("SELECT log_path FROM executor_runs WHERE id=?").get(runId) as
-    | { log_path: string | null }
-    | undefined;
-  if (!row) throw new Error(`runLogLines: no run #${runId}`);
+export function runLogLines(db: DB, userId: string, runId: number): string[] {
+  const row = ownedRun<{ log_path: string | null }>(db, userId, runId, "log_path", "runLogLines");
   if (!row.log_path) return [];
   return tailLines(row.log_path, Number.MAX_SAFE_INTEGER);
 }
@@ -483,50 +549,18 @@ function tailLines(filePath: string, n: number): string[] {
   }
 }
 
-// The App's polling endpoint: last 10 runs (most recent first), with a ~30-line log tail
-// attached for any that are still 'running' so the UI can show live progress. Reaps stale runs
-// first so a dead-but-still-marked-'running' row self-heals to 'failed' on the very poll that
+// The App's polling endpoint: the account's last 10 runs (most recent first), with a ~30-line log
+// tail attached for any that are still 'running' so the UI can show live progress. Reaps stale
+// runs first so a dead-but-still-marked-'running' row self-heals to 'failed' on the very poll that
 // would otherwise keep showing it as active forever.
-export function executorStatus(db: DB): RunStatusRow[] {
+export function executorStatus(db: DB, userId: string): RunStatusRow[] {
   reapStaleRuns(db);
   const rows = db
-    .prepare(
-      "SELECT id, kind, status, channel, pid, log_path, options, summary, started_at, claimed_at, ended_at FROM executor_runs ORDER BY id DESC LIMIT 10"
-    )
-    .all() as {
-    id: number;
-    kind: string;
-    status: string;
-    channel: string;
-    pid: number | null;
-    log_path: string | null;
-    options: string;
-    summary: string | null;
-    started_at: string;
-    claimed_at: string | null;
-    ended_at: string | null;
-  }[];
+    .prepare(`SELECT ${RUN_COLS} FROM executor_runs WHERE user_id=? ORDER BY id DESC LIMIT 10`)
+    .all(userId) as RawRunRow[];
 
   return rows.map((r) => {
-    let options: unknown = {};
-    try {
-      options = JSON.parse(r.options);
-    } catch {
-      options = {};
-    }
-    const result: RunStatusRow = {
-      id: r.id,
-      kind: r.kind,
-      status: r.status,
-      channel: r.channel,
-      pid: r.pid,
-      logPath: r.log_path,
-      options,
-      summary: r.summary,
-      startedAt: r.started_at,
-      claimedAt: r.claimed_at,
-      endedAt: r.ended_at,
-    };
+    const result = toStatusRow(r);
     if ((r.status === "running" || r.status === "queued") && r.log_path) {
       result.logTail = tailLines(r.log_path, 30);
     }

@@ -1,18 +1,26 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Menu as MenuIcon, Monitor, Moon, Sun, X } from "lucide-react";
+import { LogOut, Menu as MenuIcon, Monitor, Moon, Settings, Sun, UserRound, X } from "lucide-react";
 import { attentionTotal } from "@/app/lib/overview-types";
 import { cx } from "@/app/lib/cx";
 import { getTheme, setTheme, type Theme } from "@/app/lib/settings";
-import { IconButton } from "@/app/components/ui";
+import { authClient } from "@/lib/auth-client";
+import { IconButton, Menu, useToast } from "@/app/components/ui";
 import { useOverview } from "../overview-context";
 import { AssistantPill } from "../assistant-card";
 import { NAV, SETTINGS_NAV, isActivePath } from "./nav";
 
 const THEME_LABEL: Record<Theme, string> = { light: "浅色", dark: "深色", system: "跟随系统" };
 const THEME_NEXT: Record<Theme, Theme> = { system: "light", light: "dark", dark: "system" };
+
+export interface ShellUser {
+  name: string;
+  email: string;
+  role: string;
+  emailVerified: boolean;
+}
 
 function ThemeToggle() {
   const [theme, setThemeState] = useState<Theme>("system");
@@ -35,7 +43,50 @@ function ThemeToggle() {
   );
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+function initials(name: string, email: string): string {
+  const src = name.trim() || email;
+  const first = [...src][0] ?? "?";
+  return first.toUpperCase();
+}
+
+// The account chip at the foot of the sidebar: who is signed in, with 设置 / 退出登录.
+function UserChip({ user }: { user: ShellUser }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  async function signOut() {
+    const { error } = await authClient.signOut();
+    if (error) {
+      toast({ title: "退出失败", description: error.message ?? "", tone: "danger" });
+      return;
+    }
+    router.push("/login");
+    router.refresh();
+  }
+  return (
+    <Menu
+      align="start"
+      items={[
+        { label: "账号与设置", icon: <Settings size={14} />, onSelect: () => router.push("/settings#account") },
+        { label: "我的档案", icon: <UserRound size={14} />, onSelect: () => router.push("/profile?tab=basics") },
+        "sep",
+        { label: "退出登录", icon: <LogOut size={14} />, onSelect: () => void signOut() },
+      ]}
+      trigger={(p) => (
+        <button type="button" className="user-chip" title={user.email} {...p}>
+          <span className="user-avatar" aria-hidden>
+            {initials(user.name, user.email)}
+          </span>
+          <span className="grow" style={{ minWidth: 0 }}>
+            <span className="user-chip-name truncate">{user.name || user.email}</span>
+            <span className="user-chip-mail truncate">{user.email}</span>
+          </span>
+        </button>
+      )}
+    />
+  );
+}
+
+export function AppShell({ children, user }: { children: React.ReactNode; user: ShellUser }) {
   const pathname = usePathname();
   const { data } = useOverview();
   const [navOpen, setNavOpen] = useState(false);
@@ -87,6 +138,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <SETTINGS_NAV.icon size={17} aria-hidden />
         <span className="nav-label">{SETTINGS_NAV.label}</span>
       </Link>
+      <UserChip user={user} />
     </div>
   );
 

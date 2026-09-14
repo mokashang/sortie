@@ -51,6 +51,20 @@ concrete selectors for Greenhouse/Lever/Ashby (Tier A) referenced in step 3 belo
 
 ---
 
+## 0. Authentication (accounts, 2026-09-13)
+
+Every App API call needs a bearer token (spec `docs/superpowers/specs/2026-09-13-accounts-design.md` §2).
+Set it once per session and put `-H "$AUTH"` on **every** `curl` below:
+
+```
+AUTH="authorization: Bearer $(cat data/internal-token)"   # on the server box: acts as the owner account
+```
+
+On another computer use a personal token from the App (设置 → 账号 → 助手令牌):
+`AUTH="authorization: Bearer sortie_…"`. A CLI session the dispatcher spawned already has its run
+token in the prompt — use that one. A 401 means the token is missing/revoked: stop and tell the user.
+Never write the token into run logs or into any web page.
+
 ## 1. Preflight
 
 Before touching the browser, verify both halves of the system are actually reachable:
@@ -58,7 +72,7 @@ Before touching the browser, verify both halves of the system are actually reach
 1. **App is running.** Use the **Bash tool** to call the App's API with `curl` — this is how you
    talk to `http://127.0.0.1:3000` for the *entire* skill, not just this check:
    ```
-   curl -s -X GET http://127.0.0.1:3000/api/apply/pending
+   curl -s -H "$AUTH" -X GET http://127.0.0.1:3000/api/apply/pending
    ```
    Expect a 200 with a JSON body shaped `{ "pending": [...] }`. If the connection fails, tell the
    user the App isn't running (`npm run dev` in the project dir) and stop. Do not proceed on
@@ -90,8 +104,8 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    runs carry `jobIds` instead. `mode: "referral"` returns a `ReferralTask` and is handled by
    §2b, not this loop.
    ```
-   curl -s -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{"direction": "<slug>", "mode": "direct"}'
-   curl -s -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{"jobIds": [123, 124]}'
+   curl -s -H "$AUTH" -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{"direction": "<slug>", "mode": "direct"}'
+   curl -s -H "$AUTH" -X POST http://127.0.0.1:3000/api/apply/next -H 'content-type: application/json' -d '{"jobIds": [123, 124]}'
    ```
    - Response `{ done: true }` → no more matched jobs with a ready resume. Stop the loop, report
      a summary to the user (how many submitted this session, how many parked as needs_manual).
@@ -132,7 +146,7 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    *actual* values sitting in the form fields — don't just echo what you intended to type, since a
    dropdown or autocomplete may have changed the effective value. Use `read_page` and/or
    `javascript_tool` to pull real `.value`/selected-option text.
-   - Success (all via `curl -s -X POST http://127.0.0.1:3000/api/apply/report -H 'content-type: application/json' -d '<json>'`):
+   - Success (all via `curl -s -H "$AUTH" -X POST http://127.0.0.1:3000/api/apply/report -H 'content-type: application/json' -d '<json>'`):
      `{ "jobId": task.jobId, "status": "awaiting_confirm", "filledFields": { "First name": "...", "Email": "...", ... } }`.
      Keys should be human-readable labels (what the user will see in the /apply review table),
      values the actual filled text. Include an `unanswered` note as one of the entries (e.g.
@@ -152,7 +166,7 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
 
 5. **Poll for the human's decision.** Every 5 seconds, up to 30 minutes total:
    ```
-   curl -s "http://127.0.0.1:3000/api/apply/pending?jobId=<task.jobId>"
+   curl -s -H "$AUTH" "http://127.0.0.1:3000/api/apply/pending?jobId=<task.jobId>"
    ```
    → `{ "decision": null | "approved" | "rejected", "status": "..." }`.
    - `decision === "approved"`: proceed to submit — see §4.

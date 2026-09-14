@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseProfile, loadProfile } from "@/lib/profile";
-import fs from "fs";
-import os from "os";
-import path from "path";
+import { parseProfile, parseProfileData, emptyProfileData, REQUIRED_PROFILE_FIELDS } from "@/lib/profile";
 
 const yamlText = `
 name: Test User
@@ -57,14 +54,17 @@ describe("profile", () => {
     expect(() => parseProfile(bad)).toThrow();
   });
 
-  it("loadProfile accepts an optional file path override", () => {
-    const tmpFile = path.join(os.tmpdir(), `profile-test-${Date.now()}.yaml`);
-    fs.writeFileSync(tmpFile, yamlText);
-    try {
-      const p = loadProfile(tmpFile);
-      expect(p.name).toBe("Test User");
-    } finally {
-      fs.unlinkSync(tmpFile);
-    }
+  it("parseProfileData validates a plain object the same way", () => {
+    expect(parseProfileData({ ...emptyProfileData(), name: "A", email: "a@b.co", phone: "1", school: "S", degree: "D", grad_date: "2027-05", directions: { mle: 1 } }).name).toBe("A");
+    expect(() => parseProfileData(emptyProfileData())).toThrow(); // blank required fields
+  });
+
+  it("emptyProfileData pre-fills the account's name/email and the truthful defaults", () => {
+    const d = emptyProfileData({ name: "Ann", email: "ann@x.y" }) as { name: string; email: string; work_auth: { needs_sponsorship: boolean }; eeo: { gender: string } };
+    expect(d.name).toBe("Ann");
+    expect(d.email).toBe("ann@x.y");
+    expect(d.work_auth.needs_sponsorship).toBe(true);
+    expect(d.eeo.gender).toBe("Decline to self-identify");
+    for (const f of REQUIRED_PROFILE_FIELDS) expect(f in d).toBe(true);
   });
 });

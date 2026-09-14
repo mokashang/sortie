@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { withUser } from "@/lib/actor";
 
 interface JobDetailRow {
   title: string;
@@ -22,10 +23,9 @@ interface JobDetailRow {
 }
 
 // GET /api/jobs/[id] — the interactive /queue page's row-expand ("展开 JD 与打分理由") drawer
-// data source. LEFT JOINs matches/resumes so a job that hasn't been scored yet (or whose match
-// has no resume picked out for it) still resolves cleanly with null fields, rather than the row
-// vanishing from a plain INNER JOIN.
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+// data source. LEFT JOINs the account's own match/resume rows so a job that hasn't been scored
+// for them yet still resolves cleanly with null fields, rather than the row vanishing.
+export const GET = withUser(async (_req, { userId }, { params }) => {
   const { id } = await params;
   const jobId = Number(id);
   if (!Number.isFinite(jobId)) {
@@ -40,11 +40,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
               j.jd_status, j.duplicate_of, j.sponsorship, j.degree_req, j.role_kind, m.skip_reason,
               (SELECT group_concat(d.location, ' | ') FROM jobs d WHERE d.duplicate_of = j.id) AS sibling_locations
        FROM jobs j
-       LEFT JOIN matches m ON m.job_id = j.id
+       LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ?
        LEFT JOIN resumes r ON r.id = m.resume_id
        WHERE j.id = ?`
     )
-    .get(jobId) as JobDetailRow | undefined;
+    .get(userId, jobId) as JobDetailRow | undefined;
 
   if (!row) {
     return NextResponse.json({ error: `no job with id ${jobId}` }, { status: 404 });
@@ -71,4 +71,4 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     skip_reason: row.skip_reason,
     sibling_locations: row.sibling_locations,
   });
-}
+});

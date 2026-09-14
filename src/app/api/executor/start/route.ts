@@ -1,25 +1,23 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { startExecutor, ExecutorKind, ExecutorChannel } from "@/executor/runner";
+import { withUser, failResponse } from "@/lib/actor";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
 const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 
 // POST {kind: 'apply'|'network_send'|'network_find'|'jd_review', options?, channel?: 'headless'|'user_chrome'}
-// — starts an executor session for the requested kind. channel defaults to 'user_chrome' (the
-// App's default: "值守会话" — an already-open interactive Claude Code session with the
-// claude-in-chrome extension attached to the user's own Chrome polls claim-next and drives it).
-// 'headless' spawns a detached `claude -p` process against its own Playwright browser profile, as
-// before. Refuses (400) if one of the same kind+channel is already running/queued; see
-// src/executor/runner.ts for the full duplicate-kind/PID-liveness/queued logic.
+// — starts an executor session for the requested kind, owned by the calling account. channel
+// defaults to 'user_chrome' (the App's default: "值守会话" — an already-open interactive Claude
+// Code session with the claude-in-chrome extension attached to the user's own Chrome polls
+// claim-next and drives it). 'headless' spawns a detached `claude -p` process against the
+// account's own Playwright browser profile. Refuses (400) if one of the same kind+channel is
+// already running/queued for the account; see src/executor/runner.ts.
 //
 // jd_review has no user_chrome protocol (buildJdReviewPrompt only exists as a headless
 // Playwright-profile prompt — there's no attended-session equivalent), so its channel is forced
-// to 'headless' here regardless of what the caller passed, before channel validation runs. The
-// App UI is expected to pin jd_review to headless too (a later task), but the route enforces it
-// either way so an omitted/misrouted `channel` can never queue a jd_review run onto a channel
-// with no attended-session protocol to service it.
-export async function POST(req: Request) {
+// to 'headless' here regardless of what the caller passed, before channel validation runs.
+export const POST = withUser(async (req, { userId }) => {
   try {
     const body = await req.json();
     const kind = body.kind as string;
@@ -33,9 +31,9 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const result = startExecutor(getDb(), kind as ExecutorKind, body.options ?? {}, {}, channel as ExecutorChannel);
+    const result = startExecutor(getDb(), userId, kind as ExecutorKind, body.options ?? {}, {}, channel as ExecutorChannel);
     return NextResponse.json(result);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return failResponse(e);
   }
-}
+});

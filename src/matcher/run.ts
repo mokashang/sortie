@@ -4,11 +4,17 @@ import { buildMatchPrompt, parseMatchResults, MatchProfile, MatchJobInput, Match
 import { applyEligibility, archiveCluster } from "@/apply/eligibility";
 
 export interface MatchOptions {
+  // The account whose profile is being matched — matches/applications rows are written for it.
+  userId: string;
   backend: LlmBackend;
   profile: MatchProfile;
   batchSize?: number;   // jobs per LLM call
   threshold?: number;   // score below which (or skip=true) → archived
   limit?: number;       // max jobs to score this run (for incremental passes)
+  // Only score jobs created at/after this sqlite datetime ("YYYY-MM-DD HH:MM:SS" or ISO). A new
+  // account should not burn the hourly budget on months-old postings — spec 2026-09-13 §4 sets
+  // this to 45 days before the account was created.
+  since?: string;
   // Max number of LLM batch calls (opts.backend.complete) in flight at once. Default 1 preserves
   // the original fully-sequential behavior. DB writes (one db.transaction per batch) always run
   // synchronously as each call resolves, so writes never interleave regardless of concurrency.
@@ -44,43 +50,48 @@ interface JobRow {
 
 export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSummary> {
   const startedAt = Date.now();
+  const userId = opts.userId;
   const batchSize = opts.batchSize ?? 10;
   const threshold = opts.threshold ?? 40;
   const summary: MatchSummary = { scored: 0, matched: 0, archived: 0, errors: [], durationMs: 0 };
 
-  // Only score jobs that: are not visa-flagged, and have no match row yet (resumable) — plus,
-  // when rescoreArchived is set, jobs whose application status is 'archived' even though they
-  // already have a match row (the rescue path for an under-calibrated earlier pass).
+  // Only score jobs that: are not visa-flagged, and have no match row for this user yet
+  // (resumable) — plus, when rescoreArchived is set, jobs whose application status is 'archived'
+  // even though they already have a match row (the rescue path for an under-calibrated pass).
+  // The applications row for (user, job) always exists (backfilled at sign-up / written by the
+  // scanner), so the inner JOIN is what scopes the pass to this account.
   const rescoreClause = opts.rescoreArchived ? " OR a.status = 'archived'" : "";
+  const sinceClause = opts.since ? " AND j.created_at >= ?" : "";
+  const sinceParams = opts.since ? [opts.since] : [];
   const rows = (
     opts.rescoreMatched
       ? db.prepare(
           `SELECT j.id, j.company, j.title, j.location, j.jd_text, a.pinned, a.status
-           FROM jobs j JOIN applications a ON a.job_id = j.id JOIN matches m ON m.job_id = j.id
+           FROM jobs j JOIN applications a ON a.job_id = j.id AND a.user_id = ? JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
            WHERE a.status = 'matched' AND j.duplicate_of IS NULL AND j.visa_flag IS NULL AND j.loc_flag IS NULL
-             AND j.jd_text <> '' AND j.jd_text NOT LIKE '[listing metadata]%'
+             AND j.jd_text <> '' AND j.jd_text NOT LIKE '[listing metadata]%'${sinceClause}
            ORDER BY j.created_at DESC ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
-        )
+        ).all(userId, ...sinceParams)
       : db.prepare(
           `SELECT j.id, j.company, j.title, j.location, j.jd_text, a.pinned, a.status
-           FROM jobs j JOIN applications a ON a.job_id = j.id LEFT JOIN matches m ON m.job_id = j.id
-           WHERE j.visa_flag IS NULL AND j.loc_flag IS NULL AND j.duplicate_of IS NULL AND (m.id IS NULL${rescoreClause})
+           FROM jobs j JOIN applications a ON a.job_id = j.id AND a.user_id = ? LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+           WHERE j.visa_flag IS NULL AND j.loc_flag IS NULL AND j.duplicate_of IS NULL AND (m.id IS NULL${rescoreClause})${sinceClause}
            ORDER BY j.created_at DESC ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
-        )
-  ).all() as JobRow[];
+        ).all(userId, ...sinceParams)
+  ) as JobRow[];
 
   // ON CONFLICT ... DO UPDATE (rather than DO NOTHING) so the rescoreArchived path can overwrite
   // an existing match row with fresh score/direction/reason.
   const insMatch = db.prepare(
-    `INSERT INTO matches (job_id, direction, score, tier, reason, skip_reason) VALUES (?,?,?,?,?,?)
-     ON CONFLICT(job_id) DO UPDATE SET
+    `INSERT INTO matches (user_id, job_id, direction, score, tier, reason, skip_reason) VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT(user_id, job_id) DO UPDATE SET
        direction=excluded.direction,
        score=excluded.score,
        tier=excluded.tier,
        reason=excluded.reason,
        skip_reason=excluded.skip_reason`
   );
-  const setStatus = db.prepare("UPDATE applications SET status=? WHERE job_id=? AND status IN ('discovered','matched','archived')");
+  const setStatus = db.prepare("UPDATE applications SET status=? WHERE user_id=? AND job_id=? AND status IN ('discovered','matched','archived')");
 
   // Slice the (already-selected, order-fixed) rows into fixed batches up front — concurrency only
   // affects how these batches are *processed*, never which jobs land in which batch.
@@ -123,6 +134,9 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
         const res = byId.get(r.id);
         if (!res) continue; // model omitted this job — leave unscored for a later run
         const tier = res.direction ? (opts.profile.directions[res.direction] ?? null) : null;
+        // Job-level facts (sponsorship / degree / role) are shared: applyEligibility writes them on
+        // the job and, on a hard failure, archives the cluster for every account (archive:false
+        // here so the pinned check below stays per-row for this account's own row).
         const elig = applyEligibility(
           db,
           { jobId: r.id, sponsorship: res.sponsorship, degree: res.degree, role: res.role, source: "match_llm", evidence: res.reason },
@@ -135,7 +149,7 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
         const wantsArchive = opts.rescoreMatched ? failReason !== null : failReason !== null || lowScore;
         const archived = wantsArchive && r.pinned === 0;
         const skipReason = failReason ?? (res.skip ? "low fit" : lowScore ? `low score (${res.score})` : null);
-        insMatch.run(r.id, res.direction, res.score, tier, res.reason, opts.rescoreMatched && !failReason ? null : skipReason);
+        insMatch.run(userId, r.id, res.direction, res.score, tier, res.reason, opts.rescoreMatched && !failReason ? null : skipReason);
         if (failReason && archived) archiveCluster(db, r.id, failReason, { respectPinned: true });
         // Pinned rows are protected from auto-ARCHIVING only, never from PROMOTION: a pinned row
         // never gets flipped to 'archived' by the matcher (see `archived` above), but a pinned
@@ -144,10 +158,10 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
         // skip_reason/eligibility fields are still written above regardless of pinned status.
         const changes =
           r.pinned === 0
-            ? setStatus.run(archived ? "archived" : "matched", r.id).changes
+            ? setStatus.run(archived ? "archived" : "matched", userId, r.id).changes
             : archived
               ? 0
-              : db.prepare("UPDATE applications SET status = 'matched' WHERE job_id = ? AND status = 'discovered'").run(r.id).changes;
+              : db.prepare("UPDATE applications SET status = 'matched' WHERE user_id = ? AND job_id = ? AND status = 'discovered'").run(userId, r.id).changes;
         summary.scored++;
         // Only count matched/archived when the UPDATE actually changed a row — a job already past
         // these states (e.g. 'submitted') still gets its match row written, but the counters
@@ -178,6 +192,6 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
   await Promise.all(workers);
 
   summary.durationMs = Date.now() - startedAt;
-  logEvent(db, "match_done", { entity: "matcher", payload: summary });
+  logEvent(db, "match_done", { userId, entity: "matcher", payload: summary });
   return summary;
 }

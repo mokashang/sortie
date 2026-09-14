@@ -229,6 +229,9 @@ function profileSummary(profile: Profile): Record<string, unknown> {
 }
 
 export interface GenerateDraftOptions {
+  // The account writing the message: person, jobs' match rows, experiences and the new outreach
+  // row all belong to it.
+  userId: string;
   backend: LlmBackend;
   profile: Profile;
   personId: number;
@@ -259,20 +262,20 @@ interface PersonRow {
   notes: string | null;
 }
 
-function getPerson(db: DB, personId: number): PersonRow {
+function getPerson(db: DB, userId: string, personId: number): PersonRow {
   const row = db
-    .prepare("SELECT id, name, company, role_title, relation, notes FROM people WHERE id = ?")
-    .get(personId) as PersonRow | undefined;
+    .prepare("SELECT id, name, company, role_title, relation, notes FROM people WHERE user_id = ? AND id = ?")
+    .get(userId, personId) as PersonRow | undefined;
   if (!row) throw new Error(`generateDraft: unknown person ${personId}`);
   return row;
 }
 
-function getJob(db: DB, jobId: number): JobInfo {
+function getJob(db: DB, userId: string, jobId: number): JobInfo {
   const row = db
     .prepare(
-      "SELECT j.id, j.company, j.title, j.apply_url, m.direction FROM jobs j LEFT JOIN matches m ON m.job_id = j.id WHERE j.id = ?"
+      "SELECT j.id, j.company, j.title, j.apply_url, m.direction FROM jobs j LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ? WHERE j.id = ?"
     )
-    .get(jobId) as { id: number; company: string; title: string; apply_url: string | null; direction: string | null } | undefined;
+    .get(userId, jobId) as { id: number; company: string; title: string; apply_url: string | null; direction: string | null } | undefined;
   if (!row) throw new Error(`generateDraft: unknown job ${jobId}`);
   return { id: row.id, company: row.company, title: row.title, applyUrl: row.apply_url, direction: row.direction };
 }
@@ -301,9 +304,9 @@ function lastThreadEntryForPerson(db: DB, personId: number): ThreadEntry | undef
 // as the last resort.
 export async function shortenNote(
   db: DB,
-  opts: { backend: LlmBackend; outreachId: number; max: number }
+  opts: { userId: string; backend: LlmBackend; outreachId: number; max: number }
 ): Promise<{ draftNote: string; source: "model" | "trim" }> {
-  const row = db.prepare("SELECT status, draft, draft_note FROM outreach WHERE id = ?").get(opts.outreachId) as
+  const row = db.prepare("SELECT status, draft, draft_note FROM outreach WHERE user_id = ? AND id = ?").get(opts.userId, opts.outreachId) as
     | { status: string; draft: string | null; draft_note: string | null }
     | undefined;
   if (!row) throw new Error(`shortenNote: unknown outreach ${opts.outreachId}`);
@@ -347,6 +350,7 @@ export async function shortenNote(
   const result = note !== null ? { draftNote: note, source: "model" as const } : { draftNote: trimToNote(source, max), source: "trim" as const };
   db.prepare("UPDATE outreach SET draft_note = ? WHERE id = ?").run(result.draftNote, opts.outreachId);
   logEvent(db, "outreach_note_shortened", {
+    userId: opts.userId,
     entity: "outreach",
     entityId: opts.outreachId,
     payload: { max, length: result.draftNote.length, source: result.source },
@@ -372,14 +376,14 @@ export async function generateDraft(db: DB, opts: GenerateDraftOptions): Promise
     throw new Error(`generateDraft: invalid channel '${channel}'`);
   }
 
-  const person = getPerson(db, opts.personId);
+  const person = getPerson(db, opts.userId, opts.personId);
   const jobs = opts.jobIds?.length
-    ? opts.jobIds.map((id) => getJob(db, id))
+    ? opts.jobIds.map((id) => getJob(db, opts.userId, id))
     : opts.jobId
-    ? [getJob(db, opts.jobId)]
+    ? [getJob(db, opts.userId, opts.jobId)]
     : undefined;
   const threadTail = opts.playbook === "followup" ? lastThreadEntryForPerson(db, opts.personId) : undefined;
-  const highlights = pickHighlights(listExperiences(db), targetDirections(opts.profile, jobs));
+  const highlights = pickHighlights(listExperiences(db, opts.userId), targetDirections(opts.profile, jobs));
 
   const wantNote = channel === "linkedin";
   const req = buildDraftPrompt(opts.profile, person, opts.playbook, jobs, threadTail, { note: wantNote, highlights });
@@ -394,7 +398,7 @@ export async function generateDraft(db: DB, opts: GenerateDraftOptions): Promise
   const modelNote = parsed.note?.trim();
   const draftNote = wantNote ? (modelNote && modelNote.length <= NOTE_MAX_CHARS ? modelNote : trimToNote(draft)) : null;
 
-  const outreachId = createOutreach(db, {
+  const outreachId = createOutreach(db, opts.userId, {
     personId: opts.personId,
     jobId: opts.jobId,
     playbook: opts.playbook,

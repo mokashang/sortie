@@ -40,19 +40,19 @@ interface PendingInfoRaw {
 // /apply's 待补信息 panel: every application with open questions — the executor is either still
 // waiting on it (needs_info) or gave up after the timeout and parked it (matched + reason), in
 // which case answering re-queues it and the next run continues with the answers.
-export function pendingInfo(db: DB): PendingInfoRow[] {
+export function pendingInfo(db: DB, userId: string): PendingInfoRow[] {
   const rows = db
     .prepare(
       `SELECT a.job_id, j.company, j.title, j.apply_url, m.direction, a.status, a.needs_manual_reason,
               a.pending_questions, strftime('%m-%d %H:%M', a.updated_at, 'localtime') as asked_at
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       LEFT JOIN matches m ON m.job_id = j.id
-       WHERE a.pending_questions IS NOT NULL
+       LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.pending_questions IS NOT NULL
          AND (a.status = 'needs_info' OR (a.status = 'matched' AND a.needs_manual_reason IS NOT NULL))
        ORDER BY (a.status = 'needs_info') DESC, a.updated_at DESC`
     )
-    .all() as PendingInfoRaw[];
+    .all(userId) as PendingInfoRaw[];
   return rows.flatMap((r) => {
     let questions: InfoQuestion[] = [];
     try {
@@ -83,19 +83,20 @@ export interface AnswerInfoResult {
 
 // User -> App from the 待补信息 card. Stores the answers on the application (all of them, so the
 // executor / a later re-take sees the full set), hands the remembered ones to `persist` (the
-// profile writer, injected so tests don't touch profile.yaml), and moves the application on:
+// profile writer, injected so tests don't touch the stored profile), and moves the application on:
 // needs_info -> prepared (the waiting executor's next poll picks the answers up and continues);
 // matched+parked -> matched unparked (re-enters the queue; the next run's answer pack carries
 // the answers). Every question must be answered — a half-answered form would just bounce back.
 export function answerInfo(
   db: DB,
+  userId: string,
   jobId: number,
   answers: Record<string, InfoAnswer>,
   persist: (remembered: Record<string, string>) => void
 ): AnswerInfoResult {
   const row = db
-    .prepare("SELECT status, pending_questions, info_answers, needs_manual_reason FROM applications WHERE job_id = ?")
-    .get(jobId) as
+    .prepare("SELECT status, pending_questions, info_answers, needs_manual_reason FROM applications WHERE user_id = ? AND job_id = ?")
+    .get(userId, jobId) as
     | { status: string; pending_questions: string | null; info_answers: string | null; needs_manual_reason: string | null }
     | undefined;
   if (!row) throw new Error(`answerInfo: no application for job ${jobId}`);
@@ -138,9 +139,10 @@ export function answerInfo(
 
   const nextStatus = row.status === "needs_info" ? "prepared" : "matched";
   db.prepare(
-    "UPDATE applications SET status = ?, info_answers = ?, pending_questions = NULL, needs_manual_reason = NULL WHERE job_id = ?"
-  ).run(nextStatus, JSON.stringify(merged), jobId);
+    "UPDATE applications SET status = ?, info_answers = ?, pending_questions = NULL, needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?"
+  ).run(nextStatus, JSON.stringify(merged), userId, jobId);
   logEvent(db, "application_info_answered", {
+    userId,
     entity: "application",
     entityId: jobId,
     payload: { keys: Object.keys(all), remembered: Object.keys(remembered), from: row.status, to: nextStatus },

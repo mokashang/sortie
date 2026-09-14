@@ -13,6 +13,9 @@ import {
   ApplyTask,
 } from "@/apply/queue";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 const baseYaml = `
 name: Mengjia Shang
 email: shangmengjiajiajia@gmail.com
@@ -122,7 +125,7 @@ describe("archiveFromQueue", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "matched" });
 
-    archiveFromQueue(db, jobId);
+    archiveFromQueue(db, U, jobId);
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("archived");
@@ -133,13 +136,13 @@ describe("archiveFromQueue", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
-    expect(() => archiveFromQueue(db, jobId)).toThrow();
+    expect(() => archiveFromQueue(db, U, jobId)).toThrow();
     expect(getApplication(db, jobId).status).toBe("prepared");
   });
 
   it("throws for an unknown jobId", () => {
     const db = openDb(":memory:");
-    expect(() => archiveFromQueue(db, 999)).toThrow();
+    expect(() => archiveFromQueue(db, U, 999)).toThrow();
   });
 });
 
@@ -147,9 +150,9 @@ describe("unarchive", () => {
   it("restores an archived job to matched and clears needs_manual_reason", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "matched" });
-    archiveFromQueue(db, jobId);
+    archiveFromQueue(db, U, jobId);
 
-    unarchive(db, jobId);
+    unarchive(db, U, jobId);
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("matched");
@@ -160,12 +163,12 @@ describe("unarchive", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "matched" });
 
-    expect(() => unarchive(db, jobId)).toThrow();
+    expect(() => unarchive(db, U, jobId)).toThrow();
   });
 
   it("throws for an unknown jobId", () => {
     const db = openDb(":memory:");
-    expect(() => unarchive(db, 999)).toThrow();
+    expect(() => unarchive(db, U, 999)).toThrow();
   });
 });
 
@@ -174,7 +177,7 @@ describe("setPinned", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, {});
 
-    setPinned(db, jobId, true);
+    setPinned(db, U, jobId, true);
 
     expect(getApplication(db, jobId).pinned).toBe(1);
   });
@@ -183,14 +186,14 @@ describe("setPinned", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { pinned: 1 });
 
-    setPinned(db, jobId, false);
+    setPinned(db, U, jobId, false);
 
     expect(getApplication(db, jobId).pinned).toBe(0);
   });
 
   it("throws for an unknown jobId", () => {
     const db = openDb(":memory:");
-    expect(() => setPinned(db, 999, true)).toThrow();
+    expect(() => setPinned(db, U, 999, true)).toThrow();
   });
 });
 
@@ -202,7 +205,7 @@ describe("takeNextApplication with pinned rows", () => {
     const pinnedLowerPriority = seedJob(db, { company: "PinnedCo", tier: 3, score: 1, pinned: 1 });
     void unpinnedTopPriority;
 
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(pinnedLowerPriority);
   });
@@ -214,7 +217,7 @@ describe("takeNextApplication with pinned rows", () => {
     const pinned = seedJob(db, { company: "B", direction: "quant", tier: 2, score: 1, pinned: 1 });
     void unpinned;
 
-    const result = takeNextApplication(db, testProfile(), { direction: "quant" }) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile(), { direction: "quant" }) as ApplyTask;
 
     expect(result.jobId).toBe(pinned);
   });
@@ -227,14 +230,14 @@ describe("pagedQueue", () => {
       seedJob(db, { company: `Co${i}`, direction: "swe_general", tier: 1, score: 50 + i });
     }
 
-    const page1 = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
+    const page1 = pagedQueue(db, U, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
     expect(page1.total).toBe(30);
     expect(page1.pages).toBe(2);
     expect(page1.rows).toHaveLength(25);
     // score DESC: highest score (79) first.
     expect(page1.rows[0].score).toBe(79);
 
-    const page2 = pagedQueue(db, { direction: "swe_general", page: 2, pageSize: 25, sort: "score" });
+    const page2 = pagedQueue(db, U, { direction: "swe_general", page: 2, pageSize: 25, sort: "score" });
     expect(page2.rows).toHaveLength(5);
   });
 
@@ -243,7 +246,7 @@ describe("pagedQueue", () => {
     seedJob(db, { company: "HighScore", direction: "swe_general", tier: 1, score: 99 });
     const pinnedLow = seedJob(db, { company: "PinnedLow", direction: "swe_general", tier: 9, score: 1, pinned: 1 });
 
-    const result = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
+    const result = pagedQueue(db, U, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
 
     expect(result.rows[0].id).toBe(pinnedLow);
   });
@@ -254,7 +257,7 @@ describe("pagedQueue", () => {
     seedJob(db, { company: "Alpha", direction: "swe_general", score: 90 });
     seedJob(db, { company: "Mid", direction: "swe_general", score: 50 });
 
-    const result = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 25, sort: "company" });
+    const result = pagedQueue(db, U, { direction: "swe_general", page: 1, pageSize: 25, sort: "company" });
 
     expect(result.rows.map((r) => r.company)).toEqual(["Alpha", "Mid", "Zeta"]);
   });
@@ -265,7 +268,7 @@ describe("pagedQueue", () => {
     seedJob(db, { company: "New", direction: "swe_general", postedAt: "2026-03-01" });
     seedJob(db, { company: "Mid", direction: "swe_general", postedAt: "2026-02-01" });
 
-    const result = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 25, sort: "fresh" });
+    const result = pagedQueue(db, U, { direction: "swe_general", page: 1, pageSize: 25, sort: "fresh" });
 
     expect(result.rows.map((r) => r.company)).toEqual(["New", "Mid", "Old"]);
   });
@@ -274,11 +277,11 @@ describe("pagedQueue", () => {
     const db = openDb(":memory:");
     const good = seedJob(db, { company: "Good", direction: "swe_general" });
     const archived = seedJob(db, { company: "Archived", direction: "swe_general" });
-    archiveFromQueue(db, archived);
+    archiveFromQueue(db, U, archived);
     seedJob(db, { company: "NonUs", direction: "swe_general", locFlag: "non_us" });
     seedJob(db, { company: "OtherDir", direction: "quant" });
 
-    const result = pagedQueue(db, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
+    const result = pagedQueue(db, U, { direction: "swe_general", page: 1, pageSize: 25, sort: "score" });
 
     expect(result.total).toBe(1);
     expect(result.rows[0].id).toBe(good);
@@ -288,7 +291,7 @@ describe("pagedQueue", () => {
     const db = openDb(":memory:");
     seedJob(db, { company: "Only", direction: "swe_general" });
 
-    const result = pagedQueue(db, { direction: "swe_general", page: 99, pageSize: 25, sort: "score" });
+    const result = pagedQueue(db, U, { direction: "swe_general", page: 99, pageSize: 25, sort: "score" });
 
     expect(result.rows).toHaveLength(1);
     expect(result.pages).toBe(1);
@@ -296,7 +299,7 @@ describe("pagedQueue", () => {
 
   it("returns empty rows/total 0/pages 1 for a direction with nothing matched", () => {
     const db = openDb(":memory:");
-    const result = pagedQueue(db, { direction: "nonexistent_dir", page: 1, pageSize: 25, sort: "score" });
+    const result = pagedQueue(db, U, { direction: "nonexistent_dir", page: 1, pageSize: 25, sort: "score" });
     expect(result).toEqual({ rows: [], total: 0, pages: 1 });
   });
 
@@ -305,7 +308,7 @@ describe("pagedQueue", () => {
     const noDir = seedJob(db, { company: "NoDir", direction: null });
     seedJob(db, { company: "Tiered", direction: "quant" });
 
-    const result = pagedQueue(db, { direction: UNCLASSIFIED_DIRECTION, page: 1, pageSize: 25, sort: "score" });
+    const result = pagedQueue(db, U, { direction: UNCLASSIFIED_DIRECTION, page: 1, pageSize: 25, sort: "score" });
 
     expect(result.total).toBe(1);
     expect(result.rows[0].id).toBe(noDir);
@@ -318,7 +321,7 @@ describe("pagedQueue", () => {
     const d2 = seedJob(db, { fingerprint: "d2", title: "SWE" });
     db.prepare("UPDATE jobs SET duplicate_of=? WHERE id IN (?,?)").run(main, d1, d2);
     db.prepare("UPDATE jobs SET jd_status='missing' WHERE id=?").run(main);
-    const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    const page = pagedQueue(db, U, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
     expect(page.rows).toHaveLength(1);
     expect(page.rows[0]).toMatchObject({ id: main, dup_count: 2, jd_status: "missing" });
   });
@@ -337,18 +340,18 @@ describe("QUEUE_ELIGIBLE_SQL", () => {
     db.prepare("UPDATE jobs SET sponsorship='no' WHERE id=?").run(nos);
     db.prepare("UPDATE jobs SET degree_req='phd_only' WHERE id=?").run(phd);
     db.prepare("UPDATE jobs SET role_kind='non_tech' WHERE id=?").run(sales);
-    const page = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    const page = pagedQueue(db, U, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
     expect(page.rows.map((r) => r.id)).toEqual([ok]);
-    const groups = queueByDirection(db);
+    const groups = queueByDirection(db, U);
     expect(groups[0].matched).toBe(1);
 
     // Prove the same QUEUE_ELIGIBLE_SQL filter applies to the actual picker, not just the
     // read-only queue views: takeNextApplication must surface only the one eligible job, and
     // report `done: true` once it's been taken — never reach into the duplicate/no-sponsor/
     // phd-only/non-tech rows the queue view also hides.
-    const result = takeNextApplication(db, testProfile()) as ApplyTask;
+    const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
     expect(result.jobId).toBe(ok);
-    const next = takeNextApplication(db, testProfile());
+    const next = takeNextApplication(db, U, testProfile());
     expect(next).toEqual({ done: true });
   });
 });
@@ -381,7 +384,7 @@ describe("pagedAllJobs", () => {
     const raw = seedRawJob(db, { company: "RawCo" });
     const queued = seedJob(db, { company: "QueuedCo", direction: "swe_general", score: 77 });
 
-    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+    const result = pagedAllJobs(db, U, { page: 1, pageSize: 25, sort: "score" });
 
     expect(result.total).toBe(2);
     const rawRow = result.rows.find((r) => r.id === raw)!;
@@ -399,7 +402,7 @@ describe("pagedAllJobs", () => {
     seedRawJob(db, { company: "Overseas", locFlag: "non_us" });
     seedJob(db, { company: "QueuedOverseas", locFlag: "non_us" });
 
-    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "fresh" });
+    const result = pagedAllJobs(db, U, { page: 1, pageSize: 25, sort: "fresh" });
 
     expect(result.total).toBe(1);
     expect(result.rows[0].id).toBe(visible);
@@ -408,9 +411,9 @@ describe("pagedAllJobs", () => {
   it("marks archived and parked applications as not in the queue", () => {
     const db = openDb(":memory:");
     const archived = seedJob(db, { company: "Archived", direction: "swe_general" });
-    archiveFromQueue(db, archived);
+    archiveFromQueue(db, U, archived);
 
-    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+    const result = pagedAllJobs(db, U, { page: 1, pageSize: 25, sort: "score" });
 
     expect(result.total).toBe(1);
     expect(result.rows[0].in_queue).toBe(0);
@@ -422,7 +425,7 @@ describe("pagedAllJobs", () => {
     seedRawJob(db, { company: "New", createdAt: "2026-03-01 00:00:00" });
     seedJob(db, { company: "Mid", createdAt: "2026-02-01 00:00:00" });
 
-    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "fresh" });
+    const result = pagedAllJobs(db, U, { page: 1, pageSize: 25, sort: "fresh" });
 
     expect(result.rows.map((r) => r.company)).toEqual(["New", "Mid", "Old"]);
     expect(result.rows[0].created_at).toBe("2026-03-01 00:00:00");
@@ -434,7 +437,7 @@ describe("pagedAllJobs", () => {
     seedJob(db, { company: "Low", score: 30 });
     seedJob(db, { company: "High", score: 90 });
 
-    const result = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+    const result = pagedAllJobs(db, U, { page: 1, pageSize: 25, sort: "score" });
 
     expect(result.rows.map((r) => r.company)).toEqual(["High", "Low", "Unscored"]);
   });
@@ -443,15 +446,15 @@ describe("pagedAllJobs", () => {
     const db = openDb(":memory:");
     for (let i = 0; i < 30; i++) seedRawJob(db, { company: `Co${i}` });
 
-    const page2 = pagedAllJobs(db, { page: 2, pageSize: 25, sort: "fresh" });
+    const page2 = pagedAllJobs(db, U, { page: 2, pageSize: 25, sort: "fresh" });
     expect(page2.total).toBe(30);
     expect(page2.pages).toBe(2);
     expect(page2.rows).toHaveLength(5);
 
-    const clamped = pagedAllJobs(db, { page: 99, pageSize: 25, sort: "fresh" });
+    const clamped = pagedAllJobs(db, U, { page: 99, pageSize: 25, sort: "fresh" });
     expect(clamped.rows).toHaveLength(5);
 
-    expect(pagedAllJobs(openDb(":memory:"), { page: 1, pageSize: 25, sort: "fresh" })).toEqual({
+    expect(pagedAllJobs(openDb(":memory:"), U, { page: 1, pageSize: 25, sort: "fresh" })).toEqual({
       rows: [],
       total: 0,
       pages: 1,
@@ -465,17 +468,17 @@ describe("pagedQueue mode filter", () => {
     const a = seedJob(db, { direction: "ai_infra", score: 90 });
     const b = seedJob(db, { direction: "ai_infra", score: 80 });
     db.prepare("UPDATE matches SET referral_fit = 1, referral_reason = 'big tech' WHERE job_id = ?").run(a);
-    const all = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
+    const all = pagedQueue(db, U, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score" });
     expect(all.total).toBe(2);
     expect(all.rows[0].effective_mode).toBe("referral");
     expect(all.rows[0].referral_reason).toBe("big tech");
     expect(all.rows[1].effective_mode).toBe("direct");
-    const onlyRef = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "referral" });
+    const onlyRef = pagedQueue(db, U, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "referral" });
     expect(onlyRef.rows.map((r) => r.id)).toEqual([a]);
     expect(onlyRef.total).toBe(1);
-    const onlyDirect = pagedQueue(db, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "direct" });
+    const onlyDirect = pagedQueue(db, U, { direction: "ai_infra", page: 1, pageSize: 25, sort: "score", mode: "direct" });
     expect(onlyDirect.rows.map((r) => r.id)).toEqual([b]);
-    const allJobs = pagedAllJobs(db, { page: 1, pageSize: 25, sort: "score" });
+    const allJobs = pagedAllJobs(db, U, { page: 1, pageSize: 25, sort: "score" });
     expect(allJobs.rows.find((r) => r.id === a)!.effective_mode).toBe("referral");
   });
 });

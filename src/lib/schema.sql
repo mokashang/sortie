@@ -1,3 +1,8 @@
+-- 租户约定(spec 2026-09-13 accounts §3):jobs / boards / companies 是公共数据;带 user_id 的表是每个账号自己的。
+-- user_id 的 DEFAULT 'legacy' 只服务迁移(迁移前的数据落在 legacy 桶,由第一个账号认领)和测试造数据:
+-- 应用代码必须显式写 user_id(tests/tenancy-guard.test.ts 静态检查)。每张表以 `);` 单独一行收尾——
+-- db.ts 的表重建迁移靠这个约定从本文件里截取单张表的 DDL。
+
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   fingerprint TEXT NOT NULL UNIQUE,
@@ -24,9 +29,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 每个账号对每个岗位的打分(一人一行;打分依赖各自的档案)。
 CREATE TABLE IF NOT EXISTS matches (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id),
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  job_id INTEGER NOT NULL REFERENCES jobs(id),
   direction TEXT,
   score INTEGER,
   tier INTEGER,
@@ -35,12 +42,15 @@ CREATE TABLE IF NOT EXISTS matches (
   skip_reason TEXT,
   referral_fit INTEGER,            -- NULL=unclassified | 1=suggest referral | 0=suggest direct (Claude, src/matcher/referral-fit.ts)
   referral_reason TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, job_id)
 );
 
+-- 每个账号对每个岗位一行(注册时回填全部岗位、入库时给每个账号各插一行),状态机见 src/apply/queue.ts。
 CREATE TABLE IF NOT EXISTS applications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_id INTEGER NOT NULL UNIQUE REFERENCES jobs(id),
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  job_id INTEGER NOT NULL REFERENCES jobs(id),
   status TEXT NOT NULL DEFAULT 'discovered',
   -- discovered|matched|prepared|needs_info|awaiting_confirm|submitted|oa|interview|offer|offer_accepted|offer_declined|rejected|stale|archived
   -- |referral_seeking (taken by a referral batch, waiting on outreach) |referral_ready (referral obtained, to apply)
@@ -60,25 +70,29 @@ CREATE TABLE IF NOT EXISTS applications (
   apply_mode TEXT,                 -- NULL (follow suggestion) | referral | direct — user override from /queue
   referral_info TEXT,              -- JSON {source, link?, code?, note?, at} once a referral is obtained
   referral_reached_at TEXT,        -- when the first referral request was actually sent (UTC)
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, job_id)
 );
 
 CREATE TABLE IF NOT EXISTS people (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
   name TEXT NOT NULL,
   company TEXT,
   role_title TEXT,
-  linkedin_url TEXT UNIQUE,
+  linkedin_url TEXT,
   email TEXT,
   email_status TEXT,               -- guessed | verified
   relation TEXT,                   -- recruiter | alum | hiring_manager | engineer
   source TEXT,
   notes TEXT,                      -- 会话在对方主页读到的 1–3 句事实观察(headline/About/近期动态);草稿里「关于对方那句话」的唯一来源
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, linkedin_url)
 );
 
 CREATE TABLE IF NOT EXISTS outreach (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
   person_id INTEGER NOT NULL REFERENCES people(id),
   job_id INTEGER REFERENCES jobs(id),
   playbook TEXT NOT NULL,          -- referral|self_pitch|recruiter|coffee_chat|hidden_opportunity|followup|thanks
@@ -117,15 +131,18 @@ CREATE TABLE IF NOT EXISTS companies (
 
 CREATE TABLE IF NOT EXISTS resumes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  version_name TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  version_name TEXT NOT NULL,
   directions TEXT NOT NULL DEFAULT '[]',
   tex_path TEXT,
   pdf_path TEXT,
-  compiled_at TEXT
+  compiled_at TEXT,
+  UNIQUE (user_id, version_name)
 );
 
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT,                    -- NULL for machine-wide events (scan ticks, board retiers, job eligibility)
   kind TEXT NOT NULL,
   entity TEXT,
   entity_id INTEGER,
@@ -133,13 +150,23 @@ CREATE TABLE IF NOT EXISTS events (
   at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Machine-level key/value state (attended-session heartbeats / spawn records, keyed per user).
 CREATE TABLE IF NOT EXISTS profile (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 
+-- Each account's profile (contact, education, work authorization, directions, EEO, standard
+-- answers) as JSON validated by src/lib/profile.ts's ProfileSchema. Replaces profile/profile.yaml.
+CREATE TABLE IF NOT EXISTS profiles (
+  user_id TEXT PRIMARY KEY,
+  data TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS experiences (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
   kind TEXT NOT NULL,              -- education | work | project | skill | award | publication
   title TEXT NOT NULL,             -- 职位名 / 项目名 / 学位 / 技能组名
   organization TEXT,               -- 公司 / 学校 / 会议(skill 可空)
@@ -154,7 +181,8 @@ CREATE TABLE IF NOT EXISTS experiences (
 
 CREATE TABLE IF NOT EXISTS executor_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT NOT NULL,            -- apply | network_send | network_find
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  kind TEXT NOT NULL,            -- apply | network_send | network_find | jd_review | scan | referral_check
   status TEXT NOT NULL DEFAULT 'running',  -- queued | running | done | failed | stopped
   channel TEXT NOT NULL DEFAULT 'headless',  -- headless (Playwright, own Chrome profile) | user_chrome (attended session drives the user's own Chrome)
   pid INTEGER,
@@ -189,9 +217,81 @@ CREATE TABLE IF NOT EXISTS boards (
 );
 CREATE INDEX IF NOT EXISTS idx_boards_due ON boards(tier, next_due_at);
 
+-- ---- Accounts (Better Auth core tables; column names/types follow its sqlite mapping so its
+-- ---- runtime schema check passes: string→TEXT, boolean→INTEGER, date→DATE). "user" is quoted
+-- ---- everywhere for clarity, not because sqlite reserves it.
+CREATE TABLE IF NOT EXISTS "user" (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  emailVerified INTEGER NOT NULL DEFAULT 0,
+  image TEXT,
+  createdAt DATE NOT NULL,
+  updatedAt DATE NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member'    -- owner (this box's principal; claimed the legacy data) | member
+);
+
+CREATE TABLE IF NOT EXISTS session (
+  id TEXT PRIMARY KEY NOT NULL,
+  expiresAt DATE NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  createdAt DATE NOT NULL,
+  updatedAt DATE NOT NULL,
+  ipAddress TEXT,
+  userAgent TEXT,
+  userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS session_userId_idx ON session(userId);
+
+CREATE TABLE IF NOT EXISTS account (
+  id TEXT PRIMARY KEY NOT NULL,
+  accountId TEXT NOT NULL,
+  providerId TEXT NOT NULL,
+  userId TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+  accessToken TEXT,
+  refreshToken TEXT,
+  idToken TEXT,
+  accessTokenExpiresAt DATE,
+  refreshTokenExpiresAt DATE,
+  scope TEXT,
+  password TEXT,
+  createdAt DATE NOT NULL,
+  updatedAt DATE NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_userId_idx ON account(userId);
+
+CREATE TABLE IF NOT EXISTS verification (
+  id TEXT PRIMARY KEY NOT NULL,
+  identifier TEXT NOT NULL,
+  value TEXT NOT NULL,
+  expiresAt DATE NOT NULL,
+  createdAt DATE NOT NULL,
+  updatedAt DATE NOT NULL
+);
+CREATE INDEX IF NOT EXISTS verification_identifier_idx ON verification(identifier);
+
+-- Bearer tokens (src/lib/api-tokens.ts): personal tokens the user mints on 设置 for attended
+-- sessions/scripts on their own machine, and short-lived run tokens the server hands to the
+-- executor sessions it spawns. Only the sha256 is stored.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'personal',   -- personal | run
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  prefix TEXT NOT NULL,                    -- the token's first characters, shown in the list
+  run_id INTEGER,                          -- run tokens: the executor_runs row it belongs to
+  expires_at TEXT,                         -- ISO; NULL = never
+  last_used_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at);
 CREATE INDEX IF NOT EXISTS idx_experiences_kind ON experiences(kind, sort_order);
+-- Indexes on user_id live in db.ts (after migrations): this file is exec'd before an old db has
+-- gained the column, and CREATE INDEX IF NOT EXISTS on a missing column is an error.
 
 CREATE TRIGGER IF NOT EXISTS trg_applications_updated AFTER UPDATE ON applications
 BEGIN

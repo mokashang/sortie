@@ -14,6 +14,10 @@ export const QUEUE_ELIGIBLE_SQL =
   " AND COALESCE(j.degree_req,'') <> 'phd_only'" +
   " AND COALESCE(j.role_kind,'') <> 'non_tech'";
 
+// Tenancy (spec 2026-09-13 accounts §3): applications and matches are per account — one row per
+// (user, job). Every query here takes the acting user's id and joins matches on the same user
+// (`m.user_id = a.user_id`), so two accounts' scores for the same posting never mix.
+
 // The apply-executor protocol: the App is the "brain" (this file's pure DB logic) and a
 // Claude-in-Chrome session is the "hands" (drives the user's real, logged-in Chrome per
 // .claude/skills/apply-executor). Both sides only ever talk through localhost API + SQLite.
@@ -70,6 +74,7 @@ export function parseReferral(json: string | null, personName: string | null): A
 // candidate — they never get returned to the caller as a task.
 export function takeNextApplication(
   db: DB,
+  userId: string,
   profile: Profile,
   opts: { direction?: string; jobIds?: number[] } = {}
 ): ApplyTask | { done: true } {
@@ -79,8 +84,8 @@ export function takeNextApplication(
   // and nothing else ever moves them. 30 minutes is generously past any real fill+report round
   // trip, so a still-fresh 'prepared' row (a live executor genuinely mid-fill) is left alone.
   db.prepare(
-    "UPDATE applications SET status = 'matched' WHERE status = 'prepared' AND updated_at < datetime('now', '-30 minutes')"
-  ).run();
+    "UPDATE applications SET status = 'matched' WHERE user_id = ? AND status = 'prepared' AND updated_at < datetime('now', '-30 minutes')"
+  ).run(userId);
 
   for (;;) {
     // Two ways in. Batch mode (opts.direction optional): the classic picker, now restricted to
@@ -103,28 +108,28 @@ export function takeNextApplication(
         `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats, a.referral_info, p.name as referral_person_name
          FROM applications a
          JOIN jobs j ON j.id = a.job_id
-         JOIN matches m ON m.job_id = j.id
+         JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
          LEFT JOIN people p ON p.id = a.referral_person_id
-         WHERE ${where}
+         WHERE a.user_id = ? AND ${where}
          ORDER BY a.pinned DESC, ${QUEUE_ORDER_SQL}
          LIMIT 1`
       )
-      .get(...params) as CandidateRow | undefined;
+      .get(userId, ...params) as CandidateRow | undefined;
 
     if (!row) return { done: true };
 
     if (!row.apply_url) {
-      db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ?").run("no apply url", row.job_id);
+      db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE user_id = ? AND job_id = ?").run("no apply url", userId, row.job_id);
       continue; // parked row now fails the needs_manual_reason IS NULL filter — try the next one.
     }
 
-    const selection = selectResumeForJob(db, row.job_id);
+    const selection = selectResumeForJob(db, userId, row.job_id);
     if ("error" in selection) {
       const reason =
         selection.direction != null
           ? `no resume generated for direction '${selection.direction}'`
           : "job has no matched direction";
-      db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ?").run(reason, row.job_id);
+      db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE user_id = ? AND job_id = ?").run(reason, userId, row.job_id);
       continue; // parked row now fails the needs_manual_reason IS NULL filter — try the next one.
     }
 
@@ -137,7 +142,7 @@ export function takeNextApplication(
     // Answers the user gave in-App for THIS job earlier (the 待补信息 flow, "仅本次" ones in
     // particular — remembered ones already live in profile.standard_answers) ride along in
     // custom, so a re-take after a timeout/reclaim doesn't ask the same questions again.
-    const prior = db.prepare("SELECT info_answers FROM applications WHERE job_id = ?").get(row.job_id) as
+    const prior = db.prepare("SELECT info_answers FROM applications WHERE user_id = ? AND job_id = ?").get(userId, row.job_id) as
       | { info_answers: string | null }
       | undefined;
     if (prior?.info_answers) {
@@ -156,9 +161,9 @@ export function takeNextApplication(
     // a task nobody actually locked.
     const claim = db
       .prepare(
-        "UPDATE applications SET status = 'prepared', answer_pack = ?, confirm_decision = NULL WHERE job_id = ? AND status IN ('matched','referral_ready')"
+        "UPDATE applications SET status = 'prepared', answer_pack = ?, confirm_decision = NULL WHERE user_id = ? AND job_id = ? AND status IN ('matched','referral_ready')"
       )
-      .run(JSON.stringify(answerPack), row.job_id);
+      .run(JSON.stringify(answerPack), userId, row.job_id);
     if (claim.changes === 0) continue;
 
     return {
@@ -219,8 +224,8 @@ function coerceFieldValue(value: unknown): string {
 
 // Executor -> App status report. Only 'prepared' may transition; 'awaiting_confirm' is also
 // accepted as a from-state so a retried/duplicate report is idempotent rather than a hard error.
-export function reportFill(db: DB, input: ReportFillInput): void {
-  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(input.jobId) as
+export function reportFill(db: DB, userId: string, input: ReportFillInput): void {
+  const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, input.jobId) as
     | { status: string }
     | undefined;
   if (!row) throw new Error(`reportFill: no application for job ${input.jobId}`);
@@ -231,8 +236,9 @@ export function reportFill(db: DB, input: ReportFillInput): void {
   if (input.status === "needs_info") {
     const questions = (input.questions ?? []).filter((q) => q && typeof q.key === "string" && q.key.trim() && typeof q.label === "string");
     if (questions.length === 0) throw new Error("reportFill: needs_info requires at least one question with key+label");
-    db.prepare("UPDATE applications SET status = 'needs_info', pending_questions = ? WHERE job_id = ?").run(
+    db.prepare("UPDATE applications SET status = 'needs_info', pending_questions = ? WHERE user_id = ? AND job_id = ?").run(
       JSON.stringify(questions),
+      userId,
       input.jobId
     );
     return;
@@ -248,8 +254,8 @@ export function reportFill(db: DB, input: ReportFillInput): void {
     // re-typed everything, see the skill's pre-submit re-verify step) must void any prior
     // approval rather than let a stale 'approved' silently authorize a submit of different data.
     db.prepare(
-      "UPDATE applications SET filled_fields = ?, status = 'awaiting_confirm', confirm_decision = NULL WHERE job_id = ?"
-    ).run(JSON.stringify(coerced), input.jobId);
+      "UPDATE applications SET filled_fields = ?, status = 'awaiting_confirm', confirm_decision = NULL WHERE user_id = ? AND job_id = ?"
+    ).run(JSON.stringify(coerced), userId, input.jobId);
     return;
   }
 
@@ -274,7 +280,8 @@ export function reportFill(db: DB, input: ReportFillInput): void {
       { respectPinned: false }
     );
     if (out.failReason) {
-      db.prepare("UPDATE applications SET needs_manual_reason = NULL, confirm_decision = NULL WHERE job_id = ?").run(
+      db.prepare("UPDATE applications SET needs_manual_reason = NULL, confirm_decision = NULL WHERE user_id = ? AND job_id = ?").run(
+        userId,
         input.jobId
       );
       return;
@@ -286,11 +293,12 @@ export function reportFill(db: DB, input: ReportFillInput): void {
   // "executor gave up cleanly" apart from "something broke".
   const reason = input.status === "error" ? `error: ${input.reason ?? ""}` : input.reason ?? "";
   if (input.status === "needs_manual" && input.archive) {
-    archiveWithDuplicates(db, input.jobId, reason);
+    archiveWithDuplicates(db, userId, input.jobId, reason);
     return;
   }
-  db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'matched' WHERE job_id = ?").run(
+  db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'matched' WHERE user_id = ? AND job_id = ?").run(
     reason,
+    userId,
     input.jobId
   );
 }
@@ -299,29 +307,30 @@ export function reportFill(db: DB, input: ReportFillInput): void {
 // status='matched' only: a duplicate that is mid-flight (prepared/awaiting_confirm) or already
 // submitted is somebody else's business, and company/title matching is case-insensitive because
 // the same posting arrives through different sources with different casing.
-function archiveWithDuplicates(db: DB, jobId: number, reason: string): void {
+function archiveWithDuplicates(db: DB, userId: string, jobId: number, reason: string): void {
   const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as
     | { company: string; title: string }
     | undefined;
   db.transaction(() => {
-    db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'archived' WHERE job_id = ?").run(
+    db.prepare("UPDATE applications SET needs_manual_reason = ?, status = 'archived' WHERE user_id = ? AND job_id = ?").run(
       reason,
+      userId,
       jobId
     );
     if (!job) return;
     db.prepare(
       `UPDATE applications SET status = 'archived', needs_manual_reason = ?
-       WHERE status = 'matched'
+       WHERE user_id = ? AND status = 'matched'
          AND job_id IN (SELECT id FROM jobs WHERE id <> ? AND company = ? COLLATE NOCASE AND title = ? COLLATE NOCASE)`
-    ).run(`duplicate of job ${jobId}: ${reason}`, jobId, job.company, job.title);
+    ).run(`duplicate of job ${jobId}: ${reason}`, userId, jobId, job.company, job.title);
   })();
 }
 
 // User's decision from the in-app confirmation queue. approve leaves status at
 // 'awaiting_confirm' (reportSubmitted is the only thing allowed to move it past that — see the
 // red line below); reject parks the application back at 'matched' like a needs_manual report.
-export function decide(db: DB, jobId: number, decision: "approve" | "reject", reason?: string): void {
-  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as
+export function decide(db: DB, userId: string, jobId: number, decision: "approve" | "reject", reason?: string): void {
+  const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { status: string }
     | undefined;
   if (!row) throw new Error(`decide: no application for job ${jobId}`);
@@ -330,7 +339,7 @@ export function decide(db: DB, jobId: number, decision: "approve" | "reject", re
   }
 
   if (decision === "approve") {
-    db.prepare("UPDATE applications SET confirm_decision = 'approved' WHERE job_id = ?").run(jobId);
+    db.prepare("UPDATE applications SET confirm_decision = 'approved' WHERE user_id = ? AND job_id = ?").run(userId, jobId);
     return;
   }
 
@@ -339,8 +348,8 @@ export function decide(db: DB, jobId: number, decision: "approve" | "reject", re
     // needs_manual report — the rejected job lands in /apply's 需人工清单 (needs-manual list),
     // it is NOT silently re-offered to the executor on the next takeNextApplication call.
     db.prepare(
-      "UPDATE applications SET status = 'matched', confirm_decision = 'rejected', needs_manual_reason = ? WHERE job_id = ?"
-    ).run(reason ?? "user rejected fill", jobId);
+      "UPDATE applications SET status = 'matched', confirm_decision = 'rejected', needs_manual_reason = ? WHERE user_id = ? AND job_id = ?"
+    ).run(reason ?? "user rejected fill", userId, jobId);
     return;
   }
 
@@ -351,8 +360,8 @@ export function decide(db: DB, jobId: number, decision: "approve" | "reject", re
 // awaiting_confirm with an explicit human approval — this is the App-side half of the plan's
 // "double lock" (the executor skill's own protocol is the other half: it must not click Submit
 // without first polling this same approval).
-export function reportSubmitted(db: DB, jobId: number): void {
-  const row = db.prepare("SELECT status, confirm_decision FROM applications WHERE job_id = ?").get(jobId) as
+export function reportSubmitted(db: DB, userId: string, jobId: number): void {
+  const row = db.prepare("SELECT status, confirm_decision FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { status: string; confirm_decision: string | null }
     | undefined;
   if (!row || row.status !== "awaiting_confirm" || row.confirm_decision !== "approved") {
@@ -361,7 +370,7 @@ export function reportSubmitted(db: DB, jobId: number): void {
         `(status=${row?.status ?? "none"}, confirm_decision=${row?.confirm_decision ?? "none"})`
     );
   }
-  db.prepare("UPDATE applications SET status = 'submitted', submitted_at = datetime('now') WHERE job_id = ?").run(jobId);
+  db.prepare("UPDATE applications SET status = 'submitted', submitted_at = datetime('now') WHERE user_id = ? AND job_id = ?").run(userId, jobId);
 }
 
 export interface PendingRow {
@@ -399,19 +408,19 @@ interface PendingRawRow {
 // The in-app confirmation queue's data source, and what the executor polls for job-by-job
 // status. filled_fields (the reviewable "what got typed where" table) and the resume version
 // used are parsed out of their JSON columns here so callers don't need to know the storage shape.
-export function pendingConfirmations(db: DB): PendingRow[] {
+export function pendingConfirmations(db: DB, userId: string): PendingRow[] {
   const rows = db
     .prepare(
       `SELECT j.id as job_id, j.company, j.title, m.direction, m.tier, m.score, a.filled_fields, a.answer_pack,
               a.confirm_decision, p.name as referral_person_name
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id
+       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
        LEFT JOIN people p ON p.id = a.referral_person_id
-       WHERE a.status = 'awaiting_confirm'
+       WHERE a.user_id = ? AND a.status = 'awaiting_confirm'
        ORDER BY ${QUEUE_ORDER_SQL}`
     )
-    .all() as PendingRawRow[];
+    .all(userId) as PendingRawRow[];
 
   return rows.map((r) => {
     let filledFields: Record<string, string> = {};
@@ -448,15 +457,15 @@ export function pendingConfirmations(db: DB): PendingRow[] {
 // process left approved+awaiting_confirm but never got to submit — the task data (applyUrl,
 // answerPack with the resume pdf_path, ats) is identical to what the original takeNextApplication
 // call handed out; only the fresh confirm_decision (reset by reportFill) differs.
-export function getApplyTask(db: DB, jobId: number): ApplyTask | { error: string } {
+export function getApplyTask(db: DB, userId: string, jobId: number): ApplyTask | { error: string } {
   const row = db
     .prepare(
       `SELECT j.company, j.title, j.apply_url, j.ats, a.answer_pack, a.status
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       WHERE a.job_id = ?`
+       WHERE a.user_id = ? AND a.job_id = ?`
     )
-    .get(jobId) as
+    .get(userId, jobId) as
     | { company: string; title: string; apply_url: string | null; ats: string | null; answer_pack: string | null; status: string }
     | undefined;
 
@@ -492,9 +501,10 @@ export function getApplyTask(db: DB, jobId: number): ApplyTask | { error: string
 // 'needs_info' sees status flip back to 'prepared' and gets the answers in the same response.
 export function confirmStatus(
   db: DB,
+  userId: string,
   jobId: number
 ): { decision: string | null; status: string; infoAnswers: Record<string, string> | null } {
-  const row = db.prepare("SELECT status, confirm_decision, info_answers FROM applications WHERE job_id = ?").get(jobId) as
+  const row = db.prepare("SELECT status, confirm_decision, info_answers FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { status: string; confirm_decision: string | null; info_answers: string | null }
     | undefined;
   if (!row) throw new Error(`confirmStatus: no application for job ${jobId}`);
@@ -513,15 +523,15 @@ export function confirmStatus(
 // e.g. the job was parked for "no resume generated for direction 'quant'" and the user has since
 // gone to Studio and generated one. Only valid from status='matched'; anything else (submitted,
 // still awaiting_confirm, etc.) has nothing meaningful to "retry".
-export function unpark(db: DB, jobId: number): void {
-  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as
+export function unpark(db: DB, userId: string, jobId: number): void {
+  const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { status: string }
     | undefined;
   if (!row) throw new Error(`unpark: no application for job ${jobId}`);
   if (row.status !== "matched") {
     throw new Error(`unpark: cannot unpark from status '${row.status}' (must be 'matched')`);
   }
-  db.prepare("UPDATE applications SET needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
+  db.prepare("UPDATE applications SET needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?").run(userId, jobId);
 }
 
 // Sentinel used wherever a NULL matches.direction needs a display/routing string — the
@@ -567,7 +577,7 @@ interface TopRawRow {
 // (status='matched', not parked, not loc-flagged) so the "队列中" count shown to the user matches
 // what the picker can actually offer. NULL direction (unmatched/unscored jobs that somehow
 // reached 'matched') is bucketed as "未分类" and always sorts last.
-export function queueByDirection(db: DB): DirectionQueueGroup[] {
+export function queueByDirection(db: DB, userId: string): DirectionQueueGroup[] {
   const groups = db
     .prepare(
       `SELECT m.direction as direction, MIN(m.tier) as tier, COUNT(*) as matched,
@@ -575,12 +585,12 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
               SUM(CASE WHEN ${EFFECTIVE_MODE_SQL} = 'direct' THEN 1 ELSE 0 END) as direct_suggested
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
+       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
        GROUP BY m.direction
        ORDER BY COALESCE(m.tier, 9) ASC, COUNT(*) DESC`
     )
-    .all() as DirectionGroupRawRow[];
+    .all(userId) as DirectionGroupRawRow[];
 
   if (groups.length === 0) return [];
 
@@ -589,11 +599,11 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
       `SELECT m.direction as direction, m.score as score, j.company as company, j.title as title
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
+       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
        ORDER BY m.score DESC, j.created_at DESC`
     )
-    .all() as TopRawRow[];
+    .all(userId) as TopRawRow[];
 
   const topByDirection = new Map<string | null, DirectionQueueRow[]>();
   for (const r of topRows) {
@@ -629,38 +639,39 @@ export function queueByDirection(db: DB): DirectionQueueGroup[] {
 // fixed, greppable reason so it's obviously a manual skip rather than an executor failure. The
 // row simply disappears from every 'matched'-filtered query (queue lists, the picker, quota
 // counts) without deleting any data — unarchive() below is the exact inverse.
-export function archiveFromQueue(db: DB, jobId: number): void {
-  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as
+export function archiveFromQueue(db: DB, userId: string, jobId: number): void {
+  const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { status: string }
     | undefined;
   if (!row) throw new Error(`archiveFromQueue: no application for job ${jobId}`);
   if (row.status !== "matched") {
     throw new Error(`archiveFromQueue: cannot archive from status '${row.status}' (must be 'matched')`);
   }
-  db.prepare("UPDATE applications SET status = 'archived', needs_manual_reason = ? WHERE job_id = ?").run(
+  db.prepare("UPDATE applications SET status = 'archived', needs_manual_reason = ? WHERE user_id = ? AND job_id = ?").run(
     "user skipped from queue",
+    userId,
     jobId
   );
 }
 
 // The "撤销" (undo) side of archiveFromQueue — only valid from 'archived', restores 'matched'
 // and clears the reason so the row re-enters the picker's pool exactly as it was before.
-export function unarchive(db: DB, jobId: number): void {
-  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as
+export function unarchive(db: DB, userId: string, jobId: number): void {
+  const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { status: string }
     | undefined;
   if (!row) throw new Error(`unarchive: no application for job ${jobId}`);
   if (row.status !== "archived") {
     throw new Error(`unarchive: cannot unarchive from status '${row.status}' (must be 'archived')`);
   }
-  db.prepare("UPDATE applications SET status = 'matched', needs_manual_reason = NULL WHERE job_id = ?").run(jobId);
+  db.prepare("UPDATE applications SET status = 'matched', needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?").run(userId, jobId);
 }
 
 // User -> App from /queue's ★ "置顶/优先" toggle. Not restricted to any particular status — a
 // user may star a row before or after it moves through the pipeline — it just flips the flag
 // that takeNextApplication and pagedQueue both sort on first.
-export function setPinned(db: DB, jobId: number, pinned: boolean): void {
-  const result = db.prepare("UPDATE applications SET pinned = ? WHERE job_id = ?").run(pinned ? 1 : 0, jobId);
+export function setPinned(db: DB, userId: string, jobId: number, pinned: boolean): void {
+  const result = db.prepare("UPDATE applications SET pinned = ? WHERE user_id = ? AND job_id = ?").run(pinned ? 1 : 0, userId, jobId);
   if (result.changes === 0) throw new Error(`setPinned: no application for job ${jobId}`);
 }
 
@@ -715,7 +726,7 @@ function searchFilter(q: string | undefined): { sql: string; params: string[] } 
   return { sql: " AND (j.company LIKE ? OR j.title LIKE ?)", params: [like, like] };
 }
 
-export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
+export function pagedQueue(db: DB, userId: string, opts: PagedQueueOpts): PagedQueueResult {
   // UNCLASSIFIED_DIRECTION is a display sentinel for a NULL matches.direction (see
   // queueByDirection) — it never appears as an actual column value, so the filter below must
   // become "IS NULL" rather than a literal string match, or the 未分类 tab would always be empty.
@@ -732,11 +743,11 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
         `SELECT COUNT(*) n
          FROM applications a
          JOIN jobs j ON j.id = a.job_id
-         JOIN matches m ON m.job_id = j.id
-         WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
+         JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+         WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
            AND ${directionFilter}${modeFilter}${search.sql}`
       )
-      .get(...directionParams) as { n: number }
+      .get(userId, ...directionParams) as { n: number }
   ).n;
 
   const pages = total === 0 ? 1 : Math.max(1, Math.ceil(total / opts.pageSize));
@@ -761,13 +772,13 @@ export function pagedQueue(db: DB, opts: PagedQueueOpts): PagedQueueResult {
               m.referral_fit, a.apply_mode, ${EFFECTIVE_MODE_SQL} AS effective_mode, m.referral_reason
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
+       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
          AND ${directionFilter}${modeFilter}${search.sql}
        ORDER BY a.pinned DESC, ${secondarySort}
        LIMIT ? OFFSET ?`
     )
-    .all(...directionParams, opts.pageSize, offset) as PagedQueueRow[];
+    .all(userId, ...directionParams, opts.pageSize, offset) as PagedQueueRow[];
 
   return { rows, total, pages };
 }
@@ -792,8 +803,9 @@ export interface PagedAllJobsResult {
 
 // The population of the old /jobs page (visa_flag IS NULL AND loc_flag IS NULL), served in the
 // same paged/sorted shape as pagedQueue so the /queue board can render both from one table.
-// matches/applications are LEFT JOINed: an unscored job still shows up with score NULL.
-export function pagedAllJobs(db: DB, opts: Omit<PagedQueueOpts, "direction">): PagedAllJobsResult {
+// matches/applications are LEFT JOINed (on this user's rows): an unscored job still shows up
+// with score NULL.
+export function pagedAllJobs(db: DB, userId: string, opts: Omit<PagedQueueOpts, "direction">): PagedAllJobsResult {
   const search = searchFilter(opts.q);
   const where = `j.visa_flag IS NULL AND j.loc_flag IS NULL${search.sql}`;
   const total = (db.prepare(`SELECT COUNT(*) n FROM jobs j WHERE ${where}`).get(...search.params) as { n: number }).n;
@@ -819,13 +831,13 @@ export function pagedAllJobs(db: DB, opts: Omit<PagedQueueOpts, "direction">): P
               m.referral_fit, a.apply_mode, ${EFFECTIVE_MODE_SQL} AS effective_mode, m.referral_reason,
               CASE WHEN a.status = 'matched' AND a.needs_manual_reason IS NULL THEN 1 ELSE 0 END AS in_queue
        FROM jobs j
-       LEFT JOIN matches m ON m.job_id = j.id
-       LEFT JOIN applications a ON a.job_id = j.id
+       LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ?
+       LEFT JOIN applications a ON a.job_id = j.id AND a.user_id = ?
        WHERE ${where}
        ORDER BY ${orderBy}
        LIMIT ? OFFSET ?`
     )
-    .all(...search.params, opts.pageSize, offset) as PagedAllJobsRow[];
+    .all(userId, userId, ...search.params, opts.pageSize, offset) as PagedAllJobsRow[];
 
   return { rows, total, pages };
 }

@@ -9,6 +9,9 @@ import {
   archiveManual,
 } from "@/apply/history";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 function seedJob(
   db: DB,
   opts: {
@@ -48,11 +51,11 @@ describe("setStage (manual status tracking on /history)", () => {
   it("moves a submitted application through oa -> interview -> offer and logs an event per step", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, jobId, "oa");
+    setStage(db, U, jobId, "oa");
     expect(app(db, jobId).status).toBe("oa");
-    setStage(db, jobId, "interview", "phone screen 9/10");
+    setStage(db, U, jobId, "interview", "phone screen 9/10");
     expect(app(db, jobId).status).toBe("interview");
-    setStage(db, jobId, "offer");
+    setStage(db, U, jobId, "offer");
     expect(app(db, jobId).status).toBe("offer");
 
     const events = db
@@ -68,25 +71,25 @@ describe("setStage (manual status tracking on /history)", () => {
   it("allows moving backwards (a mis-click) and to rejected/stale", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "interview", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, jobId, "submitted");
+    setStage(db, U, jobId, "submitted");
     expect(app(db, jobId).status).toBe("submitted");
-    setStage(db, jobId, "rejected");
+    setStage(db, U, jobId, "rejected");
     expect(app(db, jobId).status).toBe("rejected");
-    setStage(db, jobId, "stale");
+    setStage(db, U, jobId, "stale");
     expect(app(db, jobId).status).toBe("stale");
   });
 
   it("refuses an unknown stage and refuses to touch a not-yet-submitted application", () => {
     const db = openDb(":memory:");
     const submitted = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    expect(() => setStage(db, submitted, "matched")).toThrow();
-    expect(() => setStage(db, submitted, "archived")).toThrow();
+    expect(() => setStage(db, U, submitted, "matched")).toThrow();
+    expect(() => setStage(db, U, submitted, "archived")).toThrow();
 
     const matched = seedJob(db, { status: "matched" });
-    expect(() => setStage(db, matched, "oa")).toThrow();
+    expect(() => setStage(db, U, matched, "oa")).toThrow();
     const awaiting = seedJob(db, { status: "awaiting_confirm" });
-    expect(() => setStage(db, awaiting, "oa")).toThrow();
-    expect(() => setStage(db, 9999, "oa")).toThrow();
+    expect(() => setStage(db, U, awaiting, "oa")).toThrow();
+    expect(() => setStage(db, U, 9999, "oa")).toThrow();
   });
 
   it("exposes the stage list in pipeline order", () => {
@@ -105,10 +108,10 @@ describe("setStage (manual status tracking on /history)", () => {
   it("moves an offer to accepted / declined", () => {
     const db = openDb(":memory:");
     const a = seedJob(db, { status: "offer", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, a, "offer_accepted");
+    setStage(db, U, a, "offer_accepted");
     expect(app(db, a).status).toBe("offer_accepted");
     const b = seedJob(db, { status: "offer", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, b, "offer_declined");
+    setStage(db, U, b, "offer_declined");
     expect(app(db, b).status).toBe("offer_declined");
   });
 });
@@ -123,7 +126,7 @@ describe("applicationHistory", () => {
     const newer = seedJob(db, { company: "New", status: "oa", submittedAt: "2026-09-02 03:00:00" });
     const rejected = seedJob(db, { company: "Rej", status: "rejected", submittedAt: "2026-08-25 10:00:00", direction: null });
 
-    const rows = applicationHistory(db);
+    const rows = applicationHistory(db, U);
     expect(rows.map((r) => r.jobId)).toEqual([newer, rejected, older]);
     expect(rows[0]).toMatchObject({ company: "New", status: "oa", direction: "swe_general" });
     expect(rows[1].direction).toBeNull();
@@ -136,9 +139,9 @@ describe("applicationHistory", () => {
   it("carries the most recent stage note when one was recorded", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    expect(applicationHistory(db)[0].lastNote).toBeNull();
-    setStage(db, jobId, "interview", "onsite 9/20");
-    expect(applicationHistory(db)[0].lastNote).toBe("onsite 9/20");
+    expect(applicationHistory(db, U)[0].lastNote).toBeNull();
+    setStage(db, U, jobId, "interview", "onsite 9/20");
+    expect(applicationHistory(db, U)[0].lastNote).toBe("onsite 9/20");
   });
 });
 
@@ -149,7 +152,7 @@ describe("applicationHistory peak (furthest stage ever reached)", () => {
     const interview = seedJob(db, { status: "interview", submittedAt: "2026-09-01 10:00:00" });
     const stale = seedJob(db, { status: "stale", submittedAt: "2026-09-01 10:00:00" });
     const declined = seedJob(db, { status: "offer_declined", submittedAt: "2026-09-01 10:00:00" });
-    const peaks = new Map(applicationHistory(db).map((r) => [r.jobId, r.peak]));
+    const peaks = new Map(applicationHistory(db, U).map((r) => [r.jobId, r.peak]));
     expect(peaks.get(submitted)).toBe("submitted");
     expect(peaks.get(interview)).toBe("interview");
     expect(peaks.get(stale)).toBe("submitted");
@@ -159,20 +162,20 @@ describe("applicationHistory peak (furthest stage ever reached)", () => {
   it("takes the last rung reached before a rejection / no-reply from the event timeline", () => {
     const db = openDb(":memory:");
     const afterInterview = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, afterInterview, "oa");
-    setStage(db, afterInterview, "interview");
-    setStage(db, afterInterview, "rejected");
+    setStage(db, U, afterInterview, "oa");
+    setStage(db, U, afterInterview, "interview");
+    setStage(db, U, afterInterview, "rejected");
 
     const afterOa = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, afterOa, "oa");
-    setStage(db, afterOa, "stale");
+    setStage(db, U, afterOa, "oa");
+    setStage(db, U, afterOa, "stale");
 
     const rejectedThenStale = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, rejectedThenStale, "interview");
-    setStage(db, rejectedThenStale, "rejected");
-    setStage(db, rejectedThenStale, "stale");
+    setStage(db, U, rejectedThenStale, "interview");
+    setStage(db, U, rejectedThenStale, "rejected");
+    setStage(db, U, rejectedThenStale, "stale");
 
-    const peaks = new Map(applicationHistory(db).map((r) => [r.jobId, r.peak]));
+    const peaks = new Map(applicationHistory(db, U).map((r) => [r.jobId, r.peak]));
     expect(peaks.get(afterInterview)).toBe("interview");
     expect(peaks.get(afterOa)).toBe("oa");
     expect(peaks.get(rejectedThenStale)).toBe("interview");
@@ -181,24 +184,24 @@ describe("applicationHistory peak (furthest stage ever reached)", () => {
   it("treats a backwards move as a correction: the chart follows the corrected stage", () => {
     const db = openDb(":memory:");
     const backToSubmitted = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, backToSubmitted, "oa");
-    setStage(db, backToSubmitted, "submitted");
+    setStage(db, U, backToSubmitted, "oa");
+    setStage(db, U, backToSubmitted, "submitted");
 
     const offerMisclick = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, offerMisclick, "offer");
-    setStage(db, offerMisclick, "oa");
+    setStage(db, U, offerMisclick, "offer");
+    setStage(db, U, offerMisclick, "oa");
 
     const unreject = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, unreject, "interview");
-    setStage(db, unreject, "rejected");
-    setStage(db, unreject, "oa"); // the rejection was a mistake; it's actually at OA
+    setStage(db, U, unreject, "interview");
+    setStage(db, U, unreject, "rejected");
+    setStage(db, U, unreject, "oa"); // the rejection was a mistake; it's actually at OA
 
     const correctedThenRejected = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    setStage(db, correctedThenRejected, "interview");
-    setStage(db, correctedThenRejected, "oa"); // corrected down
-    setStage(db, correctedThenRejected, "rejected");
+    setStage(db, U, correctedThenRejected, "interview");
+    setStage(db, U, correctedThenRejected, "oa"); // corrected down
+    setStage(db, U, correctedThenRejected, "rejected");
 
-    const peaks = new Map(applicationHistory(db).map((r) => [r.jobId, r.peak]));
+    const peaks = new Map(applicationHistory(db, U).map((r) => [r.jobId, r.peak]));
     expect(peaks.get(backToSubmitted)).toBe("submitted");
     expect(peaks.get(offerMisclick)).toBe("oa");
     expect(peaks.get(unreject)).toBe("oa");
@@ -216,7 +219,7 @@ describe("todaySubmitted (local-midnight boundary)", () => {
     const advanced = seedJob(db, { company: "Adv", status: "oa" });
     db.prepare("UPDATE applications SET submitted_at = datetime('now') WHERE job_id=?").run(advanced);
 
-    const rows = todaySubmitted(db);
+    const rows = todaySubmitted(db, U);
     expect(rows.map((r) => r.company).sort()).toEqual(["Adv", "Now"]);
   });
 
@@ -231,7 +234,7 @@ describe("todaySubmitted (local-midnight boundary)", () => {
     db.prepare(
       "UPDATE applications SET submitted_at = datetime(date('now','localtime'), 'utc', '-1 second') WHERE job_id=?"
     ).run(b);
-    expect(todaySubmitted(db).map((r) => r.company)).toEqual(["Edge"]);
+    expect(todaySubmitted(db, U).map((r) => r.company)).toEqual(["Edge"]);
   });
 });
 
@@ -241,7 +244,7 @@ describe("archiveManual (remove from the needs-manual list)", () => {
     const a = seedJob(db, { status: "matched", reason: "login wall" });
     const b = seedJob(db, { status: "matched", reason: "error: tab crashed" });
     const c = seedJob(db, { status: "matched", reason: "captcha" });
-    const result = archiveManual(db, [a, b]);
+    const result = archiveManual(db, U, [a, b]);
     expect(result).toEqual({ archived: 2, skipped: [] });
     expect(app(db, a).status).toBe("archived");
     expect(app(db, a).needs_manual_reason).toBe("login wall");
@@ -254,7 +257,7 @@ describe("archiveManual (remove from the needs-manual list)", () => {
     const parked = seedJob(db, { status: "matched", reason: "x" });
     const clean = seedJob(db, { status: "matched" });
     const sub = seedJob(db, { status: "submitted", submittedAt: "2026-09-01 10:00:00" });
-    const result = archiveManual(db, [parked, clean, sub, 4242]);
+    const result = archiveManual(db, U, [parked, clean, sub, 4242]);
     expect(result.archived).toBe(1);
     expect(result.skipped.sort()).toEqual([clean, sub, 4242].sort());
     expect(app(db, clean).status).toBe("matched");
@@ -271,7 +274,7 @@ describe("reportFill with archive (live-page hard ineligibility)", () => {
     const other = seedJob(db, { company: "Google", title: "Site Reliability Engineer", status: "matched" });
     const dupSubmitted = seedJob(db, { company: "Google", title: "Software Engineer Intern", status: "submitted", submittedAt: "2026-09-01 10:00:00" });
 
-    reportFill(db, { jobId: target, status: "needs_manual", reason: "PhD-only (live page)", archive: true });
+    reportFill(db, U, { jobId: target, status: "needs_manual", reason: "PhD-only (live page)", archive: true });
 
     expect(app(db, target).status).toBe("archived");
     expect(app(db, target).needs_manual_reason).toBe("PhD-only (live page)");
@@ -285,7 +288,7 @@ describe("reportFill with archive (live-page hard ineligibility)", () => {
   it("without archive, needs_manual still parks at matched (unchanged behaviour)", () => {
     const db = openDb(":memory:");
     const target = seedJob(db, { status: "prepared" });
-    reportFill(db, { jobId: target, status: "needs_manual", reason: "captcha" });
+    reportFill(db, U, { jobId: target, status: "needs_manual", reason: "captcha" });
     expect(app(db, target).status).toBe("matched");
     expect(app(db, target).needs_manual_reason).toBe("captcha");
   });
@@ -302,12 +305,12 @@ describe("apply mode in history", () => {
       ref
     );
     const direct = seedJob(db, { company: "Acme", status: "submitted", submittedAt: "2026-09-03 11:00:00" });
-    const rows = applicationHistory(db);
+    const rows = applicationHistory(db, U);
     const r = rows.find((x) => x.jobId === ref)!;
     expect(r.applyMode).toBe("referral");
     expect(r.referralPersonName).toBe("Jane");
     expect(rows.find((x) => x.jobId === direct)!.applyMode).toBe("direct");
     db.prepare("UPDATE applications SET submitted_at = datetime('now') WHERE job_id = ?").run(ref);
-    expect(todaySubmitted(db).find((x) => x.jobId === ref)!.applyMode).toBe("referral");
+    expect(todaySubmitted(db, U).find((x) => x.jobId === ref)!.applyMode).toBe("referral");
   });
 });

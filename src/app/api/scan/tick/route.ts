@@ -3,13 +3,14 @@ import { getDb } from "@/lib/db";
 import { runTick } from "@/scanner/scheduler";
 import { startPostScanPipeline, unscoredBacklog, matchBudget } from "@/scanner/relay";
 import { retierAll } from "@/scanner/retier";
+import { withInternal } from "@/lib/actor";
 
 let tickInFlight = false;
 let lastRetierDay = "";
 
-// 每分钟由 instrumentation.ts 调一次:问到期板块;有新增、或有积压且本小时打分额度未用完就接力;
+// 每分钟由 instrumentation.ts 调一次(带内部令牌):问到期板块;有新增、或有积压且本小时打分额度未用完就接力;
 // 每天本地 03:xx 重算一次分级。同一进程内不重入。
-export async function POST() {
+export const POST = withInternal(async () => {
   if (tickInFlight) return NextResponse.json({ skipped: "tick in flight" });
   tickInFlight = true;
   try {
@@ -32,4 +33,4 @@ export async function POST() {
   } finally {
     tickInFlight = false;
   }
-}
+});
