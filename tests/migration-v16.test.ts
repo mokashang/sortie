@@ -67,12 +67,12 @@ function makeV14(file: string) {
   raw.close();
 }
 
-describe("v14 → v15 migration (accounts)", () => {
+describe("v14 → v16 migration (accounts; main's v15 run_id/outcome step runs first)", () => {
   it("rebuilds the four unique-constrained tables, adds user_id everywhere, keeps rows, ids, references and the trigger", () => {
-    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "v15-")), "db.sqlite");
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "v16-")), "db.sqlite");
     makeV14(file);
     const db = openDb(file);
-    expect(db.pragma("user_version", { simple: true })).toBe(15);
+    expect(db.pragma("user_version", { simple: true })).toBe(16);
 
     for (const t of ["matches", "applications", "people", "outreach", "resumes", "experiences", "executor_runs", "events"]) {
       const cols = (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
@@ -115,7 +115,7 @@ describe("v14 → v15 migration (accounts)", () => {
     // Re-open: no-op.
     const again = openDb(file);
     expect((again.prepare("SELECT COUNT(*) n FROM applications").get() as { n: number }).n).toBe(3);
-    expect(again.pragma("user_version", { simple: true })).toBe(15);
+    expect(again.pragma("user_version", { simple: true })).toBe(16);
     again.close();
   });
 

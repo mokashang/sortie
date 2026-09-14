@@ -23,7 +23,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 function columnsOf(db: DB, table: string): string[] {
   return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
@@ -38,7 +38,7 @@ export function tableDdl(schema: string, table: string): string {
   return m[0];
 }
 
-// v14 -> v15: accounts (spec 2026-09-13 accounts §3). Every per-user table gains
+// v15 -> v16: accounts (spec 2026-09-13 accounts §3). Every per-user table gains
 // user_id TEXT NOT NULL DEFAULT 'legacy' — the bucket holding everything written before accounts
 // existed, which the first account claims (src/lib/users.ts). The four tables whose UNIQUE
 // constraint changes (job_id → (user_id, job_id), linkedin_url → (user_id, linkedin_url),
@@ -46,16 +46,16 @@ export function tableDdl(schema: string, table: string): string {
 // the new shape under a temporary name, copy the common columns, drop the old table, rename —
 // with foreign keys off so the drop performs no implicit deletes. The others just get the column.
 // Re-runnable: a table that already has user_id is left alone.
-const V15_REBUILD = ["matches", "applications", "people", "resumes"] as const;
-const V15_ADD_COLUMN = ["outreach", "experiences", "executor_runs"] as const;
-export function migrateV15(db: DB, schema: string): { rebuilt: string[] } {
-  const rebuilt = V15_REBUILD.filter((t) => !columnsOf(db, t).includes("user_id"));
+const V16_REBUILD = ["matches", "applications", "people", "resumes"] as const;
+const V16_ADD_COLUMN = ["outreach", "experiences", "executor_runs"] as const;
+export function migrateV16(db: DB, schema: string): { rebuilt: string[] } {
+  const rebuilt = V16_REBUILD.filter((t) => !columnsOf(db, t).includes("user_id"));
   if (rebuilt.length > 0) {
     db.pragma("foreign_keys = OFF");
     try {
       db.transaction(() => {
         for (const t of rebuilt) {
-          const tmp = `${t}__v15`;
+          const tmp = `${t}__v16`;
           db.exec(tableDdl(schema, t).replace(/CREATE TABLE IF NOT EXISTS "?\w+"? \(/, `CREATE TABLE ${tmp} (`));
           const newCols = columnsOf(db, tmp);
           const common = columnsOf(db, t).filter((c) => newCols.includes(c)).join(", ");
@@ -65,14 +65,14 @@ export function migrateV15(db: DB, schema: string): { rebuilt: string[] } {
         }
       })();
       const violations = db.pragma("foreign_key_check") as unknown[];
-      if (violations.length > 0) console.warn(`[db] v15 rebuild: ${violations.length} foreign key violation(s) remain (pre-existing dangling references)`);
+      if (violations.length > 0) console.warn(`[db] v16 rebuild: ${violations.length} foreign key violation(s) remain (pre-existing dangling references)`);
     } finally {
       db.pragma("foreign_keys = ON");
     }
     // Dropping a table drops its trigger and indexes; the schema recreates them (IF NOT EXISTS).
     db.exec(schema);
   }
-  for (const t of V15_ADD_COLUMN) {
+  for (const t of V16_ADD_COLUMN) {
     if (!columnsOf(db, t).includes("user_id")) db.exec(`ALTER TABLE ${t} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'legacy'`);
   }
   if (!columnsOf(db, "events").includes("user_id")) db.exec("ALTER TABLE events ADD COLUMN user_id TEXT");
@@ -92,7 +92,7 @@ export function openDb(file?: string): DB {
   const schema = readSchema();
   db.exec(schema);
   if (found > 0 && found < SCHEMA_VERSION) {
-    // v15's events.user_id goes first: the v12 step below calls retierAll(), which logs an event
+    // v16's events.user_id goes first: the v12 step below calls retierAll(), which logs an event
     // through logEvent() — and that INSERT names the column.
     if (!columnsOf(db, "events").includes("user_id")) db.exec("ALTER TABLE events ADD COLUMN user_id TEXT");
     // v2 -> v3: applications gained answer_pack/filled_fields/confirm_decision/needs_manual_reason.
@@ -187,6 +187,13 @@ export function openDb(file?: string): DB {
     // them" (src/network/draft.ts, 2026-09-11 outreach wording rework: give before you ask).
     const peopleCols14 = (db.prepare("PRAGMA table_info(people)").all() as { name: string }[]).map((c) => c.name);
     if (!peopleCols14.includes("notes")) db.exec("ALTER TABLE people ADD COLUMN notes TEXT");
+    // v14 -> v15: applications.run_id (which apply run claimed the row) + executor_runs.outcome (the
+    // run's planned-vs-achieved snapshot, src/apply/run-outcome.ts) — so a task that filled 5 of a
+    // planned 70 shows 未完成 · 海投 5/70 instead of 已完成 (2026-09-13, task #68).
+    const appCols15 = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map((c) => c.name);
+    if (!appCols15.includes("run_id")) db.exec("ALTER TABLE applications ADD COLUMN run_id INTEGER");
+    const runCols15 = (db.prepare("PRAGMA table_info(executor_runs)").all() as { name: string }[]).map((c) => c.name);
+    if (!runCols15.includes("outcome")) db.exec("ALTER TABLE executor_runs ADD COLUMN outcome TEXT");
     // v11 -> v12: boards 注册表 + jobs.board_key(spec 2026-09-06 job-sources §1)。boards 表由上面的
     // CREATE TABLE IF NOT EXISTS 建好;这里给老 jobs 加列、按 apply_url 回填 board_key/ats,并把解析出的
     // 板块登记进 boards(origin=url)。只处理 board_key 仍为空的行 —— 可重跑。
@@ -206,11 +213,11 @@ export function openDb(file?: string): DB {
       // 已经出过高分岗的板块直接成为 core,不用等第二天凌晨的重算。
       retierAll(db);
     }
-    // v14 -> v15: accounts. Must stay last — the rebuild copies whatever columns the steps above
-    // have already added. See migrateV15.
-    migrateV15(db, schema);
+    // v15 -> v16: accounts. Must stay last — the rebuild copies whatever columns the steps above
+    // have already added. See migrateV16.
+    migrateV16(db, schema);
   }
-  // Tenant indexes (schema v15). Created here rather than in schema.sql for the same reason as
+  // Tenant indexes (schema v16). Created here rather than in schema.sql for the same reason as
   // the job indexes below: schema.sql runs before an old db has gained user_id.
   db.exec("CREATE INDEX IF NOT EXISTS idx_applications_user_status ON applications(user_id, status)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id)");

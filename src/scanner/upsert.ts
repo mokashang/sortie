@@ -54,7 +54,7 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
        AND excluded.jd_text<>jobs.jd_text`
   );
   // One applications row per account for every new job (spec 2026-09-13 accounts §3). Before any
-  // account exists (a fresh install, or the minutes between the v15 migration and the owner's
+  // account exists (a fresh install, or the minutes between the v16 migration and the owner's
   // sign-up) the row lands in the legacy bucket, which the first account claims.
   const insApp = db.prepare(
     `INSERT OR IGNORE INTO applications (user_id, job_id)

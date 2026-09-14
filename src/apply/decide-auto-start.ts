@@ -1,6 +1,7 @@
 import { DB } from "@/lib/db";
 import { decide } from "@/apply/queue";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
+import { resumePausedChainIfReady } from "@/apply/continue";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
 // named export on route.ts) because Next's typed-routes checker only tolerates the recognized
@@ -13,6 +14,8 @@ export interface DecideAutoStartDeps {
   hasLiveOrQueuedRun?: typeof hasLiveOrQueuedRun;
   lastRunChannel?: typeof lastRunChannel;
   startExecutor?: typeof startExecutor;
+  // Log dir for a resumed 接力 segment (tests point it at a temp dir).
+  logDir?: string;
 }
 
 export interface DecideAutoStartResult {
@@ -65,6 +68,11 @@ export function decideAndMaybeAutoStart(
   deps: DecideAutoStartDeps = {}
 ): DecideAutoStartResult {
   decide(db, userId, jobId, decision, reason);
+  // A 接力 chain parked behind the confirmation backlog (src/apply/continue.ts) gets first claim
+  // on the session: approving or rejecting shrinks the backlog, and the chain's next segment
+  // starts with the resume phase, so it submits the approvals itself.
+  const resumed = resumePausedChainIfReady(db, userId, deps);
+  if (resumed.action === "queued") return { autoStarted: true, runId: resumed.runId, channel: resumed.channel };
   if (decision !== "approve") return { autoStarted: false };
   return maybeAutoStartApply(db, userId, { resume: true }, deps);
 }

@@ -9,7 +9,7 @@ import { importProfileYaml, profileYamlPath } from "@/lib/profile";
 // two tenancy operations every account needs: claiming the pre-accounts data bucket (the first
 // account becomes the box's owner) and backfilling a per-user applications row for every job.
 
-// Rows written before accounts existed (schema < v15) carry this user_id until an owner claims
+// Rows written before accounts existed (schema < v16) carry this user_id until an owner claims
 // them. Also the schema's DEFAULT, so tests can seed rows without naming a user — application code
 // must always name one (tests/tenancy-guard.test.ts).
 export const LEGACY_USER_ID = "legacy";

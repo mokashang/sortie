@@ -1,4 +1,5 @@
 import { DB, logEvent } from "@/lib/db";
+import { currentApplyRunId } from "@/apply/run-outcome";
 import { Profile } from "@/lib/profile";
 import { LlmBackend } from "@/llm/types";
 import { EFFECTIVE_MODE_SQL } from "@/apply/mode";
@@ -88,10 +89,12 @@ export function takeNextReferral(db: DB, userId: string, opts: { direction?: str
       .all(userId, primary.job_id, primary.company, ...(targeted ? opts.jobIds! : [])) as JobRow[];
 
     const jobs = [primary, ...siblings];
+    // run_id: which apply run took these jobs — the run's outcome (计划完成度) is counted from it.
+    const runId = currentApplyRunId(db, userId);
     const claim = db.prepare(
-      "UPDATE applications SET status = 'referral_seeking', confirm_decision = NULL WHERE user_id = ? AND job_id = ? AND status = 'matched'"
+      "UPDATE applications SET status = 'referral_seeking', confirm_decision = NULL, run_id = ? WHERE user_id = ? AND job_id = ? AND status = 'matched'"
     );
-    const claimed = db.transaction(() => jobs.filter((r) => claim.run(userId, r.job_id).changes === 1))();
+    const claimed = db.transaction(() => jobs.filter((r) => claim.run(runId, userId, r.job_id).changes === 1))();
     if (claimed.length === 0) continue; // lost a race on every row — pick again
 
     const people = db

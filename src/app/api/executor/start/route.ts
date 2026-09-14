@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { startExecutor, ExecutorKind, ExecutorChannel } from "@/executor/runner";
+import { startExecutor, ExecutorKind, ExecutorChannel, StartOptions } from "@/executor/runner";
+import { supersedePausedChain, APPLY_CHUNK_SIZE } from "@/apply/continue";
 import { withUser, failResponse } from "@/lib/actor";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
@@ -17,6 +18,10 @@ const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 // jd_review has no user_chrome protocol (buildJdReviewPrompt only exists as a headless
 // Playwright-profile prompt — there's no attended-session equivalent), so its channel is forced
 // to 'headless' here regardless of what the caller passed, before channel validation runs.
+//
+// An apply run with a plan is the first segment of a 接力 chain (src/apply/continue.ts): it gets
+// the default chunk size, and any chain of this account still parked waiting for confirmations
+// is superseded.
 export const POST = withUser(async (req, { userId }) => {
   try {
     const body = await req.json();
@@ -31,7 +36,13 @@ export const POST = withUser(async (req, { userId }) => {
         { status: 400 }
       );
     }
-    const result = startExecutor(getDb(), userId, kind as ExecutorKind, body.options ?? {}, {}, channel as ExecutorChannel);
+    const db = getDb();
+    const options: StartOptions = body.options ?? {};
+    if (kind === "apply" && Array.isArray(options.plan) && options.plan.length > 0) {
+      supersedePausedChain(db, userId);
+      if (typeof options.chunk !== "number" || options.chunk <= 0) options.chunk = APPLY_CHUNK_SIZE;
+    }
+    const result = startExecutor(db, userId, kind as ExecutorKind, options, {}, channel as ExecutorChannel);
     return NextResponse.json(result);
   } catch (e) {
     return failResponse(e);

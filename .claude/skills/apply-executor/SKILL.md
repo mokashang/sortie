@@ -103,6 +103,8 @@ Only once both checks pass, tell the user you're starting and begin the loop bel
 
 ## 2. The loop
 
+**Segments (接力, CLAUDE.md §3.3b).** If the run's `options.chunk` is set (the App sets 10 for every plan run), stop the loop once that many applications are filled-and-reported (`awaiting_confirm`) plus referral jobs claimed (`referral_seeking`), and finish normally with `status: "done"` — the App queues the next segment itself with the remaining plan (`options.chain` tells you which segment this is and the cumulative progress; log that on your first line). Never quit early because the plan looks too big, and never push past the chunk.
+
 Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-breaker condition in
 §7 fires:
 

@@ -27,7 +27,7 @@
 3. **内部令牌**(`data/internal-token`,首次启动自动生成,或 `SORTIE_INTERNAL_TOKEN`)→ **视为 owner**(这台机器的主人)。调度器 tick、dispatcher、部署脚本、常开机上的桌面值守会话都用它;它对租户接口的语义是「以 owner 身份」。
 每个 run 另有一枚**运行令牌**(`api_tokens.kind='run'`,绑定 run 与用户,24h 过期,finish 时作废):headless `claude -p` 与调度器拉起的 CLI 会话通过提示词拿到它,所以它们只能动自己那个用户、自己那个 run 的东西。
 
-### 3. 租户模型(schema v15)
+### 3. 租户模型(schema v16;原定 v15,main 在 2026-09-13 先用 v15 加了 applications.run_id / executor_runs.outcome)
 - **公共**:`jobs`、`boards`、`companies`、`events`(加可空 `user_id`)、`profile` kv(机器状态:心跳/子进程记录,按用户加后缀)。
 - **每个人的**(加 `user_id TEXT NOT NULL DEFAULT 'legacy'`):`matches`(UNIQUE(user_id, job_id))、`applications`(UNIQUE(user_id, job_id))、`people`(UNIQUE(user_id, linkedin_url))、`outreach`、`resumes`(UNIQUE(user_id, version_name))、`experiences`、`executor_runs`。新表 `profiles`(user_id PK, data JSON)、`api_tokens`。
 - `'legacy'` 是**迁移前数据的桶**:第一个注册的账号(或 `.env` 指定的 `SORTIE_OWNER_EMAIL`)成为 owner,认领整个桶(UPDATE user_id),并把 `profile/profile.yaml` 导进 `profiles`。之后 `profile.yaml` 不再被读(档案页有完整编辑器;也可在档案页「从 profile.yaml 导入」)。DEFAULT 只为迁移与测试造数据存在:应用代码**永远显式写 user_id**,`tests/tenancy-guard.test.ts` 静态扫描 `src/` 里的 INSERT 保证这一点。
@@ -57,5 +57,5 @@
 - 不改 LLM 后端:`claude -p` 仍是机器级订阅。
 
 ## 验收
-- 单测:v14 → v15 迁移(表重建、唯一约束、legacy 桶)、认领、回填、每个模块按用户隔离(两个用户互相看不见)、actor 解析(cookie / 令牌 / 内部令牌)、租户静态检查。
+- 单测:v15 → v16 迁移(表重建、唯一约束、legacy 桶)、认领、回填、每个模块按用户隔离(两个用户互相看不见)、actor 解析(cookie / 令牌 / 内部令牌)、租户静态检查。
 - 真机:注册第一个账号 → 认领旧数据(队列、历史、人脉都还在)→ 第二个账号看到空数据 → Google 登录(配好 client 后)→ 助手令牌能过 claim-next。

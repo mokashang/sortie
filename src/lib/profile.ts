@@ -3,7 +3,7 @@ import YAML from "yaml";
 import path from "path";
 import type { DB } from "@/lib/db";
 
-// One profile per account, stored as JSON in the `profiles` table (schema v15). Before accounts
+// One profile per account, stored as JSON in the `profiles` table (schema v16). Before accounts
 // this was the hand-edited profile/profile.yaml; that file is now only an import source (the
 // owner's first sign-up imports it, 档案页 can re-import it). The validation schema is unchanged.
 

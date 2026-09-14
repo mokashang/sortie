@@ -1,3 +1,4 @@
+import type { ChainInfo } from "@/app/lib/run-outcome";
 // Prompt builders for headless `claude -p` executor sessions.
 //
 // These sessions have exactly ONE MCP server available: `playwright` (the official Playwright
@@ -54,9 +55,11 @@ const GREENHOUSE_HEURISTICS = `## Greenhouse(Tier-A ATS)填表要点(一次真�
 - **页面上如果弹出 Simplify 之类的自动填表浏览器插件面板**,忽略它——绝不点它的 Autofill 按钮,一切填值都走你自己的 answerPack。
 - **每次填完(以及正式提交前)对每一个必填字段做一次最终 read-back**:重新 \`browser_snapshot\`,逐个核对必填字段的当前实际值确实是你想要的值,不要凭"刚刚填过了"就假设它还在。`;
 
-export function buildApplyPrompt(options: { limit?: number; plan?: ApplyPlanEntry[]; resume?: boolean; token?: string } = {}): string {
+export function buildApplyPrompt(
+  options: { limit?: number; plan?: ApplyPlanEntry[]; resume?: boolean; token?: string; chunk?: number; chain?: ChainInfo } = {}
+): string {
   const C = curlCmd(options.token);
-  const { plan, resume } = options;
+  const { plan, resume, chain } = options;
   const hasExplicitLimit = typeof options.limit === "number";
   const limit = options.limit ?? 5;
   // With a plan, the session's hard cap is the sum of per-direction quotas rather than the bare
@@ -65,7 +68,11 @@ export function buildApplyPrompt(options: { limit?: number; plan?: ApplyPlanEntr
   // filled-and-awaiting-confirm applications, NOT raw /api/apply/next calls — a job disqualified
   // by the eligibility check, a login wall, "already applied", a dead link, or an error does not
   // consume it (see introSection's plan branch and §2 step 1's per-direction 3x take cap).
-  const capCount = plan ? plan.reduce((sum, p) => sum + p.count, 0) : limit;
+  const planSum = plan ? plan.reduce((sum, p) => sum + p.count, 0) : limit;
+  // 接力 (src/apply/continue.ts): a plan bigger than one session can carry is done in segments —
+  // this session only does `chunk` of it and finishes normally; the App queues the next segment.
+  const chunked = !!plan && typeof options.chunk === "number" && options.chunk > 0 && options.chunk < planSum;
+  const capCount = chunked ? (options.chunk as number) : planSum;
 
   // Resume mode's first phase: re-fill and re-submit anything a prior executor process left
   // approved+awaiting_confirm but never got to submit (e.g. it died between approval and click).
@@ -117,7 +124,13 @@ ${plan.map((p) => `- \`${p.direction}\` × **${p.count}**(该方向最多调用 
 
 若某方向对 /api/apply/next 的调用已经返回 \`{"done": true}\`,立即放弃该方向剩余配额、换下一个方向——这不算失败,不计入 §5 的 needs_manual/error 熔断计数。全部方向处理完(或撞到下面的硬性上限/熔断)后跳到 §6 收尾。
 
-本会话总硬性上限 **${capCount}** 份填好待确认的申请(以上各方向配额之和),达到后停止循环并总结,即使某个方向仍有未用完的配额。
+本会话总硬性上限 **${capCount}** 份填好待确认的申请${
+      chunked
+        ? `。这是接力的一段:计划共 ${planSum} 份,本段只做 ${capCount} 份——做满就正常收尾(§6),App 会自动排下一段继续做剩下的;既不要为了凑够计划硬撑,也不要因为「做不完」提前收工`
+        : "(以上各方向配额之和)"
+    },达到后停止循环并总结,即使某个方向仍有未用完的配额。${
+      chain ? `\n\n这是任务 #${chain.root} 的第 ${chain.step} 段接力,之前各段已完成:海投 ${chain.before.direct}/${chain.planned.direct}。` : ""
+    }
 
 本无人值守会话只做海投(mode direct);内推模式的条目由值守会话处理,这里不会出现。`
     : `本会话最多投递 **${limit}** 个申请(硬性上限,达到后停止循环并总结,即使 /api/apply/next 还有更多任务)。`;
