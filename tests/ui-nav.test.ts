@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NAV, SETTINGS_NAV, TABBAR_HREFS, isActivePath } from "@/app/components/shell/nav";
+import { LANGS } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
 
 describe("shell nav", () => {
   it("marks the home route only on an exact match, other routes on their subtree", () => {
@@ -18,7 +20,13 @@ describe("shell nav", () => {
     expect(hrefs.has(SETTINGS_NAV.href)).toBe(false);
   });
 
-  it("has no internal words in the labels", () => {
-    for (const n of [...NAV, SETTINGS_NAV]) expect(n.label).not.toMatch(/run|executor|headless|chrome/i);
+  it("has a label in every language, with no internal words", () => {
+    for (const n of [...NAV, SETTINGS_NAV]) {
+      for (const lang of LANGS) {
+        const label = messages[lang].nav[n.key];
+        expect(label.length).toBeGreaterThan(0);
+        expect(label).not.toMatch(/run|executor|headless|chrome/i);
+      }
+    }
   });
 });

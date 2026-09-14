@@ -576,3 +576,22 @@ main {
     transform: none;
   }
 }
+
+/* Language toggle in the top bar: the icon plus the current language's own name, so it reads as
+   a status as much as a control. Overrides the fixed 30px icon-button width. */
+.topbar-lang {
+  width: auto;
+  padding: 0 8px 0 7px;
+  gap: 6px;
+  color: var(--sub);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.topbar-lang:hover {
+  color: var(--ink);
+}
+
+.topbar-lang-name {
+  line-height: 1;
+}

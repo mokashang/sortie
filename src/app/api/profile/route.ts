@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 import { getDb } from "@/lib/db";
 import { emptyProfileData, getProfileData, importProfileYaml, profileStatus, profileYamlPath, saveProfile } from "@/lib/profile";
 import { withUser, failResponse } from "@/lib/actor";
+import { langFromRequest, messagesFor } from "@/i18n/server";
 
 // The 档案页「基本信息」editor (spec 2026-09-13 accounts §6). GET returns what is stored (or a blank
 // pre-filled from the account) plus whether it validates; PUT {profile} saves a complete profile;
@@ -23,7 +24,7 @@ export const PUT = withUser(async (req, { userId }) => {
   } catch (e) {
     if (e instanceof ZodError) {
       return NextResponse.json(
-        { error: "有几项还不对", issues: e.issues.map((i) => ({ path: i.path.join("."), message: i.message })) },
+        { error: messagesFor(langFromRequest(req)).errors.profileInvalid, issues: e.issues.map((i) => ({ path: i.path.join("."), message: i.message })) },
         { status: 400 }
       );
     }
@@ -36,9 +37,10 @@ export const POST = withUser(async (req, { userId, user }) => {
     const body = await req.json().catch(() => ({}));
     let yaml: string | null = typeof body.yaml === "string" && body.yaml.trim() ? body.yaml : null;
     if (!yaml) {
-      if (user?.role !== "owner") return NextResponse.json({ error: "只有主账号可以从服务器上的 profile.yaml 导入" }, { status: 403 });
+      const t = messagesFor(langFromRequest(req)).errors;
+      if (user?.role !== "owner") return NextResponse.json({ error: t.ownerOnlyImport }, { status: 403 });
       const file = profileYamlPath();
-      if (!fs.existsSync(file)) return NextResponse.json({ error: `服务器上没有 ${file}` }, { status: 404 });
+      if (!fs.existsSync(file)) return NextResponse.json({ error: t.fileMissing(file) }, { status: 404 });
       yaml = fs.readFileSync(file, "utf8");
     }
     const profile = importProfileYaml(getDb(), userId, yaml);

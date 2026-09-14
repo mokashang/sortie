@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
+import { DEFAULT_LANG, LANG_COOKIE, parseLang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
 
 // Cheap edge gate (spec 2026-09-13 accounts §1): pages without a session cookie go to /login,
 // API calls without a cookie or a bearer token get 401. The real check — is the cookie valid, is
@@ -20,7 +22,8 @@ export function middleware(req: NextRequest) {
 
   if (pathname.startsWith("/api/")) {
     if (hasSession || req.headers.get("authorization")) return NextResponse.next();
-    return NextResponse.json({ error: "登录后再试", code: "unauthenticated" }, { status: 401 });
+    const lang = parseLang(req.cookies.get(LANG_COOKIE)?.value) ?? DEFAULT_LANG;
+    return NextResponse.json({ error: messages[lang].errors.signInFirst, code: "unauthenticated" }, { status: 401 });
   }
 
   if (isPublicPage(pathname)) {

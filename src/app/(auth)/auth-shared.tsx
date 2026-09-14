@@ -1,5 +1,6 @@
 "use client";
 import { Button } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 
 // Bits every sign-in page shares: the heading, the inline error note and the Google button.
 
@@ -21,8 +22,9 @@ export function AuthError({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function AuthDivider({ children = "或" }: { children?: React.ReactNode }) {
-  return <div className="auth-divider">{children}</div>;
+export function AuthDivider({ children }: { children?: React.ReactNode }) {
+  const m = useMessages();
+  return <div className="auth-divider">{children ?? m.auth.shared.or}</div>;
 }
 
 function GoogleMark() {
@@ -36,10 +38,11 @@ function GoogleMark() {
   );
 }
 
-export function GoogleButton({ onClick, loading, children = "使用 Google 继续" }: { onClick: () => void; loading?: boolean; children?: React.ReactNode }) {
+export function GoogleButton({ onClick, loading, children }: { onClick: () => void; loading?: boolean; children?: React.ReactNode }) {
+  const m = useMessages();
   return (
     <Button className="btn-block" icon={<GoogleMark />} onClick={onClick} loading={loading}>
-      {children}
+      {children ?? m.auth.shared.continueWithGoogle}
     </Button>
   );
 }

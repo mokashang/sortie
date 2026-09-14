@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { referralDecide, ReferralAction } from "@/apply/referral";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
+import { langFromRequest, messagesFor } from "@/i18n/server";
 import { withUser, failResponse } from "@/lib/actor";
 
 // POST {jobIds, action: direct|won|retry|archive, info?, personName?} — the 内推进行中 card
@@ -24,7 +25,7 @@ export const POST = withUser(async (req, { userId }) => {
       ok: true,
       startMode: result.startMode,
       ...started,
-      message: started.autoStarted ? undefined : "已有投递 run 在跑,结束后请在卡片上再点一次「开始投」",
+      message: started.autoStarted ? undefined : messagesFor(langFromRequest(req)).errors.applyRunBusy,
     });
   } catch (e) {
     return failResponse(e);

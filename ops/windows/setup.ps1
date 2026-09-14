@@ -84,7 +84,8 @@ Register-SortieTask "Sortie Backup" `
 
 # 4. Caddy (phase 2, custom domain) - only with -WithCaddy. This registers the task and the firewall rules;
 #    ops\windows\caddy-switch.ps1 does the hand-over of port 443 (tailscale serve off, start, verify, roll back).
-#    Re-registering stops a running Caddy: start the task again afterwards (caddy-switch.ps1 does).
+#    Re-registering does not end a Caddy that is already running under the old definition (it keeps port
+#    443 without a task); caddy-switch.ps1 stops leftovers and starts the task again afterwards.
 if ($WithCaddy) {
   if (-not (Test-Path $CaddyExe)) { throw "Caddy not found at $CaddyExe (download a build with the cloudflare DNS module - README section 8)" }
   $mods = @(& $CaddyExe list-modules)
@@ -99,8 +100,15 @@ if ($WithCaddy) {
     & $CaddyExe validate --config $caddyfile --envfile $envFile | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Caddyfile did not validate" }
   } finally { Pop-Location }
+  # Started through ops\windows\run-hidden.js (wscript.exe, a GUI-subsystem host) rather than as caddy.exe
+  # directly: a console-subsystem action gets a console window in the interactive session - the blank
+  # "caddy.exe" window on the desktop, and closing it killed the proxy (2026-09-14). The launcher hides the
+  # console, ends Caddy when the task is stopped, and retries a failed start (Tailscale adapter not up yet
+  # after a reboot) 3 times a minute apart - the task's own RestartCount never fires for an exit code.
+  $runHidden = Join-Path $Root "ops\windows\run-hidden.js"
+  $wscript = Resolve-Cmd "wscript.exe"
   Register-SortieTask "Sortie Caddy" `
-    (New-ScheduledTaskAction -Execute $CaddyExe -Argument "run --config `"$caddyfile`" --envfile `"$envFile`"" -WorkingDirectory $Root) `
+    (New-ScheduledTaskAction -Execute $wscript -Argument "//B //Nologo `"$runHidden`" -Retries 3 -RetryDelaySec 60 `"$CaddyExe`" run --config `"$caddyfile`" --envfile `"$envFile`"" -WorkingDirectory $Root) `
     (New-LogonTrigger 25) $longRunning
   Remove-NetFirewallRule -DisplayName "Sortie Caddy (tailnet only)" -ErrorAction SilentlyContinue
   Remove-NetFirewallRule -DisplayName "Sortie Caddy (tailnet only, QUIC)" -ErrorAction SilentlyContinue

@@ -346,10 +346,10 @@ describe("the assistant that asked is gone (its run failed or was reaped)", () =
 
 describe("notifications", () => {
   it("say what kind of thing is needed", () => {
-    expect(needsInfoNotification("Apple", "SWE", [LOGIN]).title).toContain("登录一次");
-    expect(needsInfoNotification("Databricks", "Intern", [{ key: "transcript", label: "Transcript", kind: "file" }]).title).toContain("上传文件");
-    expect(needsInfoNotification("X", "Y", [{ key: "video", label: "Video", kind: "manual" }]).title).toContain("亲自处理");
-    expect(needsInfoNotification("X", "Y", [{ key: "captcha", label: "Captcha", kind: "action" }]).title).toContain("标签页");
-    expect(needsInfoNotification("X", "Y", [{ key: "gpa", label: "GPA" }]).body).toContain("待处理");
+    expect(needsInfoNotification("Apple", "SWE", [LOGIN], "zh").title).toContain("登录一次");
+    expect(needsInfoNotification("Databricks", "Intern", [{ key: "transcript", label: "Transcript", kind: "file" }], "zh").title).toContain("上传文件");
+    expect(needsInfoNotification("X", "Y", [{ key: "video", label: "Video", kind: "manual" }], "zh").title).toContain("亲自处理");
+    expect(needsInfoNotification("X", "Y", [{ key: "captcha", label: "Captcha", kind: "action" }], "zh").title).toContain("标签页");
+    expect(needsInfoNotification("X", "Y", [{ key: "gpa", label: "GPA" }], "zh").body).toContain("待处理");
   });
 });

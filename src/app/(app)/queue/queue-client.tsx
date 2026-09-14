@@ -1,13 +1,14 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Search, SearchX, Sparkles } from "lucide-react";
-import { directionLabel } from "@/matcher/directions";
+import { directionName, tierLabel } from "@/app/lib/labels";
 import { ALL_JOBS_DIRECTION, type QueueModeKey, type QueueSortKey } from "@/app/lib/queue-const";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
 import { useMediaQuery } from "@/app/lib/use-media";
 import { cx } from "@/app/lib/cx";
 import { Button, EmptyState, Field, Input, Segmented, Select, SkeletonRows, Tabs, useToast } from "@/app/components/ui";
 import { ScanMenu } from "@/app/components/scan-menu";
+import { useLang, useMessages } from "@/i18n/client";
 import { JobRow, type JobRowData, type RowMode } from "./job-row";
 import { JobDrawer, JobPanel } from "./job-drawer";
 
@@ -57,6 +58,8 @@ export interface QueueClientProps {
 }
 
 export function QueueClient(props: QueueClientProps) {
+  const m = useMessages();
+  const lang = useLang();
   const { pageSize } = props;
   const [tabs, setTabs] = useState<TabInfo[]>(props.tabs);
   const [params, setParams] = useState<Params>({
@@ -98,12 +101,12 @@ export function QueueClient(props: QueueClientProps) {
         const j = await getJson<PagedResult>(`/api/queue?${sp.toString()}`);
         if (mine === seq.current) setResult(j);
       } catch (e) {
-        toast({ title: "加载队列失败", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.queue.toast.loadFailed, description: errorMessage(e), tone: "danger" });
       } finally {
         if (mine === seq.current) setLoading(false);
       }
     },
-    [pageSize, toast]
+    [pageSize, toast, m]
   );
 
   const fetchTabs = useCallback(async () => {
@@ -201,9 +204,9 @@ export function QueueClient(props: QueueClientProps) {
       try {
         await postJson("/api/queue/pin", { jobId: row.id, pinned });
         await fetchPage(paramsRef.current);
-        toast({ title: pinned ? `已置顶 ${row.company}` : `已取消置顶 ${row.company}`, description: pinned ? "助手投递时会优先取置顶的职位。" : undefined });
+        toast({ title: pinned ? m.queue.toast.pinned(row.company) : m.queue.toast.unpinned(row.company), description: pinned ? m.queue.toast.pinnedDescription : undefined });
       } catch (e) {
-        toast({ title: "置顶失败", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.queue.toast.pinFailed, description: errorMessage(e), tone: "danger" });
       }
     });
   }
@@ -213,9 +216,9 @@ export function QueueClient(props: QueueClientProps) {
       try {
         await postJson("/api/queue/mode", { jobId: row.id, mode });
         await Promise.all([fetchPage(paramsRef.current), fetchTabs()]);
-        toast({ title: mode === null ? `${row.company} 已改回跟随建议` : `${row.company} 已改为${mode === "referral" ? "找内推" : "海投"}` });
+        toast({ title: mode === null ? m.queue.toast.modeReset(row.company) : mode === "referral" ? m.queue.toast.modeReferral(row.company) : m.queue.toast.modeDirect(row.company) });
       } catch (e) {
-        toast({ title: "修改失败", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.queue.toast.modeFailed, description: errorMessage(e), tone: "danger" });
       }
     });
   }
@@ -231,19 +234,19 @@ export function QueueClient(props: QueueClientProps) {
         await postJson("/api/queue/archive", { jobId: row.id });
         void fetchTabs();
         toast({
-          title: `已跳过 ${row.company} · ${row.title}`,
+          title: m.queue.toast.skipped(row.company, row.title),
           action: {
-            label: "撤销",
+            label: m.common.undo,
             onClick: () => {
               void postJson("/api/queue/unarchive", { jobId: row.id })
                 .then(() => Promise.all([fetchPage(paramsRef.current), fetchTabs()]))
-                .then(() => toast({ title: `已恢复 ${row.company}`, tone: "good" }))
-                .catch((e) => toast({ title: "撤销失败", description: errorMessage(e), tone: "danger" }));
+                .then(() => toast({ title: m.queue.toast.restored(row.company), tone: "good" }))
+                .catch((e) => toast({ title: m.queue.toast.undoFailed, description: errorMessage(e), tone: "danger" }));
             },
           },
         });
       } catch (e) {
-        toast({ title: "跳过失败", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.queue.toast.skipFailed, description: errorMessage(e), tone: "danger" });
         void fetchPage(paramsRef.current);
       }
     })();
@@ -253,7 +256,7 @@ export function QueueClient(props: QueueClientProps) {
     try {
       await postJson("/api/queue/referral-fit");
       setFitInfo((f) => ({ unclassified: f?.unclassified ?? 0, running: true }));
-      toast({ title: "正在补判内推建议…", description: "助手逐条判断,完成后自动刷新。", tone: "info" });
+      toast({ title: m.queue.toast.fitRunning, description: m.queue.toast.fitRunningDescription, tone: "info" });
       const poll = async () => {
         try {
           const s = await getJson<{ unclassified: number; running: boolean }>("/api/queue/referral-fit");
@@ -261,7 +264,7 @@ export function QueueClient(props: QueueClientProps) {
           if (s.running) setTimeout(poll, 5000);
           else {
             await Promise.all([fetchPage(paramsRef.current), fetchTabs()]);
-            toast({ title: "内推建议已更新", tone: "good" });
+            toast({ title: m.queue.toast.fitDone, tone: "good" });
           }
         } catch {
           setTimeout(poll, 5000);
@@ -269,7 +272,7 @@ export function QueueClient(props: QueueClientProps) {
       };
       setTimeout(poll, 5000);
     } catch (e) {
-      toast({ title: "补判失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.queue.toast.fitFailed, description: errorMessage(e), tone: "danger" });
     }
   }
 
@@ -288,7 +291,7 @@ export function QueueClient(props: QueueClientProps) {
   return (
     <div>
       <Tabs
-        ariaLabel="方向"
+        ariaLabel={m.queue.tabs.ariaLabel}
         value={params.direction}
         onChange={selectTab}
         items={[
@@ -296,9 +299,9 @@ export function QueueClient(props: QueueClientProps) {
             key: t.direction,
             label: (
               <>
-                {directionLabel(t.direction)}
+                {directionName(t.direction, lang)}
                 {t.tier != null ? (
-                  <span className="tab-tier" title={`梯队 ${t.tier}`}>
+                  <span className="tab-tier" title={tierLabel(t.tier, lang)}>
                     T{t.tier}
                   </span>
                 ) : null}
@@ -306,7 +309,7 @@ export function QueueClient(props: QueueClientProps) {
             ),
             count: t.matched,
           })),
-          { key: ALL_JOBS_DIRECTION, label: "全部入库", count: props.allJobsCount },
+          { key: ALL_JOBS_DIRECTION, label: m.queue.tabs.allJobs, count: props.allJobsCount },
         ]}
       />
 
@@ -316,8 +319,8 @@ export function QueueClient(props: QueueClientProps) {
             <div className="job-search input-icon">
               <Search size={14} aria-hidden />
               <Input
-                aria-label="搜公司或职位名"
-                placeholder="搜公司或职位名"
+                aria-label={m.queue.toolbar.searchPlaceholder}
+                placeholder={m.queue.toolbar.searchPlaceholder}
                 value={queryInput}
                 small
                 onChange={(e) => setQueryInput(e.target.value)}
@@ -330,28 +333,28 @@ export function QueueClient(props: QueueClientProps) {
             {!isAllTab ? (
               <Segmented<QueueModeKey>
                 size="sm"
-                ariaLabel="投递方式"
+                ariaLabel={m.queue.toolbar.modeAriaLabel}
                 value={params.mode}
                 onChange={(mode) => apply({ mode, page: 1 })}
                 options={[
-                  { value: "all", label: "全部", count: currentTab?.matched },
-                  { value: "referral", label: "内推", count: currentTab?.referralSuggested },
-                  { value: "direct", label: "海投", count: currentTab?.directSuggested },
+                  { value: "all", label: m.common.all, count: currentTab?.matched },
+                  { value: "referral", label: m.labels.mode.referral, count: currentTab?.referralSuggested },
+                  { value: "direct", label: m.labels.mode.direct, count: currentTab?.directSuggested },
                 ]}
               />
             ) : null}
-            <Field inline label="排序" htmlFor="queue-sort">
+            <Field inline label={m.queue.toolbar.sort} htmlFor="queue-sort">
               <Select id="queue-sort" small value={params.sort} onChange={(e) => apply({ sort: e.target.value as QueueSortKey, page: 1 })} style={{ width: "auto" }}>
-                {!isAllTab ? <option value="composite">综合(分数 × 新鲜度)</option> : null}
-                <option value="score">分数</option>
-                <option value="fresh">{isAllTab ? "入库时间" : "发布时间"}</option>
-                <option value="company">公司名</option>
+                {!isAllTab ? <option value="composite">{m.queue.toolbar.sortComposite}</option> : null}
+                <option value="score">{m.queue.toolbar.sortScore}</option>
+                <option value="fresh">{isAllTab ? m.queue.toolbar.sortAdded : m.queue.toolbar.sortPosted}</option>
+                <option value="company">{m.queue.toolbar.sortCompany}</option>
               </Select>
             </Field>
             <span className="grow" />
             {!isAllTab && fitInfo && (fitInfo.unclassified > 0 || fitInfo.running) ? (
               <Button size="sm" variant="ghost" icon={<Sparkles size={14} />} loading={fitInfo.running} onClick={runFit}>
-                补判内推建议 · 未判 {fitInfo.unclassified}
+                {m.queue.toolbar.fitButton(fitInfo.unclassified)}
               </Button>
             ) : null}
           </div>
@@ -360,11 +363,16 @@ export function QueueClient(props: QueueClientProps) {
             loading ? (
               <SkeletonRows rows={8} />
             ) : params.query.trim() ? (
-              <EmptyState icon={<SearchX size={24} />} title={`没有匹配「${params.query.trim()}」的职位`} description="换个关键词,或清空搜索。" action={<Button onClick={() => setQueryInput("")}>清空搜索</Button>} />
+              <EmptyState
+                icon={<SearchX size={24} />}
+                title={m.queue.empty.noMatch(params.query.trim())}
+                description={m.queue.empty.noMatchDescription}
+                action={<Button onClick={() => setQueryInput("")}>{m.queue.empty.clearSearch}</Button>}
+              />
             ) : isAllTab ? (
-              <EmptyState art="radar" title="还没有入库的职位" description="先扫描一次,信息源里的职位会进到这里。" action={<ScanMenu variant="primary" />} />
+              <EmptyState art="radar" title={m.queue.empty.noJobs} description={m.queue.empty.noJobsDescription} action={<ScanMenu variant="primary" />} />
             ) : (
-              <EmptyState art="radar" title="这个方向暂时没有可投的职位" description="队列会随扫描和打分自动补充;也可以看看别的方向。" />
+              <EmptyState art="radar" title={m.queue.empty.noneInTrack} description={m.queue.empty.noneInTrackDescription} />
             )
           ) : (
             <div className={cx("job-list", loading && "is-loading")} aria-busy={loading}>
@@ -377,17 +385,23 @@ export function QueueClient(props: QueueClientProps) {
           {result.pages > 1 ? (
             <div className="pagination">
               <Button variant="ghost" size="sm" icon={<ChevronLeft size={14} />} disabled={loading || params.page <= 1} onClick={() => goToPage(params.page - 1)}>
-                上一页
+                {m.queue.pagination.prev}
               </Button>
               <span>
-                第 <span className="mono">{params.page}</span> / <span className="mono">{result.pages}</span> 页 · 共 <span className="mono">{result.total}</span> 条
+                {m.queue.pagination.pageBefore}
+                <span className="mono">{params.page}</span>
+                {m.queue.pagination.pageBetween}
+                <span className="mono">{result.pages}</span>
+                {m.queue.pagination.pageAfter}
+                <span className="mono">{result.total}</span>
+                {m.queue.pagination.totalUnit(result.total)}
               </span>
               <Button variant="ghost" size="sm" disabled={loading || params.page >= result.pages} onClick={() => goToPage(params.page + 1)}>
-                下一页 <ChevronRight size={14} aria-hidden />
+                {m.queue.pagination.next} <ChevronRight size={14} aria-hidden />
               </Button>
             </div>
           ) : result.total > 0 ? (
-            <p className="pagination">共 {result.total} 条</p>
+            <p className="pagination">{m.queue.pagination.total(result.total)}</p>
           ) : null}
         </div>
 

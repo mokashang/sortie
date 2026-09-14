@@ -1,16 +1,22 @@
+import type { Metadata } from "next";
 import { PageHeader } from "@/app/components/ui";
+import { getMessages } from "@/i18n/server";
 import { NetworkAssistant } from "./network-assistant";
 import { NetworkClient } from "./network-client";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "人脉" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).nav.network };
+}
 
 // 人脉: contacts plus coffee-chat / exploratory outreach. Job-linked referral requests live on
 // 投递's 内推进行中 board, not here.
-export default function NetworkPage() {
+export default async function NetworkPage() {
+  const m = await getMessages();
   return (
     <>
-      <PageHeader title="人脉" subtitle="联系人与请教消息;找内推在投递页。" />
+      <PageHeader title={m.nav.network} subtitle={m.network.subtitle} />
       <NetworkAssistant />
       <NetworkClient />
     </>

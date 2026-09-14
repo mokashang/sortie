@@ -16,7 +16,9 @@
 // so the total still adds up. Zero-count nodes and links are omitted so a young pipeline draws as
 // a small chart, not a skeleton of empty boxes.
 
-import { PEAK_STAGES, PeakStage, PostSubmitStage, STAGE_LABELS } from "@/apply/stages";
+import type { Lang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
+import { PEAK_STAGES, PeakStage, PostSubmitStage, stageLabels } from "@/apply/stages";
 
 export type FunnelKind = "stage" | "wait" | "drop" | "accept" | "decline";
 
@@ -39,15 +41,15 @@ export interface FunnelData {
   links: FunnelLink[];
 }
 
-const WAIT_LABEL = "等回音";
+export function buildFunnel(rows: { status: PostSubmitStage; peak: PeakStage }[], lang: Lang): FunnelData {
+  const STAGE = stageLabels(lang);
+  const F = messages[lang].stages.funnel;
+  const DROP_LABELS: Record<Exclude<PeakStage, "offer">, string> = {
+    submitted: F.dropSubmitted,
+    oa: F.dropOa,
+    interview: F.dropInterview,
+  };
 
-const DROP_LABELS: Record<Exclude<PeakStage, "offer">, string> = {
-  submitted: "被拒 / 无回音",
-  oa: "OA 后无下文",
-  interview: "面试后无 Offer",
-};
-
-export function buildFunnel(rows: { status: PostSubmitStage; peak: PeakStage }[]): FunnelData {
   const nodeCount = new Map<string, number>();
   const linkCount = new Map<string, number>();
   const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
@@ -76,13 +78,13 @@ export function buildFunnel(rows: { status: PostSubmitStage; peak: PeakStage }[]
     if (count) nodes.push({ id, layer, label, count, kind });
   };
   PEAK_STAGES.forEach((stage, i) => {
-    push(stage, i, STAGE_LABELS[stage], "stage");
+    push(stage, i, STAGE[stage], "stage");
     // Outcomes of this rung sit one layer to the right, alongside the next rung.
     if (stage !== "offer") push(`drop_${stage}`, i + 1, DROP_LABELS[stage], "drop");
   });
-  push("wait_submitted", 1, WAIT_LABEL, "wait");
-  push("offer_accepted", 4, STAGE_LABELS.offer_accepted, "accept");
-  push("offer_declined", 4, STAGE_LABELS.offer_declined, "decline");
+  push("wait_submitted", 1, F.wait, "wait");
+  push("offer_accepted", 4, STAGE.offer_accepted, "accept");
+  push("offer_declined", 4, STAGE.offer_declined, "decline");
 
   const links: FunnelLink[] = [];
   for (const [key, count] of linkCount) {

@@ -2,8 +2,11 @@
 // (chained segments) vocabulary shared by server and UI. The server (src/apply/run-outcome.ts)
 // writes an outcome snapshot into executor_runs.outcome when an apply run with a plan reaches a
 // terminal status; the UI derives the status label from it so a task that filled 5 of a planned
-// 70 reads 「未完成 · 海投 5/70」, never 「已完成」 (2026-09-13, task #68).
-import { RUN_STATUS_LABEL, RUN_STATUS_TONE, labelOf, Tone } from "@/app/lib/labels";
+// 70 reads 「未完成 · 海投 5/70」, never 「已完成」 (2026-09-13, task #68). Every text here comes
+// from the message tree in the language asked for.
+import type { Lang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
+import { RUN_STATUS_TONE, labelOf, Tone } from "@/app/lib/labels";
 
 export interface ModeCounts {
   direct: number;
@@ -46,30 +49,33 @@ export interface RunOutcome {
 
 // Status chip for a task. A normally-ended run that fell short of its plan is 未完成, not 已完成;
 // failed / stopped / paused / live runs keep their own labels (the progress text still shows).
-export function runStatusDisplay(status: string, outcome?: RunOutcome | null): { label: string; tone: Tone } {
-  if (status === "done" && outcome && !outcome.complete) return { label: "未完成", tone: "warn" };
-  return { label: labelOf(RUN_STATUS_LABEL, status, status), tone: RUN_STATUS_TONE[status] ?? "neutral" };
+export function runStatusDisplay(status: string, outcome: RunOutcome | null | undefined, lang: Lang): { label: string; tone: Tone } {
+  const t = messages[lang];
+  if (status === "done" && outcome && !outcome.complete) return { label: t.runs.incomplete, tone: "warn" };
+  return { label: labelOf(t.labels.runStatus, status, status), tone: RUN_STATUS_TONE[status] ?? "neutral" };
 }
 
 // "海投 15/70 · 内推 0/40 · 本段 10" — only the modes the plan asked for; the 本段 share only for
 // a chained segment; "" when there is no outcome.
-export function runProgressText(outcome?: RunOutcome | null): string {
+export function runProgressText(outcome: RunOutcome | null | undefined, lang: Lang): string {
   if (!outcome) return "";
+  const t = messages[lang].runs;
   const parts: string[] = [];
-  if (outcome.planned.direct > 0) parts.push(`海投 ${outcome.achieved.direct}/${outcome.planned.direct}`);
-  if (outcome.planned.referral > 0) parts.push(`内推 ${outcome.achieved.referral}/${outcome.planned.referral}`);
-  if (outcome.chain) parts.push(`本段 ${outcome.own.direct + outcome.own.referral}`);
+  if (outcome.planned.direct > 0) parts.push(t.progressDirect(outcome.achieved.direct, outcome.planned.direct));
+  if (outcome.planned.referral > 0) parts.push(t.progressReferral(outcome.achieved.referral, outcome.planned.referral));
+  if (outcome.chain) parts.push(t.segmentShare(outcome.own.direct + outcome.own.referral));
   return parts.join(" · ");
 }
 
 // "提交 5 · 待确认 1 · 待处理 3 · 归档 2 · 找不到人 1" — zero buckets omitted; "" when nothing to say.
-export function runBreakdownText(outcome?: RunOutcome | null): string {
+export function runBreakdownText(outcome: RunOutcome | null | undefined, lang: Lang): string {
   if (!outcome) return "";
+  const t = messages[lang].runs;
   const parts: string[] = [];
-  if (outcome.submitted > 0) parts.push(`提交 ${outcome.submitted}`);
-  if (outcome.awaiting > 0) parts.push(`待确认 ${outcome.awaiting}`);
-  if (outcome.info > 0) parts.push(`待处理 ${outcome.info}`);
-  if (outcome.archived > 0) parts.push(`归档 ${outcome.archived}`);
-  if (outcome.manual > 0) parts.push(`找不到人 ${outcome.manual}`);
+  if (outcome.submitted > 0) parts.push(t.breakdownSubmitted(outcome.submitted));
+  if (outcome.awaiting > 0) parts.push(t.breakdownAwaiting(outcome.awaiting));
+  if (outcome.info > 0) parts.push(t.breakdownInfo(outcome.info));
+  if (outcome.archived > 0) parts.push(t.breakdownArchived(outcome.archived));
+  if (outcome.manual > 0) parts.push(t.breakdownManual(outcome.manual));
   return parts.join(" · ");
 }

@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { reportFill, reportSubmitted, ReportFillInput } from "@/apply/queue";
 import { reportNoContact } from "@/apply/referral";
 import { needsInfoNotification } from "@/apply/info";
+import { langFromRequest } from "@/i18n/server";
 import { notify } from "@/lib/notify";
 import { withUser, failResponse } from "@/lib/actor";
 
@@ -32,7 +33,7 @@ export const POST = withUser(async (req, { userId }) => {
         const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(Number(body.jobId)) as
           | { company: string; title: string }
           | undefined;
-        const n = needsInfoNotification(job?.company ?? "?", job?.title ?? "", body.questions ?? []);
+        const n = needsInfoNotification(job?.company ?? "?", job?.title ?? "", body.questions ?? [], langFromRequest(req));
         void notify(n.title, n.body, { priority: "high" });
       }
     }

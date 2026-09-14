@@ -1,8 +1,13 @@
+import type { Metadata } from "next";
 import { authPublicConfig } from "@/lib/auth";
+import { getMessages } from "@/i18n/server";
 import { VerifyClient } from "./verify-client";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "验证邮箱" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).auth.verify.title };
+}
 
 // Shown right after sign-up when verification is required, and as the landing spot for a
 // verification link that failed (?error=).

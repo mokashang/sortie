@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { Plus, Trash, X } from "lucide-react";
 import { DIRECTIONS, directionLabel } from "@/matcher/directions";
 import { postJson, putJson, errorMessage } from "@/app/lib/api";
-import { EXPERIENCE_KIND_LABEL } from "@/app/lib/labels";
+import { labelOf } from "@/app/lib/labels";
 import { Button, Chip, Dialog, Field, IconButton, Input, Menu, Select, Textarea, useToast } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { EXPERIENCE_KINDS, type Bullet, type Exp } from "./profile-types";
 
 const blank = (): Exp => ({ kind: "work", title: "", organization: "", location: "", start_date: "", end_date: "", bullets: [], sort_order: 0 });
@@ -12,6 +13,7 @@ const blank = (): Exp => ({ kind: "work", title: "", organization: "", location:
 // Add / edit one experience: the fields, plus bullets that can each be tagged with the
 // directions they apply to (the resume generator picks bullets by direction).
 export function ExperienceDialog({ open, initial, onClose, onSaved }: { open: boolean; initial: Exp | null; onClose: () => void; onSaved: () => Promise<void> | void }) {
+  const m = useMessages();
   const [form, setForm] = useState<Exp>(blank());
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
@@ -44,11 +46,11 @@ export function ExperienceDialog({ open, initial, onClose, onSaved }: { open: bo
     try {
       if (form.id) await putJson(`/api/experiences/${form.id}`, payload);
       else await postJson("/api/experiences", payload);
-      toast({ title: form.id ? `已更新「${payload.title}」` : `已添加「${payload.title}」`, tone: "good" });
+      toast({ title: form.id ? m.profile.experience.updated(payload.title) : m.profile.experience.added(payload.title), tone: "good" });
       onClose();
       await onSaved();
     } catch (e) {
-      toast({ title: "保存失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.profile.experience.saveFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusy(false);
     }
@@ -59,87 +61,87 @@ export function ExperienceDialog({ open, initial, onClose, onSaved }: { open: bo
       open={open}
       onClose={onClose}
       size="lg"
-      title={form.id ? "编辑经历" : "添加经历"}
-      description="标题是职位、项目名或学位;要点写成简历上的一行,并标注它适用的方向。"
+      title={form.id ? m.profile.experience.editTitle : m.profile.experience.addTitle}
+      description={m.profile.experience.description}
       actions={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            取消
+            {m.common.cancel}
           </Button>
           <Button variant="primary" onClick={save} loading={busy} disabled={!form.title.trim()}>
-            保存
+            {m.common.save}
           </Button>
         </>
       }
     >
       <div className="col gap-3">
         <div className="form-grid">
-          <Field label="类型" htmlFor="exp-kind">
+          <Field label={m.profile.experience.kind} htmlFor="exp-kind">
             <Select id="exp-kind" value={form.kind} onChange={(e) => set({ kind: e.target.value })}>
               {EXPERIENCE_KINDS.map((k) => (
                 <option key={k} value={k}>
-                  {EXPERIENCE_KIND_LABEL[k]}
+                  {labelOf(m.labels.experienceKind, k)}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label="标题" htmlFor="exp-title">
-            <Input id="exp-title" value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder="职位 / 项目 / 学位" autoFocus />
+          <Field label={m.profile.experience.title} htmlFor="exp-title">
+            <Input id="exp-title" value={form.title} onChange={(e) => set({ title: e.target.value })} placeholder={m.profile.experience.titlePlaceholder} autoFocus />
           </Field>
         </div>
         <div className="form-grid">
-          <Field label="机构" htmlFor="exp-org">
-            <Input id="exp-org" value={form.organization ?? ""} onChange={(e) => set({ organization: e.target.value })} placeholder="公司 / 学校 / 团队" />
+          <Field label={m.profile.experience.organization} htmlFor="exp-org">
+            <Input id="exp-org" value={form.organization ?? ""} onChange={(e) => set({ organization: e.target.value })} placeholder={m.profile.experience.organizationPlaceholder} />
           </Field>
-          <Field label="地点" htmlFor="exp-loc">
-            <Input id="exp-loc" value={form.location ?? ""} onChange={(e) => set({ location: e.target.value })} placeholder="Los Angeles, CA" />
+          <Field label={m.profile.experience.location} htmlFor="exp-loc">
+            <Input id="exp-loc" value={form.location ?? ""} onChange={(e) => set({ location: e.target.value })} placeholder={m.profile.experience.locationPlaceholder} />
           </Field>
         </div>
         <div className="form-grid">
-          <Field label="开始" hint="如 2025-06" htmlFor="exp-start">
-            <Input id="exp-start" value={form.start_date ?? ""} onChange={(e) => set({ start_date: e.target.value })} placeholder="2025-06" />
+          <Field label={m.profile.experience.start} hint={m.profile.experience.startHint} htmlFor="exp-start">
+            <Input id="exp-start" value={form.start_date ?? ""} onChange={(e) => set({ start_date: e.target.value })} placeholder={m.profile.experience.startPlaceholder} />
           </Field>
-          <Field label="结束" hint="在职 / 在读写 Present" htmlFor="exp-end">
-            <Input id="exp-end" value={form.end_date ?? ""} onChange={(e) => set({ end_date: e.target.value })} placeholder="Present" />
+          <Field label={m.profile.experience.end} hint={m.profile.experience.endHint} htmlFor="exp-end">
+            <Input id="exp-end" value={form.end_date ?? ""} onChange={(e) => set({ end_date: e.target.value })} placeholder={m.profile.experience.endPlaceholder} />
           </Field>
         </div>
 
         <div>
-          <div className="field-label">要点</div>
+          <div className="field-label">{m.profile.experience.bullets}</div>
           <div className="col gap-3 mt-2">
             {form.bullets.map((b, i) => (
               <div key={i} className="bullet-editor">
                 <div className="row row-nowrap" style={{ alignItems: "flex-start" }}>
-                  <Textarea rows={2} autoGrow value={b.text} onChange={(e) => setBullet(i, { text: e.target.value })} placeholder={`要点 ${i + 1}`} aria-label={`要点 ${i + 1}`} />
-                  <IconButton label="删除要点" icon={<Trash size={14} />} onClick={() => set({ bullets: form.bullets.filter((_, j) => j !== i) })} />
+                  <Textarea rows={2} autoGrow value={b.text} onChange={(e) => setBullet(i, { text: e.target.value })} placeholder={m.profile.experience.bullet(i + 1)} aria-label={m.profile.experience.bullet(i + 1)} />
+                  <IconButton label={m.profile.experience.removeBullet} icon={<Trash size={14} />} onClick={() => set({ bullets: form.bullets.filter((_, j) => j !== i) })} />
                 </div>
                 <div className="row mt-1">
                   {b.directions.map((d) => (
-                    <button key={d} type="button" className="chip chip-outline chip-accent chip-btn" onClick={() => toggleDirection(i, d)} aria-label={`移除方向 ${directionLabel(d)}`}>
+                    <button key={d} type="button" className="chip chip-outline chip-accent chip-btn" onClick={() => toggleDirection(i, d)} aria-label={m.profile.experience.removeDirection(directionLabel(d))}>
                       {directionLabel(d)} <X size={10} aria-hidden />
                     </button>
                   ))}
                   <Menu
-                    text="＋ 方向"
+                    text={m.profile.experience.addDirection}
                     size="sm"
                     align="start"
                     items={Object.keys(DIRECTIONS).map((d) => ({
-                      label: `${b.directions.includes(d) ? "✓ " : ""}${directionLabel(d)}`,
+                      label: m.profile.experience.directionOption(directionLabel(d), b.directions.includes(d)),
                       onSelect: () => toggleDirection(i, d),
                     }))}
                   />
-                  {b.directions.length === 0 ? <span className="muted xs">不标方向 = 所有方向都可用</span> : null}
+                  {b.directions.length === 0 ? <span className="muted xs">{m.profile.experience.noDirectionHint}</span> : null}
                 </div>
               </div>
             ))}
             <div>
               <Button size="sm" variant="ghost" icon={<Plus size={13} />} onClick={() => set({ bullets: [...form.bullets, { text: "", directions: [] }] })}>
-                添加要点
+                {m.profile.experience.addBullet}
               </Button>
             </div>
           </div>
         </div>
-        {form.bullets.length === 0 ? <Chip outline>技能类经历可以不写要点</Chip> : null}
+        {form.bullets.length === 0 ? <Chip outline>{m.profile.experience.skillNoBullets}</Chip> : null}
       </div>
     </Dialog>
   );

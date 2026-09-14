@@ -1,12 +1,15 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpDown, Briefcase, CornerDownLeft, Monitor, Moon, Play, Search, Sun } from "lucide-react";
+import { ArrowUpDown, Briefcase, CornerDownLeft, Languages, Monitor, Moon, Play, Search, Sun } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
 import { getJson } from "@/app/lib/api";
 import { ALL_JOBS_DIRECTION } from "@/app/lib/queue-const";
 import { getTheme, setTheme, type Theme } from "@/app/lib/settings";
 import { cx } from "@/app/lib/cx";
+import { useMessages } from "@/i18n/client";
+import { LANG_NAME, otherLang } from "@/i18n/lang";
+import { useLangToggle } from "./shell/use-lang-toggle";
 import { NAV, SETTINGS_NAV } from "./shell/nav";
 
 interface JobHit {
@@ -28,12 +31,13 @@ interface Item {
 }
 
 const THEME_NEXT: Record<Theme, Theme> = { system: "light", light: "dark", dark: "system" };
-const THEME_LABEL: Record<Theme, string> = { light: "浅色", dark: "深色", system: "跟随系统" };
 
 // ⌘K: pages, a few actions, and a live search over every job in the library. Navigation only —
 // nothing here submits, sends or starts a task without the page's own confirmation.
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const m = useMessages();
   const router = useRouter();
+  const langToggle = useLangToggle();
   const [q, setQ] = useState("");
   const [jobs, setJobs] = useState<JobHit[]>([]);
   const [active, setActive] = useState(0);
@@ -80,47 +84,58 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       router.push(href);
     };
     const pages: Item[] = [...NAV, SETTINGS_NAV]
-      .filter((n) => !term || n.label.toLowerCase().includes(term) || n.href.includes(term))
+      .filter((n) => !term || m.nav[n.key].toLowerCase().includes(term) || n.href.includes(term))
       .map((n) => {
         const Icon = n.icon;
-        return { key: `page:${n.href}`, group: "页面", label: n.label, hint: "打开", icon: <Icon size={16} />, run: go(n.href) };
+        return { key: `page:${n.href}`, group: m.palette.groups.pages, label: m.nav[n.key], hint: m.common.open, icon: <Icon size={16} />, run: go(n.href) };
       });
     const theme = typeof window === "undefined" ? "system" : getTheme();
     const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
     const actions: Item[] = [
-      { key: "act:apply", group: "动作", label: "开始一次投递", hint: "投递页", icon: <Play size={16} />, run: go("/apply#plan") },
-      { key: "act:queue", group: "动作", label: "看职位队列前排", hint: "职位页", icon: <Briefcase size={16} />, run: go("/queue") },
+      { key: "act:apply", group: m.palette.groups.actions, label: m.palette.startApply, hint: m.palette.startApplyHint, icon: <Play size={16} />, run: go("/apply#plan") },
+      { key: "act:queue", group: m.palette.groups.actions, label: m.palette.queueTop, hint: m.palette.queueTopHint, icon: <Briefcase size={16} />, run: go("/queue") },
       {
         key: "act:theme",
-        group: "动作",
-        label: `切换外观 · 现在是${THEME_LABEL[theme]}`,
-        hint: THEME_LABEL[THEME_NEXT[theme]],
+        group: m.palette.groups.actions,
+        label: m.palette.switchTheme(m.shell.themes[theme]),
+        hint: m.shell.themes[THEME_NEXT[theme]],
         icon: <ThemeIcon size={16} />,
         run: () => {
           setTheme(THEME_NEXT[theme]);
           onClose();
         },
       },
-    ].filter((a) => !term || String(a.label).toLowerCase().includes(term) || "投递扫描外观队列".includes(term));
+      {
+        key: "act:lang",
+        group: m.palette.groups.actions,
+        label: m.palette.switchLanguage(langToggle.name),
+        hint: LANG_NAME[otherLang(langToggle.lang)],
+        icon: <Languages size={16} />,
+        run: () => {
+          langToggle.toggle();
+          onClose();
+        },
+      },
+    ].filter((a) => !term || String(a.label).toLowerCase().includes(term) || m.palette.actionKeywords.includes(term));
     const hits: Item[] = jobs.map((j) => {
       const dir = j.in_queue === 1 && j.direction ? j.direction : ALL_JOBS_DIRECTION;
       const sp = new URLSearchParams({ direction: dir, q: j.company });
       return {
         key: `job:${j.id}`,
-        group: "职位",
+        group: m.palette.groups.jobs,
         label: (
           <>
             <span className="strong">{j.company}</span>
             <span className="muted">{j.title}</span>
           </>
         ),
-        hint: j.score != null ? `${j.score} 分${j.direction ? ` · ${directionLabel(j.direction)}` : ""}` : "未打分",
+        hint: j.score != null ? m.palette.scoreHint(j.score, j.direction ? directionLabel(j.direction) : null) : m.palette.unscored,
         icon: <Briefcase size={16} />,
         run: go(`/queue?${sp.toString()}`),
       };
     });
     return term.length >= 2 ? [...hits, ...pages, ...actions] : [...pages, ...actions];
-  }, [q, jobs, router, onClose]);
+  }, [q, jobs, router, onClose, m, langToggle]);
 
   useEffect(() => setActive(0), [items.length, q]);
 
@@ -152,7 +167,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     <>
       <div className="cmdk-backdrop" onClick={onClose} />
       <div className="cmdk-wrap">
-        <div className="cmdk" role="dialog" aria-modal="true" aria-label="搜索与跳转" onKeyDown={onKeyDown}>
+        <div className="cmdk" role="dialog" aria-modal="true" aria-label={m.shell.searchLabel} onKeyDown={onKeyDown}>
           <div className="cmdk-input-row">
             <Search size={16} aria-hidden />
             <input
@@ -160,15 +175,15 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               className="cmdk-input"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="搜公司、职位,或输入要去的页面…"
-              aria-label="搜索"
+              placeholder={m.palette.placeholder}
+              aria-label={m.common.search}
               autoComplete="off"
               spellCheck={false}
             />
           </div>
           <div className="cmdk-list" ref={listRef} role="listbox">
             {items.length === 0 ? (
-              <div className="cmdk-empty">{q.trim().length >= 2 ? "没有匹配的职位或页面。" : "输入关键词开始。"}</div>
+              <div className="cmdk-empty">{q.trim().length >= 2 ? m.palette.noMatch : m.palette.typeToStart}</div>
             ) : (
               items.map((it, i) => {
                 const head = it.group !== lastGroup ? <div className="cmdk-group">{it.group}</div> : null;
@@ -195,13 +210,13 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           </div>
           <div className="cmdk-foot">
             <span>
-              <ArrowUpDown size={12} aria-hidden /> 选择
+              <ArrowUpDown size={12} aria-hidden /> {m.palette.select}
             </span>
             <span>
-              <CornerDownLeft size={12} aria-hidden /> 打开
+              <CornerDownLeft size={12} aria-hidden /> {m.common.open}
             </span>
             <span>
-              <kbd>Esc</kbd> 关闭
+              <kbd>Esc</kbd> {m.common.close}
             </span>
           </div>
         </div>

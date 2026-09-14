@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { postJson, errorMessage } from "@/app/lib/api";
-import { REFERRAL_SOURCE_LABEL } from "@/app/lib/labels";
 import { Button, Dialog, Field, Input, Select, useToast } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 
 export interface WonInitial {
   company: string;
@@ -16,6 +16,7 @@ export interface WonInitial {
 
 // 「有内推了」: record who referred you (and any link/code), then re-queue the jobs for applying.
 export function ReferralWonDialog({ open, onClose, initial, onSaved }: { open: boolean; onClose: () => void; initial: WonInitial | null; onSaved: () => Promise<void> | void }) {
+  const m = useMessages();
   const [form, setForm] = useState<WonInitial | null>(initial);
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
@@ -35,14 +36,14 @@ export function ReferralWonDialog({ open, onClose, initial, onSaved }: { open: b
         personName: form.personName.trim(),
       });
       toast({
-        title: `已记录 ${form.company} 的内推`,
-        description: j.autoStarted ? "已排队投递任务,助手接手后开始填表。" : "岗位已重新入队,下次投递会带上内推信息。",
+        title: m.apply.won.saved(form.company),
+        description: j.autoStarted ? m.apply.won.savedQueued : m.apply.won.savedRequeued,
         tone: "good",
       });
       onClose();
       await onSaved();
     } catch (e) {
-      toast({ title: "保存失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.apply.won.saveFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusy(false);
     }
@@ -54,41 +55,41 @@ export function ReferralWonDialog({ open, onClose, initial, onSaved }: { open: b
     <Dialog
       open={open}
       onClose={onClose}
-      title={`有内推了 · ${form?.company ?? ""}`}
-      description="记下推荐人和链接或推荐码,助手投递时会用上。"
+      title={m.apply.won.title(form?.company ?? "")}
+      description={m.apply.won.description}
       actions={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            取消
+            {m.common.cancel}
           </Button>
           <Button variant="primary" onClick={save} loading={busy} disabled={!form?.personName.trim()}>
-            保存并开始投
+            {m.apply.won.saveAndApply}
           </Button>
         </>
       }
     >
       {form ? (
         <div className="col gap-3">
-          <Field label="来源" htmlFor="won-source">
+          <Field label={m.apply.won.source} htmlFor="won-source">
             <Select id="won-source" value={form.source} onChange={(e) => set({ source: e.target.value })}>
-              {Object.entries(REFERRAL_SOURCE_LABEL).map(([k, v]) => (
+              {Object.entries(m.labels.referralSource).map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label="推荐人" htmlFor="won-name">
-            <Input id="won-name" value={form.personName} onChange={(e) => set({ personName: e.target.value })} placeholder="对方姓名" autoFocus />
+          <Field label={m.apply.won.person} htmlFor="won-name">
+            <Input id="won-name" value={form.personName} onChange={(e) => set({ personName: e.target.value })} placeholder={m.apply.won.personPlaceholder} autoFocus />
           </Field>
-          <Field label="推荐链接" hint="有链接的话,助手会用它打开申请页" htmlFor="won-link">
+          <Field label={m.apply.won.link} hint={m.apply.won.linkHint} htmlFor="won-link">
             <Input id="won-link" value={form.link} onChange={(e) => set({ link: e.target.value })} placeholder="https://…" />
           </Field>
-          <Field label="推荐码" htmlFor="won-code">
-            <Input id="won-code" value={form.code} onChange={(e) => set({ code: e.target.value })} placeholder="可选" />
+          <Field label={m.apply.won.code} htmlFor="won-code">
+            <Input id="won-code" value={form.code} onChange={(e) => set({ code: e.target.value })} placeholder={m.apply.won.optionalPlaceholder} />
           </Field>
-          <Field label="备注" htmlFor="won-note">
-            <Input id="won-note" value={form.note} onChange={(e) => set({ note: e.target.value })} placeholder="可选" />
+          <Field label={m.apply.won.note} htmlFor="won-note">
+            <Input id="won-note" value={form.note} onChange={(e) => set({ note: e.target.value })} placeholder={m.apply.won.optionalPlaceholder} />
           </Field>
         </div>
       ) : null}

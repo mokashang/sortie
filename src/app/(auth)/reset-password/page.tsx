@@ -1,7 +1,12 @@
+import type { Metadata } from "next";
+import { getMessages } from "@/i18n/server";
 import { ResetForm } from "./reset-form";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "设置新密码" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).auth.reset.title };
+}
 
 // Better Auth's mail link lands on /api/auth/reset-password/<token>, which redirects here with
 // ?token= (valid) or ?error=INVALID_TOKEN.

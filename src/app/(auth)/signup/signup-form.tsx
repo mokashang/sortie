@@ -4,12 +4,14 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { authClient, authErrorMessage } from "@/lib/auth-client";
 import { Button, Field, Input } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { AuthDivider, AuthError, AuthHead, GoogleButton, safeNext } from "../auth-shared";
 
 const MIN_PASSWORD = 8;
 
 export function SignupForm({ next, googleEnabled, signupOpen, verificationRequired }: { next: string | null; googleEnabled: boolean; signupOpen: boolean; verificationRequired: boolean }) {
   const router = useRouter();
+  const m = useMessages();
   const dest = safeNext(next, "/profile?tab=basics&welcome=1");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -58,9 +60,10 @@ export function SignupForm({ next, googleEnabled, signupOpen, verificationRequir
   if (!signupOpen) {
     return (
       <>
-        <AuthHead title="注册已关闭" sub="这个 Sortie 实例不接受新账号。" />
+        <AuthHead title={m.auth.signup.closedTitle} sub={m.auth.signup.closedSubtitle} />
         <p className="auth-foot">
-          已有账号? <Link href="/login">去登录</Link>
+          {m.auth.signup.alreadyHaveAccount}
+          <Link href="/login">{m.auth.shared.goToLogin}</Link>
         </p>
       </>
     );
@@ -68,33 +71,39 @@ export function SignupForm({ next, googleEnabled, signupOpen, verificationRequir
 
   return (
     <>
-      <AuthHead title="创建账号" sub="你的职位、投递、人脉和档案只有你自己能看到。" />
+      <AuthHead title={m.auth.signup.title} sub={m.auth.signup.subtitle} />
       {googleEnabled ? (
         <>
           <GoogleButton onClick={() => void google()} loading={googleBusy} />
-          <AuthDivider>或用邮箱</AuthDivider>
+          <AuthDivider>{m.auth.shared.orEmail}</AuthDivider>
         </>
       ) : null}
       <form className="auth-form" onSubmit={submit}>
-        <Field label="姓名" htmlFor="su-name" hint="投递表单里也用这个名字,写真实姓名。">
+        <Field label={m.auth.signup.nameLabel} htmlFor="su-name" hint={m.auth.signup.nameHint}>
           <Input id="su-name" autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </Field>
-        <Field label="邮箱" htmlFor="su-email">
+        <Field label={m.auth.signup.emailLabel} htmlFor="su-email">
           <Input id="su-email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
-        <Field label="密码" htmlFor="su-password" hint={`至少 ${MIN_PASSWORD} 位。`} error={tooShort ? `密码至少 ${MIN_PASSWORD} 位。` : undefined}>
+        <Field
+          label={m.auth.signup.passwordLabel}
+          htmlFor="su-password"
+          hint={m.auth.shared.minPasswordHint(MIN_PASSWORD)}
+          error={tooShort ? m.auth.signup.passwordTooShort(MIN_PASSWORD) : undefined}
+        >
           <Input id="su-password" type="password" autoComplete="new-password" required minLength={MIN_PASSWORD} value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
-        <Field label="再输一遍密码" htmlFor="su-confirm" error={mismatch ? "两次输入的密码不一样。" : undefined}>
+        <Field label={m.auth.signup.confirmLabel} htmlFor="su-confirm" error={mismatch ? m.auth.shared.passwordMismatch : undefined}>
           <Input id="su-confirm" type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         </Field>
         <AuthError>{error}</AuthError>
         <Button type="submit" variant="primary" className="btn-block" loading={busy} disabled={mismatch || tooShort}>
-          创建账号
+          {m.auth.signup.submit}
         </Button>
       </form>
       <p className="auth-foot">
-        已有账号? <Link href={next ? `/login?next=${encodeURIComponent(next)}` : "/login"}>去登录</Link>
+        {m.auth.signup.alreadyHaveAccount}
+        <Link href={next ? `/login?next=${encodeURIComponent(next)}` : "/login"}>{m.auth.shared.goToLogin}</Link>
       </p>
     </>
   );

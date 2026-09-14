@@ -5,6 +5,10 @@ import { isInternalToken } from "@/lib/internal-token";
 import { verifyToken } from "@/lib/api-tokens";
 import { getUser, ownerId, type UserRow } from "@/lib/users";
 import { ProfileIncompleteError } from "@/lib/profile";
+import type { Lang } from "@/i18n/lang";
+import { langFromCookieHeader } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
+import { serverLang } from "@/lib/prefs";
 
 // Who is calling an API route (spec 2026-09-13 accounts §2). Three principals resolve to an
 // account:
@@ -25,13 +29,23 @@ export interface Actor {
   user: UserRow | null;
 }
 
+// `kind` picks the message shown to the user in their language (src/i18n/messages/errors.ts);
+// the English message on the Error itself is for logs.
+export type AuthErrorKind = "signIn" | "ownerOnly";
 export class AuthError extends Error {
   status: number;
-  constructor(message = "登录后再试", status = 401) {
-    super(message);
+  kind: AuthErrorKind;
+  constructor(kind: AuthErrorKind = "signIn", status = 401) {
+    super(kind === "ownerOnly" ? "only the owner account may do this" : "sign in first");
     this.name = "AuthError";
     this.status = status;
+    this.kind = kind;
   }
+}
+
+// The language for a response: the request's sortie.lang cookie, else the saved preference.
+export function requestLang(req?: Request | null): Lang {
+  return (req ? langFromCookieHeader(req.headers.get("cookie")) : null) ?? serverLang();
 }
 
 function bearer(req: Request): string | null {
@@ -69,23 +83,26 @@ export async function requireActor(req: Request, db: DB = getDb()): Promise<Acto
   return actor;
 }
 
-export function errorResponse(e: unknown): Response | null {
-  if (e instanceof AuthError) return NextResponse.json({ error: e.message, code: "unauthenticated" }, { status: e.status });
+export function errorResponse(e: unknown, lang: Lang = serverLang()): Response | null {
+  const t = messages[lang].errors;
+  if (e instanceof AuthError) {
+    return NextResponse.json({ error: e.kind === "ownerOnly" ? t.ownerOnly : t.signInFirst, code: "unauthenticated" }, { status: e.status });
+  }
   if (e instanceof ProfileIncompleteError) {
-    return NextResponse.json({ error: "先在档案页填完基本信息,助手才能开始工作", code: "profile_incomplete", issues: e.issues }, { status: 409 });
+    return NextResponse.json({ error: t.profileIncomplete, code: "profile_incomplete", issues: e.issues }, { status: 409 });
   }
   return null;
 }
 
 // The 400-with-message shape every route used before accounts, with auth/profile errors mapped
 // to their own codes first.
-export function failResponse(e: unknown, status = 400): Response {
-  return errorResponse(e) ?? NextResponse.json({ error: String(e instanceof Error ? e.message : e) }, { status });
+export function failResponse(e: unknown, status = 400, lang: Lang = serverLang()): Response {
+  return errorResponse(e, lang) ?? NextResponse.json({ error: String(e instanceof Error ? e.message : e) }, { status });
 }
 
 // Routes that change shared machine state (information sources) are the owner's to call.
 export function requireOwner(actor: Actor): void {
-  if (actor.user?.role !== "owner") throw new AuthError("只有这台机器的主账号可以改这个", 403);
+  if (actor.user?.role !== "owner") throw new AuthError("ownerOnly", 403);
 }
 
 type RouteContext = { params: Promise<Record<string, string>> };
@@ -99,7 +116,7 @@ export function withUser(handler: UserHandler): (req: Request, ctx: RouteContext
       const actor = await requireActor(req);
       return await handler(req, actor, ctx);
     } catch (e) {
-      const mapped = errorResponse(e);
+      const mapped = errorResponse(e, requestLang(req));
       if (mapped) return mapped;
       throw e;
     }

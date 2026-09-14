@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { Check, ExternalLink, MessageSquare, RotateCcw, Trash, UserCheck } from "lucide-react";
-import { directionLabel } from "@/matcher/directions";
+import { directionName, documentLabel, labelOf } from "@/app/lib/labels";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { INFO_KIND_LABEL, documentLabel } from "@/app/lib/labels";
 import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Section, Select, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
+import { useLang, useMessages } from "@/i18n/client";
+import type { Messages } from "@/i18n/messages";
 
 type Kind = "text" | "file" | "login" | "action" | "manual";
 
@@ -57,9 +58,9 @@ function cardKind(row: InfoRow): "login" | "manual" | "form" {
   return "form";
 }
 
-function continueText(j: Continued): string {
-  if (j.status === "prepared") return "助手会接着填这份表单。";
-  return j.autoStarted ? "已重新排队,助手马上接着投。" : "已放回队列,助手正忙,这一轮或下一轮会带上。";
+function continueText(j: Continued, m: Messages): string {
+  if (j.status === "prepared") return m.apply.todo.continueForm;
+  return j.autoStarted ? m.apply.todo.continueRequeued : m.apply.todo.continueBusy;
 }
 
 async function uploadDocument(key: string, file: File): Promise<DocumentRow> {
@@ -75,6 +76,8 @@ async function uploadDocument(key: string, file: File): Promise<DocumentRow> {
 // `waiting` = an apply run is actually running, so a needs_info row really has an assistant on
 // its tab; otherwise the one that asked is gone and answering re-queues the job instead.
 function Head({ row, kindLabel, waiting }: { row: InfoRow; kindLabel: string; waiting: boolean }) {
+  const m = useMessages();
+  const lang = useLang();
   return (
     <div className="row between">
       <div className="grow">
@@ -84,22 +87,22 @@ function Head({ row, kindLabel, waiting }: { row: InfoRow; kindLabel: string; wa
           <span>{row.title}</span>
         </div>
         <div className="row mt-2">
-          <Chip>{row.direction ? directionLabel(row.direction) : "未分类"}</Chip>
+          <Chip>{directionName(row.direction, lang)}</Chip>
           <Chip tone="accent">{kindLabel}</Chip>
           {row.status === "needs_info" && waiting ? (
-            <Chip tone="warn">助手等待中 · {row.askedAt}</Chip>
+            <Chip tone="warn">{m.apply.todo.waiting(row.askedAt)}</Chip>
           ) : row.status === "needs_info" ? (
-            <Chip tone="neutral">助手已离开 · 处理完自动重新排队</Chip>
+            <Chip tone="neutral">{m.apply.todo.assistantLeft}</Chip>
           ) : (
             <Chip tone="neutral" title={row.needsManualReason ?? undefined}>
-              已暂停 · 处理完自动继续
+              {m.apply.todo.paused}
             </Chip>
           )}
         </div>
       </div>
       {row.applyUrl ? (
         <LinkButton href={row.applyUrl} external size="sm" variant="ghost">
-          看职位
+          {m.apply.todo.viewJob}
         </LinkButton>
       ) : null}
     </div>
@@ -111,6 +114,8 @@ function Head({ row, kindLabel, waiting }: { row: InfoRow; kindLabel: string; wa
 // Each card ends in an action that lets the assistant continue on its own; nothing here is a
 // dead end. Renders nothing in compact mode when there is nothing to do.
 export function InfoCards({ compact = false }: { compact?: boolean }) {
+  const m = useMessages();
+  const lang = useLang();
   const [rows, setRows] = useState<InfoRow[]>([]);
   const [docs, setDocs] = useState<DocumentRow[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Record<string, Draft>>>({});
@@ -189,9 +194,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
           answers[q.key] = { value: d.value, remember: kind === "text" && !d.onlyOnce };
         }
         const j = await postJson<Continued>("/api/apply/answer-info", { jobId: row.jobId, answers });
-        toast({ title: `已提交 ${row.company} 的答案`, description: continueText(j), tone: "good" });
+        toast({ title: m.apply.todo.submitted(row.company), description: continueText(j, m), tone: "good" });
       } catch (e) {
-        toast({ title: "提交失败", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.apply.todo.submitFailed, description: errorMessage(e), tone: "danger" });
       }
     });
   }
@@ -201,9 +206,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       try {
         const j = await postJson<Continued & { jobIds?: number[] }>("/api/apply/login-done", { host });
         const n = j.jobIds?.length ?? count;
-        toast({ title: `${host} 已放行 ${n} 个岗位`, description: continueText(j), tone: "good" });
+        toast({ title: m.apply.todo.releasedHost(host, n), description: continueText(j, m), tone: "good" });
       } catch (e) {
-        toast({ title: "没能放行", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.apply.todo.releaseFailed, description: errorMessage(e), tone: "danger" });
       }
     });
   }
@@ -212,9 +217,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     await run(`retry-${row.jobId}`, async () => {
       try {
         const j = await postJson<Continued>("/api/apply/unpark", { jobId: row.jobId });
-        toast({ title: `${row.company} 已交回助手`, description: continueText(j), tone: "good" });
+        toast({ title: m.apply.todo.handedBack(row.company), description: continueText(j, m), tone: "good" });
       } catch (e) {
-        toast({ title: "没能重试", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.apply.todo.retryFailed, description: errorMessage(e), tone: "danger" });
       }
     });
   }
@@ -223,9 +228,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     await run(`self-${row.jobId}`, async () => {
       try {
         await postJson("/api/apply/self-submitted", { jobId: row.jobId });
-        toast({ title: `已记下:${row.company} 你自己投了`, description: "进了投递历史,后续 OA / 面试在历史页改状态。", tone: "good" });
+        toast({ title: m.apply.todo.selfSubmittedToast(row.company), description: m.apply.todo.selfSubmittedDescription, tone: "good" });
       } catch (e) {
-        toast({ title: "没能记录", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.apply.todo.selfSubmitFailed, description: errorMessage(e), tone: "danger" });
       }
     });
   }
@@ -235,30 +240,30 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       try {
         await postJson("/api/apply/archive-manual", { jobIds: [row.jobId] });
         toast({
-          title: `已跳过 ${row.company} · ${row.title}`,
-          description: "已归档,不再投递。",
+          title: m.apply.todo.skipped(row.company, row.title),
+          description: m.apply.todo.skippedDescription,
           action: {
-            label: "撤销",
+            label: m.common.undo,
             onClick: () => {
               postJson("/api/queue/unarchive", { jobId: row.jobId })
                 .then(async () => {
-                  toast({ title: "已恢复到队列", tone: "good" });
+                  toast({ title: m.apply.todo.restored, tone: "good" });
                   await refresh();
                   await refreshOverview();
                 })
-                .catch((e) => toast({ title: "撤销失败", description: errorMessage(e), tone: "danger" }));
+                .catch((e) => toast({ title: m.apply.todo.restoreFailed, description: errorMessage(e), tone: "danger" }));
             },
           },
         });
       } catch (e) {
-        toast({ title: "没能跳过", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.apply.todo.skipFailed, description: errorMessage(e), tone: "danger" });
       }
     });
   }
 
   const skipButton = (row: InfoRow) => (
     <Button size="sm" variant="ghost" icon={<Trash size={13} />} onClick={() => skip(row)} loading={busyKey === `skip-${row.jobId}`} disabled={busyKey !== null && busyKey !== `skip-${row.jobId}`}>
-      跳过这个岗
+      {m.apply.todo.skipJob}
     </Button>
   );
 
@@ -296,23 +301,21 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                 <span className="serif strong">{group.item.label}</span>
               </div>
               <div className="row mt-2">
-                <Chip tone="accent">{INFO_KIND_LABEL.login}</Chip>
-                <Chip tone="neutral">已暂停 · 登完自动继续</Chip>
+                <Chip tone="accent">{labelOf(m.labels.infoKind, "login")}</Chip>
+                <Chip tone="neutral">{m.apply.todo.login.paused}</Chip>
                 {group.item.host ? <Chip outline>{group.item.host}</Chip> : null}
               </div>
             </div>
           </div>
           {group.item.hint ? <p className="muted small todo-hint mt-3">{group.item.hint}</p> : null}
-          <p className="muted small mt-3">
-            在你的求职 Chrome 里登录或注册一次就够了,Chrome 会记住会话;助手不会替你输入密码。登完点下面的按钮,这些岗位会自动继续。
-          </p>
+          <p className="muted small mt-3">{m.apply.todo.login.instructions}</p>
           <ul className="todo-jobs mt-3">
             {group.rows.map((r) => (
               <li key={r.jobId} className="todo-job">
                 <span className="serif strong">{r.company}</span>
                 <span className="muted">·</span>
                 <span className="truncate">{r.title}</span>
-                <Chip outline>{r.direction ? directionLabel(r.direction) : "未分类"}</Chip>
+                <Chip outline>{directionName(r.direction, lang)}</Chip>
                 <span className="grow" />
                 {skipButton(r)}
               </li>
@@ -321,11 +324,11 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
           <div className="row mt-4">
             {group.item.url ? (
               <LinkButton href={group.item.url} external icon={<ExternalLink size={14} />}>
-                打开登录页
+                {m.apply.todo.login.open}
               </LinkButton>
             ) : null}
             <Button variant="primary" icon={<Check size={14} />} onClick={() => loginDone(host, group.rows.length)} loading={busy} disabled={busyKey !== null && !busy}>
-              我登好了,继续
+              {m.apply.todo.login.done}
             </Button>
           </div>
         </Card>,
@@ -339,7 +342,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       const retryPrimary = first.key === "error" || first.key === "rejected" || first.key === "no_resume";
       return [
         <Card key={row.jobId} tone="warn" className="todo-card">
-          <Head row={row} kindLabel={INFO_KIND_LABEL.manual} waiting={applyRunning} />
+          <Head row={row} kindLabel={labelOf(m.labels.infoKind, "manual")} waiting={applyRunning} />
           <div className="col gap-2 mt-3">
             {items.map((q) => (
               <div key={q.key}>
@@ -351,14 +354,14 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
           <div className="row mt-4">
             {url ? (
               <LinkButton href={url} external={isExternal(url)} icon={<ExternalLink size={14} />}>
-                {isExternal(url) ? "打开申请页" : "去处理"}
+                {isExternal(url) ? m.apply.todo.manual.openApplyPage : m.apply.todo.manual.handle}
               </LinkButton>
             ) : null}
             <Button variant={retryPrimary ? "primary" : "secondary"} icon={<RotateCcw size={14} />} onClick={() => retry(row)} loading={busyKey === `retry-${row.jobId}`} disabled={busyKey !== null && busyKey !== `retry-${row.jobId}`}>
-              让助手再试一次
+              {m.apply.todo.manual.retry}
             </Button>
             <Button icon={<UserCheck size={14} />} onClick={() => selfSubmitted(row)} loading={busyKey === `self-${row.jobId}`} disabled={busyKey !== null && busyKey !== `self-${row.jobId}`}>
-              我自己投完了
+              {m.apply.todo.manual.selfDone}
             </Button>
             {skipButton(row)}
           </div>
@@ -369,7 +372,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     const answerable = row.questions.filter((q) => kindOf(q) !== "login" && kindOf(q) !== "manual");
     const missing = answerable.some((q) => !q.optional && !draft(row.jobId, q.key).value.trim());
     const kinds = new Set(answerable.map(kindOf));
-    const kindLabel = kinds.has("file") ? INFO_KIND_LABEL.file : kinds.has("action") ? INFO_KIND_LABEL.action : INFO_KIND_LABEL.text;
+    const kindLabel = kinds.has("file") ? labelOf(m.labels.infoKind, "file") : kinds.has("action") ? labelOf(m.labels.infoKind, "action") : labelOf(m.labels.infoKind, "text");
     return [
       <Card key={row.jobId} tone="warn" className="todo-card">
         <Head row={row} kindLabel={kindLabel} waiting={applyRunning} />
@@ -382,16 +385,16 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
             const label = (
               <>
                 {q.label}
-                {q.optional ? <span className="muted xs">(可选)</span> : null}
-                {kind === "text" ? <Tooltip content={`答案会以「${q.key}」存进标准答案,下次自动填`} /> : null}
-                {kind === "file" ? <Tooltip content={`存为档案里的文件「${documentLabel(q.key)}」,以后要它的表单都自动上传`} /> : null}
+                {q.optional ? <span className="muted xs">{m.apply.todo.field.optional}</span> : null}
+                {kind === "text" ? <Tooltip content={m.apply.todo.field.rememberTip(q.key)} /> : null}
+                {kind === "file" ? <Tooltip content={m.apply.todo.field.fileTip(documentLabel(q.key, lang))} /> : null}
               </>
             );
 
             if (kind === "action") {
               return (
                 <Field key={q.key} label={label} hint={q.hint}>
-                  <Checkbox label="完成了" checked={d.value === "done"} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.checked ? "done" : "" })} />
+                  <Checkbox label={m.apply.todo.field.actionDone} checked={d.value === "done"} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.checked ? "done" : "" })} />
                 </Field>
               );
             }
@@ -406,7 +409,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                         {d.fileName ?? d.value}
                       </Chip>
                       <Button size="sm" variant="ghost" onClick={() => setDraft(row.jobId, q.key, { value: "", fileName: undefined })}>
-                        换一个
+                        {m.apply.todo.field.changeFile}
                       </Button>
                     </div>
                   ) : (
@@ -425,9 +428,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                             const doc = await uploadDocument(q.key, f);
                             setDocs((prev) => [...prev.filter((x) => x.key !== doc.key), doc]);
                             setDraft(row.jobId, q.key, { value: doc.path, fileName: doc.filename });
-                            toast({ title: `已上传 ${documentLabel(q.key)}`, description: "存进了档案的文件里,以后自动用。", tone: "good" });
+                            toast({ title: m.apply.todo.field.fileUploaded(documentLabel(doc.key, lang)), description: m.apply.todo.field.fileUploadedDescription, tone: "good" });
                           } catch (err) {
-                            toast({ title: "上传失败", description: errorMessage(err), tone: "danger" });
+                            toast({ title: m.apply.todo.field.fileUploadFailed, description: errorMessage(err), tone: "danger" });
                           } finally {
                             setBusyKey(null);
                             e.target.value = "";
@@ -438,17 +441,17 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                         <Select
                           value=""
                           small
-                          aria-label="选已有文件"
+                          aria-label={m.apply.todo.field.selectExisting}
                           onChange={(e) => {
                             const doc = docs.find((x) => x.key === e.target.value);
                             if (doc) setDraft(row.jobId, q.key, { value: doc.path, fileName: doc.filename });
                           }}
                           style={{ maxWidth: 260 }}
                         >
-                          <option value="">或选已有文件…</option>
+                          <option value="">{m.apply.todo.field.orSelectExisting}</option>
                           {docs.map((dd) => (
                             <option key={dd.key} value={dd.key}>
-                              {documentLabel(dd.key)} · {dd.filename}
+                              {documentLabel(dd.key, lang)} · {dd.filename}
                             </option>
                           ))}
                         </Select>
@@ -477,7 +480,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                         }}
                       />
                     ))}
-                    <Checkbox label="仅本次" checked={d.onlyOnce} onChange={(e) => setDraft(row.jobId, q.key, { onlyOnce: e.target.checked })} />
+                    <Checkbox label={m.apply.todo.field.onlyOnce} checked={d.onlyOnce} onChange={(e) => setDraft(row.jobId, q.key, { onlyOnce: e.target.checked })} />
                   </div>
                 </Field>
               );
@@ -488,7 +491,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                 <div className="row row-nowrap">
                   {q.options && q.options.length > 0 ? (
                     <Select id={id} value={d.value} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.value })} style={{ maxWidth: 360 }}>
-                      <option value="">选择…</option>
+                      <option value="">{m.apply.todo.field.choose}</option>
                       {q.options.map((o) => (
                         <option key={o} value={o}>
                           {o}
@@ -496,9 +499,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                       ))}
                     </Select>
                   ) : (
-                    <Input id={id} value={d.value} placeholder="你的答案" onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.value })} style={{ maxWidth: 480 }} />
+                    <Input id={id} value={d.value} placeholder={m.apply.todo.field.answerPlaceholder} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.value })} style={{ maxWidth: 480 }} />
                   )}
-                  <Checkbox label="仅本次" checked={d.onlyOnce} onChange={(e) => setDraft(row.jobId, q.key, { onlyOnce: e.target.checked })} />
+                  <Checkbox label={m.apply.todo.field.onlyOnce} checked={d.onlyOnce} onChange={(e) => setDraft(row.jobId, q.key, { onlyOnce: e.target.checked })} />
                 </div>
               </Field>
             );
@@ -507,15 +510,15 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
 
         <div className="row mt-4">
           <Button variant="primary" onClick={() => submit(row)} loading={busyKey === `submit-${row.jobId}`} disabled={missing || (busyKey !== null && busyKey !== `submit-${row.jobId}`)}>
-            提交答案,继续投递
+            {m.apply.todo.submitButton}
           </Button>
           {row.status !== "needs_info" || !applyRunning ? (
             <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} onClick={() => retry(row)} loading={busyKey === `retry-${row.jobId}`} disabled={busyKey !== null && busyKey !== `retry-${row.jobId}`}>
-              让助手重新来
+              {m.apply.todo.retryForm}
             </Button>
           ) : null}
           {skipButton(row)}
-          {missing ? <span className="muted small">还有必填项没填。</span> : null}
+          {missing ? <span className="muted small">{m.apply.todo.missingRequired}</span> : null}
         </div>
       </Card>,
     ];
@@ -524,14 +527,14 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   if (compact) return rows.length === 0 ? null : <div className="col gap-3">{cards}</div>;
 
   return (
-    <Section id="todo" title="待处理" count={rows.length > 0 ? rows.length : undefined} description="助手停下来等你的事:补答案、传文件、登录一次,或你亲自完成。做完自动继续。">
+    <Section id="todo" title={m.apply.todo.sectionTitle} count={rows.length > 0 ? rows.length : undefined} description={m.apply.todo.sectionDescription}>
       {rows.length === 0 ? (
-        <EmptyState compact title="没有等你的事" description="助手需要你补答案、传文件、登录一次,或亲自完成时,会出现在这里;处理完它自己接着投。" />
+        <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />
       ) : (
         <>
           <div className="col gap-3">{cards}</div>
           <p className="muted xs mt-3">
-            <MessageSquare size={12} aria-hidden /> 岗位特有的题勾「仅本次」,其余会存进档案的标准答案;文件存进档案的「文件」标签,下次不再问。
+            <MessageSquare size={12} aria-hidden /> {m.apply.todo.footnote}
           </p>
         </>
       )}

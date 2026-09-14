@@ -1,12 +1,12 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { directionLabel } from "@/matcher/directions";
 import { getJson, postJson, putJson, errorMessage } from "@/app/lib/api";
-import { OUTREACH_STATUS_LABEL, labelOf } from "@/app/lib/labels";
+import { directionName, labelOf } from "@/app/lib/labels";
 import { cx } from "@/app/lib/cx";
 import { Button, Card, Chip, ConfirmDialog, EmptyState, SkeletonCard, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
+import { useLang, useMessages } from "@/i18n/client";
 import { ReferralContact, type CardOutreach, type Edited } from "./referral-contact";
 import { ReferralWonDialog, type WonInitial } from "./referral-won-dialog";
 
@@ -39,6 +39,8 @@ const needsAttention = (c: ReferralCardData) =>
 // 内推进行中: one card per company; several contacts per card. Polls every 5s. With
 // onlyAttention (the 今日 page) only cards that need the user are shown, and nothing when none do.
 export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boolean }) {
+  const m = useMessages();
+  const lang = useLang();
   const [cards, setCards] = useState<ReferralCardData[] | null>(null);
   const [edits, setEdits] = useState<Record<number, Edited>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -76,7 +78,7 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
       await fn();
       await Promise.all([refresh(), refreshOverview()]);
     } catch (e) {
-      toast({ title: "操作失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.common.failed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusy(null);
     }
@@ -86,10 +88,15 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
     const ids = card.jobs.map((j) => j.jobId);
     return run(`${action}-${card.company}`, async () => {
       const j = await postJson<{ autoStarted?: boolean; runId?: number; channel?: string; message?: string }>("/api/referral/decide", { jobIds: ids, action, ...extra });
-      const titles: Record<Action, string> = { direct: `${card.company} 改为直接投`, won: `${card.company} 开始投递`, retry: `${card.company} 再撒一次网`, archive: `已放弃 ${card.company}` };
+      const titles: Record<Action, string> = {
+        direct: m.apply.referrals.toastDirect(card.company),
+        won: m.apply.referrals.toastWon(card.company),
+        retry: m.apply.referrals.toastRetry(card.company),
+        archive: m.apply.referrals.toastArchive(card.company),
+      };
       toast({
         title: titles[action],
-        description: j.autoStarted ? (j.channel === "user_chrome" ? "已排队,助手接手后开始。" : "后台浏览器已开始。") : j.message ?? undefined,
+        description: j.autoStarted ? (j.channel === "user_chrome" ? m.apply.referrals.queuedUserChrome : m.apply.referrals.queuedHeadless) : j.message ?? undefined,
         tone: action === "archive" ? "neutral" : "good",
       });
     });
@@ -106,7 +113,7 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
   const approveDraft = (o: CardOutreach) =>
     run(`approve-${o.id}`, async () => {
       const j = await approveOne(o);
-      toast({ title: `已批准给 ${o.personName} 的消息`, description: j.autoStarted ? "已排队发送任务,助手接手后发出。" : "助手会在下次任务里发出。", tone: "good" });
+      toast({ title: m.apply.referrals.approvedOne(o.personName), description: j.autoStarted ? m.apply.referrals.sendQueued : m.apply.referrals.sendNextTask, tone: "good" });
     });
 
   const approveAll = (c: ReferralCardData) =>
@@ -117,13 +124,13 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
         const j = await approveOne(o);
         started = started || !!j.autoStarted;
       }
-      toast({ title: `已批准 ${c.company} 的全部草稿`, description: started ? "已排队发送任务,助手接手后发出。" : "助手会在下次任务里发出。", tone: "good" });
+      toast({ title: m.apply.referrals.approvedAll(c.company), description: started ? m.apply.referrals.sendQueued : m.apply.referrals.sendNextTask, tone: "good" });
     });
 
   const rejectDraft = (o: CardOutreach) =>
     run(`reject-${o.id}`, async () => {
       await postJson("/api/network/decide", { outreachId: o.id, decision: "reject" });
-      toast({ title: `已拒绝给 ${o.personName} 的草稿`, tone: "neutral" });
+      toast({ title: m.apply.referrals.rejectedOne(o.personName), tone: "neutral" });
     });
 
   const unapproveDraft = (o: CardOutreach) =>
@@ -140,8 +147,8 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
     run("check", async () => {
       const j = await postJson<{ queued?: boolean; runId?: number }>("/api/referral/check", {});
       toast({
-        title: j.queued ? "已排队检查回复" : "暂时不用检查",
-        description: j.queued ? "助手接手后去 LinkedIn 看邀请和消息。" : "已有检查在排队或进行中,或没有需要检查的对话。",
+        title: j.queued ? m.apply.referrals.checkQueued : m.apply.referrals.checkNotNeeded,
+        description: j.queued ? m.apply.referrals.checkQueuedDescription : m.apply.referrals.checkNotNeededDescription,
         tone: j.queued ? "good" : "neutral",
       });
     });
@@ -150,7 +157,7 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
   const visible = onlyAttention ? cards.filter(needsAttention) : cards;
   if (visible.length === 0) {
     if (onlyAttention) return null;
-    return <EmptyState compact art="people" title="没有进行中的内推" description="在上方计划里给「找内推」填份数并开始投递,助手找到人后会在这里出现。" />;
+    return <EmptyState compact art="people" title={m.apply.referrals.emptyTitle} description={m.apply.referrals.emptyDescription} />;
   }
 
   return (
@@ -158,9 +165,9 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
       {!onlyAttention ? (
         <div className="row">
           <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} loading={busy === "check"} onClick={checkNow}>
-            现在检查回复
+            {m.apply.referrals.checkNow}
           </Button>
-          <span className="muted xs">助手早 9 点、晚 6 点各自动查一次 LinkedIn 的邀请与消息,每次接任务前也会查。</span>
+          <span className="muted xs">{m.apply.referrals.checkSchedule}</span>
         </div>
       ) : null}
 
@@ -176,7 +183,7 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
         const wonIsUrl = /^https?:\/\//.test(wonLink);
         const counts = c.outreaches.reduce<Record<string, number>>((m, o) => ({ ...m, [o.status]: (m[o.status] ?? 0) + 1 }), {});
         const summary = Object.entries(counts)
-          .map(([s, n]) => `${n} ${labelOf(OUTREACH_STATUS_LABEL, s, s)}`)
+          .map(([s, n]) => `${n} ${labelOf(m.labels.outreachStatus, s, s)}`)
           .join(" · ");
         const busyHere = busy !== null && busy.endsWith(c.company);
 
@@ -188,23 +195,19 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
                   {c.company}
                 </span>
                 {ready ? (
-                  <Chip tone="good">有内推 · 待投</Chip>
+                  <Chip tone="good">{m.apply.referrals.readyChip}</Chip>
                 ) : c.outreaches.length > 0 ? (
-                  <span className="muted small">
-                    {c.outreaches.length} 人 · {summary}
-                  </span>
+                  <span className="muted small">{m.apply.referrals.peopleSummary(c.outreaches.length, summary)}</span>
                 ) : noContact ? (
                   <Chip tone="danger" title={noContact}>
-                    找不到人
+                    {m.apply.referrals.noContactChip}
                   </Chip>
                 ) : (
-                  <Chip tone="info">助手找人中…</Chip>
+                  <Chip tone="info">{m.apply.referrals.searchingChip}</Chip>
                 )}
               </div>
               {c.daysWaiting != null ? (
-                <span className={cx("small", c.overdue ? "text-danger strong" : "muted")}>
-                  已等 {c.daysWaiting} 天{c.overdue ? " · 建议直接投" : ""}
-                </span>
+                <span className={cx("small", c.overdue ? "text-danger strong" : "muted")}>{m.apply.referrals.waiting(c.daysWaiting, c.overdue)}</span>
               ) : null}
             </div>
             {noContact && c.outreaches.length === 0 ? <p className="muted small mt-2">{noContact.replace(/^no contact found: /, "")}</p> : null}
@@ -219,13 +222,11 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
                   ) : (
                     j.title
                   )}
-                  <Chip outline>{j.direction ? directionLabel(j.direction) : "未分类"}</Chip>
+                  <Chip outline>{directionName(j.direction, lang)}</Chip>
                   <span className="muted mono xs">{j.score ?? "—"}</span>
                   {j.referralInfo ? (
                     <span className="text-good small">
-                      内推:{j.referralPersonName ?? "—"} · {j.referralInfo.source}
-                      {j.referralInfo.link ? " · 有链接" : ""}
-                      {j.referralInfo.code ? ` · 码 ${j.referralInfo.code}` : ""}
+                      {m.apply.referrals.referralLine(j.referralPersonName ?? "—", j.referralInfo.source, Boolean(j.referralInfo.link), j.referralInfo.code)}
                     </span>
                   ) : null}
                 </li>
@@ -237,9 +238,9 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
                 {drafts.length > 1 ? (
                   <div className="row">
                     <Button size="sm" onClick={() => approveAll(c)} loading={busy === `approve-all-${c.company}`}>
-                      全部批准({drafts.length} 条)
+                      {m.apply.referrals.approveAll(drafts.length)}
                     </Button>
-                    <span className="muted xs">每人两版:私信版给已是好友的人,留言版随好友申请发;助手按对方能不能私信自动选。</span>
+                    <span className="muted xs">{m.apply.referrals.twoVersionsHint}</span>
                   </div>
                 ) : null}
                 {c.outreaches.map((o) => (
@@ -260,12 +261,12 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
             <div className="row mt-4">
               {ready ? (
                 <Button variant="primary" onClick={() => decide(c, "won", { info: readyInfo })} loading={busyHere}>
-                  开始投(重新入队)
+                  {m.apply.referrals.startApply}
                 </Button>
               ) : (
                 <>
                   <Button onClick={() => decide(c, "direct")} loading={busy === `direct-${c.company}`} disabled={busy !== null && !busyHere}>
-                    直接投,不等内推
+                    {m.apply.referrals.applyDirect}
                   </Button>
                   <Button
                     variant="ghost"
@@ -282,15 +283,15 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
                       })
                     }
                   >
-                    有内推了…
+                    {m.apply.referrals.gotReferralEllipsis}
                   </Button>
                   {anyOut ? (
                     <Button variant="ghost" onClick={() => decide(c, "retry")} loading={busy === `retry-${c.company}`} disabled={busy !== null && !busyHere}>
-                      再撒网,换人
+                      {m.apply.referrals.retry}
                     </Button>
                   ) : null}
                   <Button variant="ghost" className="text-danger" disabled={busy !== null} onClick={() => setArchiveFor(c)}>
-                    放弃…
+                    {m.apply.referrals.dropEllipsis}
                   </Button>
                 </>
               )}
@@ -304,9 +305,9 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
         open={archiveFor !== null}
         onClose={() => setArchiveFor(null)}
         danger
-        title={archiveFor ? `放弃 ${archiveFor.company} 的 ${archiveFor.jobs.length} 个岗位?` : "放弃"}
-        description="岗位会归档,不再投递;可以在职位页的「全部入库」里找回。"
-        confirmLabel="放弃"
+        title={archiveFor ? m.apply.referrals.dropTitle(archiveFor.company, archiveFor.jobs.length) : m.apply.referrals.drop}
+        description={m.apply.referrals.dropDescription}
+        confirmLabel={m.apply.referrals.drop}
         busy={archiveFor !== null && busy === `archive-${archiveFor.company}`}
         onConfirm={async () => {
           if (!archiveFor) return;

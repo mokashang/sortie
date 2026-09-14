@@ -153,8 +153,8 @@ describe("run outcome end to end", () => {
       complete: false,
     });
     expect(computeRunOutcome(db, runId)).toEqual(outcome);
-    expect(runStatusDisplay("done", outcome)).toEqual({ label: "未完成", tone: "warn" });
-    expect(runProgressText(outcome)).toBe("海投 2/4");
+    expect(runStatusDisplay("done", outcome, "zh")).toEqual({ label: "未完成", tone: "warn" });
+    expect(runProgressText(outcome, "zh")).toBe("海投 2/4");
 
     // The status endpoint carries the parsed outcome to the UI.
     const row = executorStatus(db, U).find((r) => r.id === runId)!;
@@ -173,7 +173,7 @@ describe("run outcome end to end", () => {
     finishRun(db, U, runId, "done");
     const outcome = storedOutcome(db, runId);
     expect(outcome).toMatchObject({ achieved: { direct: 2, referral: 0 }, awaiting: 2, complete: true });
-    expect(runStatusDisplay("done", outcome)).toEqual({ label: "已完成", tone: "good" });
+    expect(runStatusDisplay("done", outcome, "zh")).toEqual({ label: "已完成", tone: "good" });
   });
 
   it("a user-rejected fill still counts as filled (the fill happened) but shows as a 待处理 card", () => {
@@ -214,7 +214,7 @@ describe("run outcome end to end", () => {
     finishRun(db, U, runId, "done");
     const outcome = storedOutcome(db, runId);
     expect(outcome).toMatchObject({ planned: { direct: 0, referral: 2 }, achieved: { direct: 0, referral: 1 }, manual: 1, complete: false });
-    expect(runProgressText(outcome)).toBe("内推 1/2");
+    expect(runProgressText(outcome, "zh")).toBe("内推 1/2");
   });
 
   it("a run stopped by the user gets its outcome too, under its own label", () => {
@@ -226,8 +226,8 @@ describe("run outcome end to end", () => {
     stopExecutor(db, U, runId);
     const outcome = storedOutcome(db, runId);
     expect(outcome).toMatchObject({ achieved: { direct: 1, referral: 0 }, complete: false });
-    expect(runStatusDisplay("stopped", outcome)).toEqual({ label: "已停止", tone: "neutral" });
-    expect(runProgressText(outcome)).toBe("海投 1/2");
+    expect(runStatusDisplay("stopped", outcome, "zh")).toEqual({ label: "已停止", tone: "neutral" });
+    expect(runProgressText(outcome, "zh")).toBe("海投 1/2");
   });
 
   it("runs with no plan (resume-only, other kinds) get no outcome and keep the plain 已完成", () => {
@@ -235,7 +235,7 @@ describe("run outcome end to end", () => {
     claimNextRun(db, U, "user_chrome");
     finishRun(db, U, id, "done");
     expect(storedOutcome(db, id)).toBeNull();
-    expect(runStatusDisplay("done", null)).toEqual({ label: "已完成", tone: "good" });
+    expect(runStatusDisplay("done", null, "zh")).toEqual({ label: "已完成", tone: "good" });
 
     const check = startExecutor(db, U, "referral_check", {}, { logDir }, "user_chrome");
     claimNextRun(db, U, "user_chrome");

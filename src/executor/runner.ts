@@ -261,10 +261,10 @@ export function startExecutor(
 ): StartResult {
   const wantsReferral = options.mode === "referral" || (options.plan ?? []).some((p) => p.mode === "referral");
   if (channel === "headless" && wantsReferral) {
-    throw new Error("内推模式仅支持值守会话(user_chrome)——无人值守通道只做海投");
+    throw new ExecutorStartError("referral_needs_attended", "referral mode needs the attended session (user_chrome): the headless channel only applies directly");
   }
   if (channel === "headless" && kind === "scan") {
-    throw new Error("扫描 run 仅支持值守会话(user_chrome)——LinkedIn/Handshake/Tesla 需要用户登录的 Chrome");
+    throw new ExecutorStartError("scan_needs_attended", "scan runs need the attended session (user_chrome): LinkedIn/Handshake/Tesla need the user's logged-in Chrome");
   }
   const existing = db
     .prepare("SELECT id, pid, status FROM executor_runs WHERE user_id=? AND kind=? AND channel=? AND status IN ('running','queued')")
@@ -606,4 +606,17 @@ export function executorStatus(db: DB, userId: string): RunStatusRow[] {
     }
     return result;
   });
+}
+
+// A start refused because the channel cannot do what was asked (referrals or scanning on the
+// headless channel). The code lets the API route pick a message in the UI language
+// (src/i18n/messages/errors.ts); the English text is for logs and tests.
+export type ExecutorStartErrorCode = "referral_needs_attended" | "scan_needs_attended";
+export class ExecutorStartError extends Error {
+  code: ExecutorStartErrorCode;
+  constructor(code: ExecutorStartErrorCode, message: string) {
+    super(message);
+    this.name = "ExecutorStartError";
+    this.code = code;
+  }
 }

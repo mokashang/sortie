@@ -7,6 +7,7 @@ import { isDocumentPath, userDocumentsDir } from "@/lib/documents";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
 import { currentApplyRunId } from "@/apply/run-outcome";
 import { withUser, failResponse } from "@/lib/actor";
+import { langFromRequest, messagesFor } from "@/i18n/server";
 
 // User -> App from a 待处理 card's form: {jobId, answers: {key: {value, remember?}}}.
 // Remembered text answers are merged into the account's standard_answers (so the next
@@ -39,7 +40,7 @@ export const POST = withUser(async (req, { userId }) => {
         const value = answers[q.key]?.value?.trim();
         if (!value && q.optional) continue;
         if (!value || !isDocumentPath(value, dir)) {
-          return NextResponse.json({ error: `文件「${q.label}」还没上传` }, { status: 400 });
+          return NextResponse.json({ error: messagesFor(langFromRequest(req)).errors.fileNotUploaded(q.label) }, { status: 400 });
         }
       }
     }

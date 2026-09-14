@@ -853,6 +853,7 @@ td.company {
   min-height: 100vh;
   display: grid;
   place-items: center;
+  align-content: center;
   padding: var(--s-6) var(--s-4);
 }
 
@@ -1052,4 +1053,15 @@ td.company {
 
 .setup-banner {
   margin-bottom: var(--s-4);
+}
+
+/* Language switch under the sign-in card (the top bar that normally carries it is not shown). */
+.auth-lang {
+  margin-top: var(--s-4);
+  color: var(--sub);
+  gap: 6px;
+}
+
+.auth-lang:hover {
+  color: var(--ink);
 }

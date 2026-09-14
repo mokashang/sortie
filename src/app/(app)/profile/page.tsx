@@ -1,14 +1,19 @@
+import type { Metadata } from "next";
 import { getDb } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { listExperiences } from "@/resume/experiences";
 import { emptyProfileData, getProfileData, profileStatus } from "@/lib/profile";
 import { listDocuments, userDocumentsDir } from "@/lib/documents";
 import { PageHeader } from "@/app/components/ui";
+import { getMessages } from "@/i18n/server";
 import { ProfileTabs, type ProfileTab } from "./profile-tabs";
 import type { ResumeRow } from "./profile-types";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "档案" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).profile.title };
+}
 
 const TABS: ProfileTab[] = ["basics", "experiences", "resumes", "answers", "documents"];
 
@@ -17,6 +22,7 @@ const TABS: ProfileTab[] = ["basics", "experiences", "resumes", "answers", "docu
 // · 标准答案 (what the assistant fills into application forms beyond the basics).
 export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ tab?: string; welcome?: string }> }) {
   const user = await requireUser("/profile");
+  const m = await getMessages();
   const sp = await searchParams;
   const db = getDb();
   const status = profileStatus(db, user.id);
@@ -45,7 +51,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const documents = listDocuments(userDocumentsDir(db, user.id));
   return (
     <>
-      <PageHeader title="档案" />
+      <PageHeader title={m.profile.title} />
       <ProfileTabs
         tab={tab}
         experiences={experiences}

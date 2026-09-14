@@ -1,8 +1,10 @@
+import type { Metadata } from "next";
 import { getDb } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { todaySubmitted } from "@/apply/history";
 import { PageHeader, Section } from "@/app/components/ui";
 import { AssistantCard } from "@/app/components/assistant-card";
+import { getMessages } from "@/i18n/server";
 import { PlanCard } from "./plan-card";
 import { InfoCards } from "./info-cards";
 import { ConfirmCards } from "./confirm-cards";
@@ -10,7 +12,10 @@ import { ReferralBoard } from "./referral-board";
 import { TodaySubmitted } from "./today-submitted";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "投递" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).nav.apply };
+}
 
 // 投递: plan a run, watch the assistant, and decide on everything it hands back — the 待处理
 // cards (missing answers / files, a site to log into once, something to finish by hand),
@@ -18,22 +23,23 @@ export const metadata = { title: "投递" };
 // every card ends in an action after which the assistant continues by itself.
 export default async function ApplyPage() {
   const user = await requireUser("/apply");
+  const m = await getMessages();
   const db = getDb();
   const submittedRows = todaySubmitted(db, user.id);
 
   return (
     <>
-      <PageHeader title="投递" />
+      <PageHeader title={m.apply.title} subtitle={m.apply.subtitle} />
       <AssistantCard />
       <PlanCard />
       <InfoCards />
-      <Section id="confirm" title="待确认" description="助手填好、停在提交前一步的申请。核对后点确认,它才会点提交。">
+      <Section id="confirm" title={m.apply.confirm.sectionTitle} description={m.apply.confirm.sectionDescription}>
         <ConfirmCards />
       </Section>
-      <Section id="referrals" title="内推进行中" description="助手找到的联系人和草稿。你批准的消息才会发出;拿到内推后点「有内推了」。">
+      <Section id="referrals" title={m.apply.referrals.sectionTitle} description={m.apply.referrals.sectionDescription}>
         <ReferralBoard />
       </Section>
-      <Section id="submitted" title="今日已提交" count={submittedRows.length}>
+      <Section id="submitted" title={m.apply.submitted.sectionTitle} count={submittedRows.length}>
         <TodaySubmitted rows={submittedRows} />
       </Section>
     </>

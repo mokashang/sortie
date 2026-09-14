@@ -5,6 +5,7 @@ import { Sparkles, Upload } from "lucide-react";
 import { DIRECTIONS } from "@/matcher/directions";
 import { putJson, postJson, errorMessage, ApiError } from "@/app/lib/api";
 import { Button, Card, Checkbox, Field, Input, Section, Segmented, Select, useToast } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 
 // 档案 → 基本信息 (spec 2026-09-13 accounts §6): the fields the matcher and the answer pack are
 // built from. Saves the whole profile at once (PUT /api/profile validates it server-side and
@@ -40,7 +41,6 @@ const RACE = [
 ];
 const VETERAN = ["I am not a protected veteran", "I identify as one or more of the classifications of a protected veteran", "I don't wish to answer"];
 const DISABILITY = ["No, I do not have a disability", "Yes, I have a disability (or previously had a disability)", "I do not want to answer"];
-const TIER_LABEL: Record<Tier, string> = { 0: "不投", 1: "最想去", 2: "想去", 3: "可以" };
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : v == null ? "" : String(v);
@@ -97,6 +97,8 @@ function toPayload(d: Draft, standardAnswers: unknown): Record<string, unknown> 
 }
 
 export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { initial: Record<string, unknown>; complete: boolean; welcome: boolean; isOwner: boolean; onSaved: () => void }) {
+  const m = useMessages();
+  const TIER_LABEL: Record<Tier, string> = m.profile.basics.tierChoice;
   const [d, setD] = useState<Draft>(() => toDraft(initial));
   const [issues, setIssues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -123,7 +125,7 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
       await putJson("/api/profile", { profile: toPayload(d, initial.standard_answers) });
       setDirty(false);
       onSaved();
-      toast({ title: "基本信息已保存", description: "助手会用这些信息打分和填表。", tone: "good" });
+      toast({ title: m.profile.basics.saved, description: m.profile.basics.savedDescription, tone: "good" });
       router.refresh();
     } catch (e) {
       if (e instanceof ApiError && e.status === 400) {
@@ -137,9 +139,9 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
         } catch {
           /* fall through to the toast */
         }
-        toast({ title: "还有几项没填对", description: "看红字提示。", tone: "warn" });
+        toast({ title: m.profile.basics.invalid, description: m.profile.basics.invalidDescription, tone: "warn" });
       } else {
-        toast({ title: "保存失败", description: errorMessage(e), tone: "danger" });
+        toast({ title: m.profile.basics.saveFailed, description: errorMessage(e), tone: "danger" });
       }
     } finally {
       setBusy(false);
@@ -153,10 +155,10 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
       setD(toDraft(j.profile));
       setDirty(false);
       onSaved();
-      toast({ title: "已从 profile.yaml 导入", tone: "good" });
+      toast({ title: m.profile.basics.imported, tone: "good" });
       router.refresh();
     } catch (e) {
-      toast({ title: "导入失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.profile.basics.importFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setImporting(false);
     }
@@ -171,55 +173,55 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
         <Card tone="accent">
           <div className="row between">
             <div>
-              <div className="strong">{welcome ? "欢迎!先花两分钟填好基本信息" : "基本信息还没填完"}</div>
-              <div className="muted small">助手要靠这些字段给职位打分、生成简历、填网申表单。带 * 的是必填。</div>
+              <div className="strong">{welcome ? m.profile.basics.welcomeTitle : m.profile.basics.incompleteTitle}</div>
+              <div className="muted small">{m.profile.basics.welcomeDescription}</div>
             </div>
             {isOwner ? (
               <Button size="sm" variant="ghost" icon={<Upload size={13} />} onClick={() => void importYaml()} loading={importing}>
-                从服务器的 profile.yaml 导入
+                {m.profile.basics.importButton}
               </Button>
             ) : null}
           </div>
         </Card>
       ) : null}
 
-      <Section title="联系方式" description="投递表单里的联系信息,和简历页眉一致。">
+      <Section title={m.profile.basics.contactTitle} description={m.profile.basics.contactDescription}>
         <div className="basics-grid">
-          <Field label="姓名 *" htmlFor="b-name" error={err("name")}>
+          <Field label={m.profile.basics.name} htmlFor="b-name" error={err("name")}>
             <Input id="b-name" value={d.name} onChange={(e) => patch({ name: e.target.value })} autoComplete="name" />
           </Field>
-          <Field label="邮箱 *" htmlFor="b-email" error={err("email")} hint="网申用的邮箱,可以和登录邮箱不同。">
+          <Field label={m.profile.basics.email} htmlFor="b-email" error={err("email")} hint={m.profile.basics.emailHint}>
             <Input id="b-email" type="email" value={d.email} onChange={(e) => patch({ email: e.target.value })} />
           </Field>
-          <Field label="电话 *" htmlFor="b-phone" error={err("phone")} hint="如 +1-323-000-0000">
+          <Field label={m.profile.basics.phone} htmlFor="b-phone" error={err("phone")} hint={m.profile.basics.phoneHint}>
             <Input id="b-phone" value={d.phone} onChange={(e) => patch({ phone: e.target.value })} autoComplete="tel" />
           </Field>
-          <Field label="LinkedIn" htmlFor="b-linkedin" error={err("linkedin")} hint="如 linkedin.com/in/your-name">
+          <Field label={m.profile.basics.linkedin} htmlFor="b-linkedin" error={err("linkedin")} hint={m.profile.basics.linkedinHint}>
             <Input id="b-linkedin" value={d.linkedin} onChange={(e) => patch({ linkedin: e.target.value })} />
           </Field>
-          <Field label="GitHub" htmlFor="b-github" error={err("github")} hint="如 github.com/your-name">
+          <Field label={m.profile.basics.github} htmlFor="b-github" error={err("github")} hint={m.profile.basics.githubHint}>
             <Input id="b-github" value={d.github} onChange={(e) => patch({ github: e.target.value })} />
           </Field>
         </div>
       </Section>
 
-      <Section title="教育与身份">
+      <Section title={m.profile.basics.educationTitle}>
         <div className="basics-grid">
-          <Field label="学校 *" htmlFor="b-school" error={err("school")}>
+          <Field label={m.profile.basics.school} htmlFor="b-school" error={err("school")}>
             <Input id="b-school" value={d.school} onChange={(e) => patch({ school: e.target.value })} placeholder="University of Southern California" />
           </Field>
-          <Field label="学位 *" htmlFor="b-degree" error={err("degree")}>
+          <Field label={m.profile.basics.degree} htmlFor="b-degree" error={err("degree")}>
             <Input id="b-degree" value={d.degree} onChange={(e) => patch({ degree: e.target.value })} placeholder="M.S. ECE" />
           </Field>
-          <Field label="毕业年月 *" htmlFor="b-grad" error={err("grad_date")} hint="YYYY-MM,如 2027-05">
+          <Field label={m.profile.basics.gradDate} htmlFor="b-grad" error={err("grad_date")} hint={m.profile.basics.gradDateHint}>
             <Input id="b-grad" value={d.grad_date} onChange={(e) => patch({ grad_date: e.target.value })} placeholder="2027-05" className="mono" />
           </Field>
-          <Field label="工作身份 *" htmlFor="b-status" error={err("work_auth.status")} hint="如 F-1 / OPT / H-1B / citizen">
+          <Field label={m.profile.basics.workAuthStatus} htmlFor="b-status" error={err("work_auth.status")} hint={m.profile.basics.workAuthStatusHint}>
             <Input id="b-status" value={d.work_auth.status} onChange={(e) => patch({ work_auth: { ...d.work_auth, status: e.target.value } })} />
           </Field>
-          <Field label="签证" hint="如实填写:需要 sponsorship 时,助手在表单里也会如实回答。">
+          <Field label={m.profile.basics.sponsorship} hint={m.profile.basics.sponsorshipHint}>
             <Checkbox
-              label="将来需要公司 sponsor 工作签证"
+              label={m.profile.basics.needsSponsorship}
               checked={d.work_auth.needs_sponsorship}
               onChange={(e) => patch({ work_auth: { ...d.work_auth, needs_sponsorship: e.target.checked } })}
             />
@@ -227,31 +229,31 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
         </div>
       </Section>
 
-      <Section title="目标岗位" description="主要找哪类岗位;每天愿意花多少分钟在投递上。">
+      <Section title={m.profile.basics.targetsTitle} description={m.profile.basics.targetsDescription}>
         <div className="basics-grid">
-          <Field label="主要目标 *" htmlFor="b-primary">
+          <Field label={m.profile.basics.primaryTarget} htmlFor="b-primary">
             <Select id="b-primary" value={d.targets.primary} onChange={(e) => patch({ targets: { ...d.targets, primary: e.target.value as "newgrad" | "intern" } })}>
-              <option value="newgrad">New Grad 全职</option>
-              <option value="intern">实习</option>
+              <option value="newgrad">{m.profile.basics.targetNewGrad}</option>
+              <option value="intern">{m.profile.basics.targetIntern}</option>
             </Select>
           </Field>
-          <Field label="次要目标" htmlFor="b-secondary">
+          <Field label={m.profile.basics.secondaryTarget} htmlFor="b-secondary">
             <Select id="b-secondary" value={d.targets.secondary} onChange={(e) => patch({ targets: { ...d.targets, secondary: e.target.value as "newgrad" | "intern" | "" } })}>
-              <option value="">无</option>
-              <option value="newgrad">New Grad 全职</option>
-              <option value="intern">实习</option>
+              <option value="">{m.profile.basics.targetNone}</option>
+              <option value="newgrad">{m.profile.basics.targetNewGrad}</option>
+              <option value="intern">{m.profile.basics.targetIntern}</option>
             </Select>
           </Field>
-          <Field label="每天投递预算(分钟)" htmlFor="b-budget">
+          <Field label={m.profile.basics.dailyBudget} htmlFor="b-budget">
             <Input id="b-budget" type="number" min={10} max={600} value={d.daily_minutes_budget} onChange={(e) => patch({ daily_minutes_budget: Number(e.target.value) || 90 })} />
           </Field>
         </div>
       </Section>
 
       <Section
-        title="方向与梯队 *"
-        description="至少选一个方向。梯队决定队列里的优先级:1 = 最想去,排在最前。"
-        actions={<span className={chosen === 0 ? "text-danger small" : "muted small"}>{chosen === 0 ? "还没选方向" : `已选 ${chosen} 个方向`}</span>}
+        title={m.profile.basics.directionsTitle}
+        description={m.profile.basics.directionsDescription}
+        actions={<span className={chosen === 0 ? "text-danger small" : "muted small"}>{chosen === 0 ? m.profile.basics.noneChosen : m.profile.basics.chosenCount(chosen)}</span>}
       >
         {err("directions") ? <div className="field-error mb-2">{err("directions")}</div> : null}
         <div className="direction-grid">
@@ -261,7 +263,7 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
               <div key={slug} className={`direction-row${tier ? " is-on" : ""}`} title={meta.blurb}>
                 <span className="direction-label truncate">{meta.label}</span>
                 <Segmented<`${Tier}`>
-                  ariaLabel={`${meta.label} 梯队`}
+                  ariaLabel={m.profile.basics.directionTierAria(meta.label)}
                   size="sm"
                   value={`${tier}` as `${Tier}`}
                   onChange={(v) => setDirection(slug, Number(v) as Tier)}
@@ -273,9 +275,9 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
         </div>
       </Section>
 
-      <Section title="EEO 自愿申报" description="网申的自愿申报题按这里填。如实填写或选「不愿回答」;不影响匹配。">
+      <Section title={m.profile.basics.eeoTitle} description={m.profile.basics.eeoDescription}>
         <div className="basics-grid">
-          <Field label="性别" htmlFor="b-gender">
+          <Field label={m.profile.basics.gender} htmlFor="b-gender">
             <Select id="b-gender" value={d.eeo.gender} onChange={(e) => patch({ eeo: { ...d.eeo, gender: e.target.value } })}>
               {(GENDER.includes(d.eeo.gender) ? GENDER : [d.eeo.gender, ...GENDER]).map((o) => (
                 <option key={o} value={o}>
@@ -284,7 +286,7 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
               ))}
             </Select>
           </Field>
-          <Field label="族裔" htmlFor="b-race">
+          <Field label={m.profile.basics.race} htmlFor="b-race">
             <Select id="b-race" value={d.eeo.race} onChange={(e) => patch({ eeo: { ...d.eeo, race: e.target.value } })}>
               {(RACE.includes(d.eeo.race) ? RACE : [d.eeo.race, ...RACE]).map((o) => (
                 <option key={o} value={o}>
@@ -293,7 +295,7 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
               ))}
             </Select>
           </Field>
-          <Field label="退伍军人身份" htmlFor="b-veteran">
+          <Field label={m.profile.basics.veteran} htmlFor="b-veteran">
             <Select id="b-veteran" value={d.eeo.veteran} onChange={(e) => patch({ eeo: { ...d.eeo, veteran: e.target.value } })}>
               {(VETERAN.includes(d.eeo.veteran) ? VETERAN : [d.eeo.veteran, ...VETERAN]).map((o) => (
                 <option key={o} value={o}>
@@ -302,7 +304,7 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
               ))}
             </Select>
           </Field>
-          <Field label="残障状况" htmlFor="b-disability">
+          <Field label={m.profile.basics.disability} htmlFor="b-disability">
             <Select id="b-disability" value={d.eeo.disability} onChange={(e) => patch({ eeo: { ...d.eeo, disability: e.target.value } })}>
               {(DISABILITY.includes(d.eeo.disability) ? DISABILITY : [d.eeo.disability, ...DISABILITY]).map((o) => (
                 <option key={o} value={o}>
@@ -316,9 +318,9 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
 
       <div className="row">
         <Button variant="primary" icon={<Sparkles size={14} />} onClick={() => void save()} loading={busy} disabled={!dirty && complete}>
-          保存基本信息
+          {m.profile.basics.save}
         </Button>
-        {dirty ? <span className="muted small">有未保存的修改。</span> : complete ? <span className="text-good small">已完整,助手可以工作了。</span> : null}
+        {dirty ? <span className="muted small">{m.profile.basics.unsaved}</span> : complete ? <span className="text-good small">{m.profile.basics.complete}</span> : null}
       </div>
     </div>
   );

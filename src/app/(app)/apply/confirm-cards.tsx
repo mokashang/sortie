@@ -1,11 +1,11 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { CircleCheck, Info } from "lucide-react";
-import { directionLabel } from "@/matcher/directions";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { tierLabel } from "@/app/lib/labels";
+import { directionName, tierLabel } from "@/app/lib/labels";
 import { Button, Card, Chip, EmptyState, PromptDialog, SkeletonCard, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
+import { useLang, useMessages } from "@/i18n/client";
 
 export interface PendingRow {
   jobId: number;
@@ -32,13 +32,14 @@ function renderValue(value: unknown): string {
 }
 
 function LongText({ text }: { text: string }) {
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   if (text.length <= 180) return <>{text}</>;
   return (
     <>
       {open ? text : `${text.slice(0, 180)}…`}{" "}
       <button type="button" className="link-btn" onClick={() => setOpen((o) => !o)}>
-        {open ? "收起" : "展开"}
+        {open ? m.apply.confirm.collapse : m.apply.confirm.expand}
       </button>
     </>
   );
@@ -47,6 +48,8 @@ function LongText({ text }: { text: string }) {
 // The confirmation inbox: every application the assistant filled and is holding before Submit.
 // Polls every 3s so a card leaves on its own once it is submitted or decided elsewhere.
 export function ConfirmCards({ compact = false }: { compact?: boolean }) {
+  const m = useMessages();
+  const lang = useLang();
   const [rows, setRows] = useState<PendingRow[] | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [rejectFor, setRejectFor] = useState<PendingRow | null>(null);
@@ -81,22 +84,22 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
       });
       if (decision === "approve") {
         toast({
-          title: `已批准 ${row.company}`,
+          title: m.apply.confirm.approved(row.company),
           description: j.autoStarted
             ? j.channel === "user_chrome"
-              ? "已排队一个提交任务,助手接手后提交。"
-              : "已启动后台任务完成提交。"
-            : "助手会接着提交。",
+              ? m.apply.confirm.approvedQueued
+              : m.apply.confirm.approvedHeadless
+            : m.apply.confirm.approvedLive,
           tone: "good",
         });
       } else {
-        toast({ title: `已拒绝 ${row.company}`, description: "申请已退回队列。", tone: "neutral" });
+        toast({ title: m.apply.confirm.rejected(row.company), description: m.apply.confirm.rejectedDescription, tone: "neutral" });
       }
       setRejectFor(null);
       await refresh();
       await refreshOverview();
     } catch (e) {
-      toast({ title: "操作失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.common.failed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusyId(null);
     }
@@ -106,7 +109,7 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
 
   if (rows.length === 0) {
     if (compact) return null;
-    return <EmptyState compact art="inbox" title="没有等待确认的申请" description="助手填好表单后,会在这里停下等你确认,再点提交。" />;
+    return <EmptyState compact art="inbox" title={m.apply.confirm.emptyTitle} description={m.apply.confirm.emptyDescription} />;
   }
 
   return (
@@ -114,7 +117,7 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
       {!applyLive ? (
         <div className="notice notice-info">
           <Info size={15} aria-hidden />
-          <span>助手当前空闲。点「确认提交」后会自动排一个提交任务,助手接手后再点提交。</span>
+          <span>{m.apply.confirm.idleNotice}</span>
         </div>
       ) : null}
       {rows.map((r) => {
@@ -130,13 +133,13 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
                   <span>{r.title}</span>
                 </div>
                 <div className="row mt-2">
-                  <Chip>{r.direction ? directionLabel(r.direction) : "未分类"}</Chip>
-                  <Chip outline>{tierLabel(r.tier)}</Chip>
+                  <Chip>{directionName(r.direction, lang)}</Chip>
+                  <Chip outline>{tierLabel(r.tier, lang)}</Chip>
                   <span className="muted small">
-                    分 <span className="mono">{r.score ?? "—"}</span>
+                    {m.apply.confirm.scoreLabel} <span className="mono">{r.score ?? "—"}</span>
                   </span>
-                  {r.referralPersonName ? <Chip tone="good">带内推 · {r.referralPersonName}</Chip> : null}
-                  <span className="muted small">简历版本 {r.resumeVersion ?? "—"}</span>
+                  {r.referralPersonName ? <Chip tone="good">{m.apply.confirm.withReferral(r.referralPersonName)}</Chip> : null}
+                  <span className="muted small">{m.apply.confirm.resumeVersion(r.resumeVersion ?? "—")}</span>
                 </div>
               </div>
             </div>
@@ -147,7 +150,7 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
                   {entries.length === 0 ? (
                     <tr>
                       <td colSpan={2} className="muted">
-                        助手没有回报任何字段。
+                        {m.apply.confirm.noFields}
                       </td>
                     </tr>
                   ) : (
@@ -168,17 +171,17 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
               {approved ? (
                 <>
                   <Chip tone="good" icon={<CircleCheck size={12} />} size="md">
-                    已批准 · 等助手提交
+                    {m.apply.confirm.approvedChip}
                   </Chip>
-                  <span className="muted small">要撤回,请在助手提交前告诉它;提交后在「历史」里记录。</span>
+                  <span className="muted small">{m.apply.confirm.approvedHint}</span>
                 </>
               ) : (
                 <>
                   <Button variant="primary" onClick={() => decide(r, "approve")} loading={busyId === r.jobId}>
-                    确认提交
+                    {m.apply.confirm.approve}
                   </Button>
                   <Button variant="ghost" onClick={() => setRejectFor(r)} disabled={busyId === r.jobId}>
-                    拒绝…
+                    {m.apply.confirm.rejectEllipsis}
                   </Button>
                 </>
               )}
@@ -194,11 +197,11 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
           if (rejectFor) void decide(rejectFor, "reject", reason);
         }}
         busy={rejectFor !== null && busyId === rejectFor.jobId}
-        title={rejectFor ? `拒绝 ${rejectFor.company} 的这份申请?` : "拒绝"}
-        description="申请会退回队列,不会提交。"
-        label="原因"
-        placeholder="例如:地点不对 / 填错了要重填"
-        submitLabel="拒绝并退回"
+        title={rejectFor ? m.apply.confirm.rejectTitle(rejectFor.company) : m.common.reject}
+        description={m.apply.confirm.rejectDescription}
+        label={m.apply.confirm.reasonLabel}
+        placeholder={m.apply.confirm.reasonPlaceholder}
+        submitLabel={m.apply.confirm.rejectSubmit}
       />
     </div>
   );

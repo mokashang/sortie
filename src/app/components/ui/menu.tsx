@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Ellipsis } from "lucide-react";
 import { cx } from "@/app/lib/cx";
 import { IconButton, Button, ButtonVariant, ButtonSize } from "./button";
+import { useMessages } from "@/i18n/client";
 
 export interface MenuItem {
   label: React.ReactNode;
@@ -28,7 +29,8 @@ export interface MenuProps {
   trigger?: (props: { onClick: () => void; "aria-expanded": boolean; "aria-haspopup": "menu"; disabled?: boolean }) => React.ReactNode;
 }
 
-export function Menu({ items, label = "更多", icon, align = "end", size = "sm", variant = "ghost", text, disabled, trigger }: MenuProps) {
+export function Menu({ items, label, icon, align = "end", size = "sm", variant = "ghost", text, disabled, trigger }: MenuProps) {
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   const [up, setUp] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -81,7 +83,7 @@ export function Menu({ items, label = "更多", icon, align = "end", size = "sm"
         </Button>
       ) : (
         <IconButton
-          label={label}
+          label={label ?? m.ui.more}
           icon={icon ?? <Ellipsis size={16} />}
           variant={variant}
           size={size}

@@ -8,6 +8,8 @@
 ## 页面(2026-09-08 重做)
 侧边导航:今日(收件箱)· 职位 · 投递 · 历史 · 人脉 · 档案(经历 / 简历 / 标准答案)· 统计;底部 设置。手机上是顶栏 + 滑出导航。前端结构见 CLAUDE.md §6。
 
+界面有中文和 English 两个版本:顶栏「语言」按钮、手机端「更多」弹层或设置页「语言」一键切换,选择记在 cookie 和 `data/prefs.json` 里,通知也跟随。改界面文字请按 `docs/superpowers/specs/2026-09-13-bilingual-ui-design.md` §3 走文案树。
+
 ## 启动
 1. `npm install`
 2. `cp profile/profile.example.yaml profile/profile.yaml` 并填写(已有真实档案则跳过)。注意:Plan 1 目前只有测试代码读取 `profile.yaml`——扫描器/API/页面还不消费它;它是后续计划(匹配、评分、投递)的输入,现在配置好可以少一步。

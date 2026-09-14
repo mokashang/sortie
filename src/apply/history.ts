@@ -20,7 +20,7 @@ import {
   isRung,
   HistoryRow,
 } from "@/apply/stages";
-export { POST_SUBMIT_STAGES, STAGE_LABELS } from "@/apply/stages";
+export { POST_SUBMIT_STAGES, stageLabels } from "@/apply/stages";
 export type { PostSubmitStage, PeakStage, HistoryRow } from "@/apply/stages";
 
 // User -> App from /history's per-row status selector. Any post-submit stage may move to any

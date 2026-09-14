@@ -5,7 +5,7 @@ import { ArrowRight, MessageSquare, Play, UserRound } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
 import type { Overview } from "@/app/lib/overview-types";
 import { attentionTotal } from "@/app/lib/overview-types";
-import { formatDateZh, relativeDays } from "@/app/lib/time";
+import { formatDate, relativeDays } from "@/app/lib/time";
 import { getJson } from "@/app/lib/api";
 import { cx } from "@/app/lib/cx";
 import { Card, Chip, EmptyState, LinkButton, PageHeader, Section, Stat, StatStrip } from "@/app/components/ui";
@@ -15,6 +15,7 @@ import { ScanMenu } from "@/app/components/scan-menu";
 import { ConfirmCards } from "@/app/(app)/apply/confirm-cards";
 import { InfoCards } from "@/app/(app)/apply/info-cards";
 import { ReferralBoard } from "@/app/(app)/apply/referral-board";
+import { useLang, useMessages } from "@/i18n/client";
 
 function LinkCard({ icon, title, description, href, cta }: { icon: React.ReactNode; title: string; description: string; href: string; cta: string }) {
   return (
@@ -49,6 +50,8 @@ interface FrontRow {
 // The five best rows of the primary direction, so the home page always shows what the next
 // sortie would be — even on a day with nothing to decide.
 function QueueFront() {
+  const m = useMessages();
+  const lang = useLang();
   const [state, setState] = useState<{ direction: string; rows: FrontRow[] } | null>(null);
 
   useEffect(() => {
@@ -79,12 +82,12 @@ function QueueFront() {
     <Section
       title={
         <>
-          队列前排 <span className="muted" style={{ fontWeight: 500 }}>· {directionLabel(dir)}</span>
+          {m.today.front.title} <span className="muted" style={{ fontWeight: 500 }}>· {directionLabel(dir)}</span>
         </>
       }
       actions={
         <Link href={`/queue?direction=${encodeURIComponent(dir)}`} className="small accent">
-          看全部 →
+          {m.today.front.seeAll}
         </Link>
       }
     >
@@ -97,8 +100,8 @@ function QueueFront() {
               <span className="mini-title truncate">{r.title}</span>
             </span>
             <span className="mini-side">
-              {r.effective_mode === "referral" ? <Chip tone="good">内推</Chip> : null}
-              <span className="mono">{relativeDays(r.posted_at).label}</span>
+              {r.effective_mode === "referral" ? <Chip tone="good">{m.labels.mode.referral}</Chip> : null}
+              <span className="mono">{relativeDays(r.posted_at, lang).label}</span>
             </span>
           </Link>
         ))}
@@ -108,6 +111,8 @@ function QueueFront() {
 }
 
 export function TodayClient({ initial }: { initial: Overview }) {
+  const m = useMessages();
+  const lang = useLang();
   const { data } = useOverview();
   const o = data ?? initial;
   const c = o.counts;
@@ -118,12 +123,12 @@ export function TodayClient({ initial }: { initial: Overview }) {
   return (
     <>
       <PageHeader
-        kicker={formatDateZh(new Date())}
-        title={attention === 0 ? "今天没有需要你决定的事" : `有 ${attention} 件事等你决定`}
+        kicker={formatDate(new Date(), lang)}
+        title={attention === 0 ? m.today.head.nothingToDecide : m.today.head.toDecide(attention)}
         actions={
           <>
             <LinkButton href="/apply#plan" variant="primary" icon={<Play size={14} />}>
-              开始投递
+              {m.today.head.startApply}
             </LinkButton>
             <ScanMenu />
           </>
@@ -134,10 +139,10 @@ export function TodayClient({ initial }: { initial: Overview }) {
         <div className="setup-banner">
           <LinkCard
             icon={<UserRound size={18} />}
-            title="先填好档案的基本信息"
-            description="助手要靠联系方式、学校、工作身份和方向来打分、生成简历、填表;填完就自动开始匹配。"
+            title={m.today.profileGate.title}
+            description={m.today.profileGate.description}
             href="/profile?tab=basics"
-            cta="去填写"
+            cta={m.today.profileGate.cta}
           />
         </div>
       ) : null}
@@ -145,13 +150,13 @@ export function TodayClient({ initial }: { initial: Overview }) {
       <AssistantCard variant="compact" />
 
       <StatStrip>
-        <Stat label="队列可投" value={c.queueMatched.toLocaleString()} href="/queue" hint="分数达标、未归档、未投的职位" />
-        <Stat label="今日已提交" value={c.submittedToday} href="/history" tone={c.submittedToday > 0 ? "good" : undefined} />
-        <Stat label="本周已提交" value={c.submittedThisWeek} href="/history" />
-        <Stat label="内推进行中" value={c.referralInFlight} href="/apply#referrals" tone={c.referralInFlight > 0 ? "accent" : undefined} />
+        <Stat label={m.today.stats.queueReady} value={c.queueMatched.toLocaleString()} href="/queue" hint={m.today.stats.queueReadyHint} />
+        <Stat label={m.today.stats.submittedToday} value={c.submittedToday} href="/history" tone={c.submittedToday > 0 ? "good" : undefined} />
+        <Stat label={m.today.stats.submittedThisWeek} value={c.submittedThisWeek} href="/history" />
+        <Stat label={m.today.stats.referralsInProgress} value={c.referralInFlight} href="/apply#referrals" tone={c.referralInFlight > 0 ? "accent" : undefined} />
       </StatStrip>
 
-      <Section title="需要你处理" count={attention > 0 ? attention : undefined}>
+      <Section title={m.today.inbox.title} count={attention > 0 ? attention : undefined}>
         <div className="col gap-3">
           <InfoCards compact />
           <ConfirmCards compact />
@@ -159,20 +164,20 @@ export function TodayClient({ initial }: { initial: Overview }) {
           {c.networkDrafts > 0 ? (
             <LinkCard
               icon={<MessageSquare size={18} />}
-              title={`${c.networkDrafts} 条 coffee chat 草稿待你批准`}
-              description="人脉页的草稿只有你批准后,助手才会发送。"
+              title={m.today.inbox.networkDrafts(c.networkDrafts)}
+              description={m.today.inbox.networkDraftsDescription}
               href="/network"
-              cta="去批准"
+              cta={m.today.inbox.goApprove}
             />
           ) : null}
           {nothingToDo ? (
             <EmptyState
               art="inbox"
-              title="收件箱是空的"
-              description="助手填好的申请、缺的答案、待批的内推留言都会出现在这里。"
+              title={m.today.inbox.emptyTitle}
+              description={m.today.inbox.emptyDescription}
               action={
                 <LinkButton href="/apply#plan" icon={<Play size={14} />}>
-                  安排一次投递
+                  {m.today.inbox.planApply}
                 </LinkButton>
               }
             />

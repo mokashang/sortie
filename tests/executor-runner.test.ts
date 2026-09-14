@@ -596,9 +596,9 @@ describe("executor/runner referral mode", () => {
         { spawn: spawnFn, logDir: tmpLogDir },
         "headless"
       )
-    ).toThrow(/值守会话/);
+    ).toThrow(/attended/);
     expect(() => startExecutor(db, U, "apply", { jobIds: [1], mode: "referral" }, { spawn: spawnFn, logDir: tmpLogDir }, "headless")).toThrow(
-      /值守会话/
+      /attended/
     );
     expect(spawnFn).not.toHaveBeenCalled();
     const r = startExecutor(db, U, "apply", { jobIds: [1, 2], mode: "referral" }, { logDir: tmpLogDir }, "user_chrome");

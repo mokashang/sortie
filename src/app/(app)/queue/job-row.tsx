@@ -1,12 +1,14 @@
 "use client";
 import { ExternalLink, Handshake, Pin, PinOff, Send, SkipForward, Star, Undo2 } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
-import { JD_STATUS_LABEL, modeLabel } from "@/app/lib/labels";
+import { labelOf, modeLabel } from "@/app/lib/labels";
 import { localShort, relativeDays } from "@/app/lib/time";
 import { TIME_PENALTY_RULE, timePenalty } from "@/app/lib/time-penalty";
 import { cx } from "@/app/lib/cx";
 import { Chip, Menu } from "@/app/components/ui";
 import type { MenuEntry } from "@/app/components/ui";
+import { useLang, useMessages } from "@/i18n/client";
+import type { Messages } from "@/i18n/messages";
 
 // Mirrors PagedQueueRow / PagedAllJobsRow from src/apply/queue.ts (copied so this client module
 // never imports the db-backed server module).
@@ -54,31 +56,32 @@ export function isInQueue(row: JobRowData, allTab: boolean): boolean {
   return allTab ? row.in_queue === 1 : true;
 }
 
-export function rowMenuItems(row: JobRowData, allTab: boolean, busy: boolean, h: RowHandlers): MenuEntry[] {
+// Not a component, so the caller hands in the message tree it got from useMessages().
+export function rowMenuItems(row: JobRowData, allTab: boolean, busy: boolean, h: RowHandlers, m: Messages): MenuEntry[] {
   const items: MenuEntry[] = [];
   if (row.apply_url) {
     const url = row.apply_url;
-    items.push({ label: "打开申请页", icon: <ExternalLink size={14} />, onSelect: () => window.open(url, "_blank", "noopener") });
+    items.push({ label: m.queue.actions.openApplyPage, icon: <ExternalLink size={14} />, onSelect: () => window.open(url, "_blank", "noopener") });
   }
   if (isInQueue(row, allTab)) {
     const referral = row.effective_mode === "referral";
     items.push({
-      label: row.pinned ? "取消置顶" : "置顶",
+      label: row.pinned ? m.common.unpin : m.common.pin,
       icon: row.pinned ? <PinOff size={14} /> : <Pin size={14} />,
       onSelect: () => h.onPin(row, !row.pinned),
       disabled: busy,
     });
     items.push({
-      label: referral ? "改为海投" : "改为找内推",
+      label: referral ? m.queue.actions.switchToDirect : m.queue.actions.switchToReferral,
       icon: referral ? <Send size={14} /> : <Handshake size={14} />,
       onSelect: () => h.onMode(row, referral ? "direct" : "referral"),
       disabled: busy,
     });
     if (row.apply_mode) {
-      items.push({ label: "跟随建议", icon: <Undo2 size={14} />, onSelect: () => h.onMode(row, null), disabled: busy });
+      items.push({ label: m.queue.actions.followSuggestion, icon: <Undo2 size={14} />, onSelect: () => h.onMode(row, null), disabled: busy });
     }
     items.push("sep");
-    items.push({ label: "跳过", icon: <SkipForward size={14} />, danger: true, onSelect: () => h.onSkip(row), disabled: busy });
+    items.push({ label: m.common.skip, icon: <SkipForward size={14} />, danger: true, onSelect: () => h.onSkip(row), disabled: busy });
   }
   return items;
 }
@@ -92,14 +95,16 @@ export interface JobRowProps extends RowHandlers {
 }
 
 export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSkip }: JobRowProps) {
+  const m = useMessages();
+  const lang = useLang();
   const loc = truncateLocations(row.location);
-  const rel = relativeDays(row.posted_at);
+  const rel = relativeDays(row.posted_at, lang);
   const inQueue = isInQueue(row, allTab);
   const mode = row.effective_mode;
-  const jdLabel = row.jd_status ? JD_STATUS_LABEL[row.jd_status] : undefined;
+  const jdLabel = row.jd_status ? labelOf(m.labels.jdStatus, row.jd_status, "") || undefined : undefined;
   // 队列默认排序 = 分数 − 时间惩罚(src/app/lib/time-penalty.ts);悬停发布列能看到这条扣了几分。
   const penalty = allTab ? 0 : timePenalty(rel.days, row.referral_fit === 1);
-  const penaltyHint = penalty > 0 ? ` · 排序时扣 ${penalty} 分` : "";
+  const modeText = modeLabel(mode, row.referral_fit, lang);
 
   return (
     <div
@@ -115,13 +120,13 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
         }
       }}
     >
-      <div className={cx("job-score", (row.score ?? 0) >= 90 && "is-top", row.score == null && "is-none")} title="匹配分">
+      <div className={cx("job-score", (row.score ?? 0) >= 90 && "is-top", row.score == null && "is-none")} title={m.queue.row.scoreTitle}>
         {row.score ?? "—"}
       </div>
       <div className="job-main">
         <div className="job-line1">
           <span className="job-company">{row.company}</span>
-          {row.pinned ? <Star size={12} className="job-pin" aria-label="已置顶" /> : null}
+          {row.pinned ? <Star size={12} className="job-pin" aria-label={m.queue.row.pinned} /> : null}
           <span className="job-title">{row.title}</span>
         </div>
         <div className="job-meta">
@@ -130,12 +135,12 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
           </span>
           {loc.extra > 0 ? (
             <Chip outline title={loc.full}>
-              +{loc.extra} 地点
+              {m.queue.row.moreLocations(loc.extra)}
             </Chip>
           ) : null}
           {(row.dup_count ?? 0) > 0 ? (
-            <Chip outline title="同一职位的其他地点已合并到这一行">
-              另有 {row.dup_count} 个地点
+            <Chip outline title={m.queue.row.dupTitle}>
+              {m.queue.row.dupCount(row.dup_count ?? 0)}
             </Chip>
           ) : null}
           {jdLabel ? (
@@ -147,17 +152,25 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
         </div>
       </div>
       <div className="job-side">
-        <span className="job-when mono" title={allTab ? "入库时间" : row.posted_at ? `发布于 ${row.posted_at.slice(0, 10)}${penaltyHint}` : `来源没有给发布日期,排序时按 ${TIME_PENALTY_RULE.unknownAgeDays} 天算${penaltyHint}`}>
+        <span
+          className="job-when mono"
+          title={
+            allTab
+              ? m.queue.row.addedAtTitle
+              : row.posted_at
+              ? m.queue.row.postedOn(row.posted_at.slice(0, 10), penalty)
+              : m.queue.row.noPostedDate(TIME_PENALTY_RULE.unknownAgeDays, penalty)
+          }
+        >
           {allTab ? localShort(row.created_at ?? null) : rel.label}
         </span>
-        {!allTab && rel.fresh ? <Chip tone="good">新</Chip> : null}
+        {!allTab && rel.fresh ? <Chip tone="good">{m.queue.row.fresh}</Chip> : null}
         {mode && inQueue ? (
           <Chip tone={mode === "referral" ? "good" : "neutral"} title={row.referral_reason ?? undefined}>
-            {row.apply_mode ? "手动 · " : ""}
-            {modeLabel(mode, row.referral_fit)}
+            {row.apply_mode ? m.queue.row.manualMode(modeText) : modeText}
           </Chip>
         ) : null}
-        <Menu items={rowMenuItems(row, allTab, busy, { onPin, onMode, onSkip })} label="更多操作" />
+        <Menu items={rowMenuItems(row, allTab, busy, { onPin, onMode, onSkip }, m)} label={m.queue.actions.moreActions} />
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Tabs } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { BasicsTab } from "./basics-tab";
 import { ExperiencesTab } from "./experiences-tab";
 import { ResumesTab } from "./resumes-tab";
@@ -31,6 +32,7 @@ export function ProfileTabs({
   welcome: boolean;
   isOwner: boolean;
 }) {
+  const m = useMessages();
   const [tab, setTab] = useState<ProfileTab>(initialTab);
   const [complete, setComplete] = useState(profileComplete);
   function select(key: string) {
@@ -41,15 +43,15 @@ export function ProfileTabs({
   return (
     <>
       <Tabs
-        ariaLabel="档案"
+        ariaLabel={m.profile.title}
         value={tab}
         onChange={select}
         items={[
-          { key: "basics", label: complete ? "基本信息" : "基本信息 · 待完善" },
-          { key: "experiences", label: "经历", count: experiences.length },
-          { key: "resumes", label: "简历", count: resumes.length },
-          { key: "answers", label: "标准答案", count: Object.keys(answers).length },
-          { key: "documents", label: "文件", count: documents.length },
+          { key: "basics", label: complete ? m.profile.tabs.basics : m.profile.tabs.basicsIncomplete },
+          { key: "experiences", label: m.profile.tabs.experiences, count: experiences.length },
+          { key: "resumes", label: m.profile.tabs.resumes, count: resumes.length },
+          { key: "answers", label: m.profile.tabs.answers, count: Object.keys(answers).length },
+          { key: "documents", label: m.profile.tabs.documents, count: documents.length },
         ]}
       />
       {tab === "basics" ? (

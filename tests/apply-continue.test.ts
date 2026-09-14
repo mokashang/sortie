@@ -137,7 +137,7 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     const first = JSON.parse(runRow(db, a).outcome!);
     expect(first).toMatchObject({ planned: { direct: 4, referral: 0 }, achieved: { direct: 2, referral: 0 }, complete: false });
     expect(first.chain).toBeUndefined();
-    expect(runStatusDisplay("done", first).label).toBe("未完成");
+    expect(runStatusDisplay("done", first, "zh").label).toBe("未完成");
 
     // Segment 2 finishes the plan: cumulative outcome, 已完成, no third segment.
     expect(claimNextRun(db, U, "user_chrome")?.id).toBe(b);
@@ -153,8 +153,8 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
       complete: true,
       chain: { root: a, step: 2 },
     });
-    expect(runProgressText(second)).toBe("海投 4/4 · 本段 2");
-    expect(runStatusDisplay("done", second).label).toBe("已完成");
+    expect(runProgressText(second, "zh")).toBe("海投 4/4 · 本段 2");
+    expect(runStatusDisplay("done", second, "zh").label).toBe("已完成");
     expect(maybeContinueApplyRun(db, b, { logDir })).toMatchObject({ action: "none", reason: expect.stringContaining("finished") });
   });
 
@@ -272,7 +272,7 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     // Its outcome still reads the chain's progress under the 已停止 label.
     const outcome = JSON.parse(runRow(db, p).outcome!);
     expect(outcome).toMatchObject({ planned: { direct: 11, referral: 0 }, achieved: { direct: 10, referral: 0 }, own: { direct: 0, referral: 0 } });
-    expect(runStatusDisplay("stopped", outcome).label).toBe("已停止");
+    expect(runStatusDisplay("stopped", outcome, "zh").label).toBe("已停止");
     expect(resumePausedChainIfReady(db, U, { logDir })).toMatchObject({ action: "none", reason: "no paused chain" });
 
     // Another chain parks itself (backlog still 10); the user starting a new plan supersedes it.

@@ -1,3 +1,6 @@
+import type { Lang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
+import { serverLang } from "@/lib/prefs";
 import { DB, logEvent } from "@/lib/db";
 import { InfoQuestion, infoKind, manualItem, MULTI_ANSWER_SEP } from "@/apply/queue";
 
@@ -45,7 +48,7 @@ interface PendingInfoRaw {
 // The cards' data source. A paused row that somehow carries only a reason (an old-protocol
 // report, a row from before this design) is shown too, as a single manual item built from the
 // reason — nothing paused is ever invisible.
-export function pendingInfo(db: DB, userId: string): PendingInfoRow[] {
+export function pendingInfo(db: DB, userId: string, lang: Lang = serverLang()): PendingInfoRow[] {
   const rows = db
     .prepare(
       `SELECT a.job_id, j.company, j.title, j.apply_url, m.direction, a.status, a.needs_manual_reason,
@@ -69,7 +72,7 @@ export function pendingInfo(db: DB, userId: string): PendingInfoRow[] {
       }
     }
     if (questions.length === 0) {
-      questions = [manualItem("manual", "助手没能完成这份申请", r.needs_manual_reason ?? undefined)];
+      questions = [manualItem("manual", messages[lang].apply.todo.fallbackManualLabel, r.needs_manual_reason ?? undefined)];
     }
     return {
       jobId: r.job_id,
@@ -232,24 +235,10 @@ export function resolveLogin(db: DB, userId: string, host: string): ResolveLogin
 
 // The notification the App pushes when the executor reports to-do items — one line the user can
 // act on from the lock screen: which company, what kind of thing, where to go.
-export function needsInfoNotification(company: string, title: string, questions: InfoQuestion[]): { title: string; body: string } {
+export function needsInfoNotification(company: string, title: string, questions: InfoQuestion[], lang: Lang): { title: string; body: string } {
   const kinds = new Set(questions.map(infoKind));
-  const labels = questions.map((q) => q.label).join(" / ");
-  const where = "打开 App 投递页「待处理」";
-  if (kinds.has("login")) {
-    return { title: `Sortie · ${company} 需要你登录一次`, body: `${title}:${labels.slice(0, 160)} — ${where},登完点「我登好了」,助手接着投。` };
-  }
-  if (kinds.has("manual")) {
-    return { title: `Sortie · ${company} 需要你亲自处理`, body: `${title}:${labels.slice(0, 160)} — ${where}。` };
-  }
-  if (kinds.has("file")) {
-    return { title: `Sortie · ${company} 需要你上传文件`, body: `${title}:${labels.slice(0, 160)} — ${where}上传,助手会接着投。` };
-  }
-  if (kinds.has("action")) {
-    return { title: `Sortie · ${company} 需要你在标签页里操作一下`, body: `${title}:${labels.slice(0, 160)} — 做完后${where}点「完成了」。` };
-  }
-  return {
-    title: `Sortie · ${company} 需要你补 ${questions.length} 项信息`,
-    body: `${title}:${labels.slice(0, 160)} — ${where}填写,助手会接着投。`,
-  };
+  const labels = questions.map((q) => q.label).join(" / ").slice(0, 160);
+  const kind = kinds.has("login") ? "login" : kinds.has("manual") ? "manual" : kinds.has("file") ? "file" : kinds.has("action") ? "action" : "info";
+  const t = messages[lang].notify.todo[kind];
+  return { title: t.title(company, questions.length), body: t.body(title, labels) };
 }

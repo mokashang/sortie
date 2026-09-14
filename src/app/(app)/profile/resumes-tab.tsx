@@ -6,9 +6,11 @@ import { DIRECTIONS, directionLabel } from "@/matcher/directions";
 import { postJson, errorMessage } from "@/app/lib/api";
 import { localShort } from "@/app/lib/time";
 import { Button, Card, Chip, Dialog, Drawer, EmptyState, Field, Input, LinkButton, Select, useToast } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import type { ResumeRow } from "./profile-types";
 
 export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; hasExperiences: boolean }) {
+  const m = useMessages();
   const [preview, setPreview] = useState<ResumeRow | null>(null);
   const [genOpen, setGenOpen] = useState(false);
   const [direction, setDirection] = useState("swe_general");
@@ -21,12 +23,12 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
     setBusy(true);
     try {
       await postJson("/api/resumes/generate", { direction, versionName: name.trim() || undefined });
-      toast({ title: "简历已生成", description: `${directionLabel(direction)} 的新版本已加入列表。`, tone: "good" });
+      toast({ title: m.profile.resumes.generated, description: m.profile.resumes.generatedDescription(directionLabel(direction)), tone: "good" });
       setGenOpen(false);
       setName("");
       router.refresh();
     } catch (e) {
-      toast({ title: "生成失败", description: errorMessage(e), tone: "danger", duration: 8000 });
+      toast({ title: m.profile.resumes.generateFailed, description: errorMessage(e), tone: "danger", duration: 8000 });
     } finally {
       setBusy(false);
     }
@@ -34,7 +36,7 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
 
   const genButton = (
     <Button variant="primary" icon={<Sparkles size={14} />} onClick={() => setGenOpen(true)} disabled={!hasExperiences}>
-      生成新版本
+      {m.profile.resumes.generate}
     </Button>
   );
 
@@ -42,15 +44,15 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
     <div>
       {!hasExperiences ? (
         <div className="notice notice-warn mb-4">
-          <span>先在「经历」标签录入经历,才能生成简历。</span>
+          <span>{m.profile.resumes.needExperiences}</span>
         </div>
       ) : null}
       {resumes.length === 0 ? (
-        <EmptyState art="paper" title="还没有生成过简历" description="选一个方向,助手从你的经历里挑选、排版,编译出一页 PDF。每个方向一版,投递时按岗位自动选。" action={genButton} />
+        <EmptyState art="paper" title={m.profile.resumes.emptyTitle} description={m.profile.resumes.emptyDescription} action={genButton} />
       ) : (
         <>
           <div className="row between mb-2">
-            <span className="muted small">投递时按岗位方向自动选用对应版本。</span>
+            <span className="muted small">{m.profile.resumes.summary}</span>
             {genButton}
           </div>
           <div className="resume-grid">
@@ -66,13 +68,13 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
                     </Chip>
                   ))}
                 </div>
-                <div className="muted xs mono mt-2">生成于 {localShort(r.compiled_at)}</div>
+                <div className="muted xs mono mt-2">{m.profile.resumes.compiledAt(localShort(r.compiled_at))}</div>
                 <div className="row mt-3">
                   <Button size="sm" icon={<Eye size={13} />} onClick={() => setPreview(r)}>
-                    预览
+                    {m.profile.resumes.preview}
                   </Button>
                   <LinkButton href={`/api/resumes/${r.id}/pdf`} external size="sm" variant="ghost" icon={<ExternalLink size={13} />}>
-                    打开 PDF
+                    {m.profile.resumes.openPdf}
                   </LinkButton>
                 </div>
               </Card>
@@ -82,27 +84,27 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
       )}
 
       <Drawer open={preview !== null} onClose={() => setPreview(null)} title={preview?.version_name ?? ""} subtitle={preview?.directions.map(directionLabel).join(" · ")} width={760}>
-        {preview ? <iframe className="pdf-frame" src={`/api/resumes/${preview.id}/pdf`} title={`${preview.version_name} 预览`} /> : null}
+        {preview ? <iframe className="pdf-frame" src={`/api/resumes/${preview.id}/pdf`} title={m.profile.resumes.previewTitle(preview.version_name)} /> : null}
       </Drawer>
 
       <Dialog
         open={genOpen}
         onClose={() => (busy ? null : setGenOpen(false))}
-        title="生成新版本"
-        description="助手按方向从你的经历里挑选要点并排版,大约 20–40 秒。"
+        title={m.profile.resumes.generate}
+        description={m.profile.resumes.dialogDescription}
         actions={
           <>
             <Button variant="ghost" onClick={() => setGenOpen(false)} disabled={busy}>
-              取消
+              {m.common.cancel}
             </Button>
             <Button variant="primary" onClick={generate} loading={busy}>
-              {busy ? "生成中…" : "生成"}
+              {busy ? m.profile.resumes.generating : m.profile.resumes.generateAction}
             </Button>
           </>
         }
       >
         <div className="col gap-3">
-          <Field label="方向" htmlFor="gen-direction">
+          <Field label={m.profile.resumes.direction} htmlFor="gen-direction">
             <Select id="gen-direction" value={direction} onChange={(e) => setDirection(e.target.value)}>
               {Object.entries(DIRECTIONS).map(([slug, d]) => (
                 <option key={slug} value={slug}>
@@ -111,7 +113,7 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
               ))}
             </Select>
           </Field>
-          <Field label="版本名" hint="留空自动命名" htmlFor="gen-name">
+          <Field label={m.profile.resumes.versionName} hint={m.profile.resumes.versionNameHint} htmlFor="gen-name">
             <Input id="gen-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={`${direction}_v2`} />
           </Field>
         </div>

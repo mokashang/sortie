@@ -4,16 +4,18 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { authClient, authErrorMessage } from "@/lib/auth-client";
 import { Button, Field, Input } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { AuthDivider, AuthError, AuthHead, GoogleButton, safeNext } from "../auth-shared";
 
 export function LoginForm({ next, oauthError, googleEnabled, signupOpen }: { next: string | null; oauthError: string | null; googleEnabled: boolean; signupOpen: boolean }) {
   const router = useRouter();
+  const m = useMessages();
   const dest = safeNext(next);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
-  const [error, setError] = useState<string | null>(oauthError ? "Google 登录没有完成,请再试一次或改用邮箱。" : null);
+  const [error, setError] = useState<string | null>(oauthError ? m.auth.login.googleFailed : null);
   const [unverified, setUnverified] = useState(false);
   const [resent, setResent] = useState(false);
 
@@ -55,23 +57,23 @@ export function LoginForm({ next, oauthError, googleEnabled, signupOpen }: { nex
 
   return (
     <>
-      <AuthHead title="登录" sub="回到你的求职作战室。" />
+      <AuthHead title={m.auth.login.title} sub={m.auth.login.subtitle} />
       {googleEnabled ? (
         <>
           <GoogleButton onClick={() => void google()} loading={googleBusy} />
-          <AuthDivider>或用邮箱</AuthDivider>
+          <AuthDivider>{m.auth.shared.orEmail}</AuthDivider>
         </>
       ) : null}
       <form className="auth-form" onSubmit={submit}>
-        <Field label="邮箱" htmlFor="login-email">
+        <Field label={m.auth.login.emailLabel} htmlFor="login-email">
           <Input id="login-email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
         </Field>
         <Field
           label={
             <span className="row between grow">
-              <span>密码</span>
+              <span>{m.auth.login.passwordLabel}</span>
               <Link href="/forgot-password" className="xs">
-                忘记密码?
+                {m.auth.login.forgotPassword}
               </Link>
             </span>
           }
@@ -83,21 +85,22 @@ export function LoginForm({ next, oauthError, googleEnabled, signupOpen }: { nex
         {unverified ? (
           <div className="row">
             <Button size="sm" variant="ghost" onClick={() => void resend()} disabled={resent}>
-              {resent ? "已重发,去收件箱看看" : "重发验证邮件"}
+              {resent ? m.auth.login.resent : m.auth.login.resend}
             </Button>
           </div>
         ) : null}
         <Button type="submit" variant="primary" className="btn-block" loading={busy}>
-          登录
+          {m.auth.login.submit}
         </Button>
       </form>
       <p className="auth-foot">
         {signupOpen ? (
           <>
-            还没有账号? <Link href={next ? `/signup?next=${encodeURIComponent(next)}` : "/signup"}>创建一个</Link>
+            {m.auth.login.noAccountYet}
+            <Link href={next ? `/signup?next=${encodeURIComponent(next)}` : "/signup"}>{m.auth.login.createOne}</Link>
           </>
         ) : (
-          "这个 Sortie 实例已关闭注册。"
+          m.auth.login.signupClosed
         )}
       </p>
     </>
