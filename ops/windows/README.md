@@ -98,12 +98,26 @@ Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobsee
 - [ ] 次日 `C:\sortie\data\backups\` 里出现 `jobseeker-<日期>.db`。
 
 ## 8. 阶段 2:自定义域名(随时做,不阻塞以上)
-1. Cloudflare Registrar 买域名。DNS 加 A 记录:`sortie` → `tailscale ip -4` 的地址,**Proxy status = DNS only(灰云)**。
-2. Cloudflare → My Profile → API Tokens → Create Token → 模板 "Edit zone DNS",只勾这一个 zone。写入 `.env`:`CF_API_TOKEN=<token>`、`TS_IP=<100.x.x.x>`。
-3. caddyserver.com/download:平台 windows/amd64,勾插件 `dns.providers.cloudflare`,下载到 `C:\caddy\caddy.exe`。
-4. 把 `ops\windows\Caddyfile` 里的 `sortie.example.com` 改成你的域名;`C:\caddy\caddy.exe validate --config C:\sortie\ops\windows\Caddyfile --envfile C:\sortie\.env` 通过。
-5. `tailscale serve off`(443 让给 Caddy)→ 管理员:`powershell -ExecutionPolicy Bypass -File C:\sortie\ops\windows\setup.ps1 -WithCaddy -CaddyExe C:\caddy\caddy.exe` → `Start-ScheduledTask "Sortie Caddy"`。
-6. Mac 打开 `https://sortie.<域名>`。首次签证书要几十秒;看 `C:\sortie\data\caddy-access.log` 与 `Get-ScheduledTaskInfo "Sortie Caddy"`。
+本机实际仓库路径是 `E:\sortie`(下同)。**机器侧 2026-09-11 已备好**:`C:\caddy\caddy.exe`(2.11.4,caddyserver.com 定制构建,含 `dns.providers.cloudflare` 与 `tls.get_certificate.tailscale`);`ops\windows\Caddyfile` 不用再改,全部从 `.env` 取值(`SORTIE_DOMAIN` / `TS_HOSTNAME` / `TS_IP` / `CF_API_TOKEN`);`.env` 里 `TS_IP`、`TS_HOSTNAME` 已填;`ops\windows\caddy-switch.ps1` 负责预检 / 切换 / 回滚;已用 8443 端口做过真实联调(Caddy 绑 Tailscale IP、ts.net 证书由本机 tailscaled 签、反代 3000 返回 200)。剩下两步只能人做:
+1. **买域名**:Cloudflare Registrar(或别处买、DNS 托管到 Cloudflare)。然后 Cloudflare → 该域名 → DNS → Records → Add record:Type `A`,Name `@`(域名本身,2026-09-13 选定 `usesortie.com`,网址就是根域名),IPv4 address = `.env` 里的 `TS_IP`(`100.100.246.31`),**Proxy status 关掉(灰云 DNS only)**,TTL Auto。橙云(代理)会把访问引到 Cloudflare 公网,永远连不到 100.x。
+2. **建 API token**:Cloudflare → My Profile → API Tokens → Create Token → Create Custom Token:Permissions 加两行 **Zone · Zone · Read** 和 **Zone · DNS · Edit**;Zone Resources = Include · Specific zone · 你的域名;其余默认。**必须两条权限都有**:caddy-dns/cloudflare 先用 Zone:Read 查 zone id,只给 DNS:Edit(Cloudflare 的「Edit zone DNS」模板)会报 zone could not be found。
+3. 用记事本把两样写进 `E:\sortie\.env`(不要贴给任何会话):
+   ```
+   SORTIE_DOMAIN=usesortie.com
+   CF_API_TOKEN=<token>
+   ```
+4. 预检(只读,不改任何东西;普通 PowerShell 即可):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File E:\sortie\ops\windows\caddy-switch.ps1 -Check
+   ```
+   四个键都有、Caddyfile valid、公共 DNS(1.1.1.1)查到的 A 记录 = `TS_IP` 才算通过;A 记录刚加要等几分钟。
+5. 切换(同一条命令去掉 `-Check`;中间弹一次 UAC 给 `setup.ps1 -WithCaddy`):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File E:\sortie\ops\windows\caddy-switch.ps1
+   ```
+   顺序:预检 → 管理员 `setup.ps1 -WithCaddy`(注册「Sortie Caddy」登录任务 + 防火墙只放行 tailnet 来源的 80/443,此时什么都没启动)→ `tailscale serve off` → 启动任务 → 每 5 秒探测 `https://usesortie.com` 与 `https://<TS_HOSTNAME>`,最多 3 分钟(首次签证书约 30–90 秒)。域名没起来就自动回滚:停掉并禁用任务、`tailscale serve --bg 3000`,老网址几秒内恢复,并打印 `data\caddy.log` 末尾。
+6. 验证:Mac 与手机(Tailscale 开着)打开 `https://usesortie.com`;老网址 `https://laptop-kvharru8.tailbffe80.ts.net` 也继续可用。日志:`E:\sortie\data\caddy.log`(进程 / 证书)、`data\caddy-access.log`(访问);任务:`Get-ScheduledTaskInfo "Sortie Caddy"`。本机能开、别的设备打不开 → 看防火墙规则 `Get-NetFirewallRule -DisplayName "Sortie Caddy*"`。
+7. 回滚(随时):`caddy-switch.ps1 -Rollback` → 停掉并禁用任务、恢复 Tailscale Serve。改过 Caddyfile 或 `.env` 后要重启任务:`Stop-ScheduledTask "Sortie Caddy"; Start-ScheduledTask "Sortie Caddy"`(admin API 关着,没有 reload)。重启机器后任务在登录 25 秒后自动起来;Tailscale 网卡还没好导致绑不上时,任务会每分钟重试 3 次。
 
 ## 9. 日常运维
 - 部署:`powershell -ExecutionPolicy Bypass -File C:\sortie\ops\windows\deploy.ps1`(有值守会话在跑会拒绝;确认无事后 `-Force`)。

@@ -1,24 +1,49 @@
-# Sortie behind Caddy on the Windows box (spec §1, phase 2 — custom domain).
-# Only the Tailscale interface is bound, so the site is reachable from the user's own devices and
-# from nothing else. Fill in the domain below; put TS_IP (this machine's 100.x Tailscale address)
-# and CF_API_TOKEN (Cloudflare token scoped to Zone:DNS:Edit for this zone) into C:\sortie\.env.
-# The `Sortie Caddy` task runs: caddy run --config ops\windows\Caddyfile --envfile C:\sortie\.env
-# Requires a Caddy build with the cloudflare DNS module (caddyserver.com/download → dns.providers.cloudflare).
+# Sortie behind Caddy on the Windows box (spec section 1, phase 2 - custom domain).
+# Every machine-specific value comes from the repo's .env, which the "Sortie Caddy" task and
+# ops\windows\caddy-switch.ps1 both pass with --envfile:
+#   SORTIE_DOMAIN  the custom name, e.g. sortie.example.com; its public A record -> TS_IP, DNS only (grey cloud)
+#   TS_HOSTNAME    this machine's tailnet name, e.g. laptop-xxx.tailxxxx.ts.net (keeps the old URL working)
+#   TS_IP          this machine's Tailscale IPv4 (100.x); Caddy binds only that interface, so only the tailnet can connect
+#   CF_API_TOKEN   Cloudflare API token scoped to that zone with Zone:Read AND DNS:Edit (DNS-01 challenge)
+# Log paths are relative to the repo root: the task and the switch script both run from there.
+# Needs a Caddy build with dns.providers.cloudflare (caddyserver.com/download, or `caddy add-package github.com/caddy-dns/cloudflare`).
+# The admin API is off: after editing this file or .env restart the task
+# (Stop-ScheduledTask "Sortie Caddy"; Start-ScheduledTask "Sortie Caddy").
 {
 	admin off
+	log {
+		output file data/caddy.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		exclude http.log.access
+	}
 }
 
-sortie.example.com {
+(sortie) {
 	bind {$TS_IP}
-	tls {
-		dns cloudflare {env.CF_API_TOKEN}
-	}
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:3000
 	log {
-		output file C:/sortie/data/caddy-access.log {
+		output file data/caddy-access.log {
 			roll_size 20MiB
 			roll_keep 5
 		}
 	}
+}
+
+# Custom domain: certificate via Cloudflare DNS-01 (needs no inbound port; the name resolves to 100.x).
+# resolvers: look the _acme-challenge TXT record up at public DNS, not through MagicDNS (caddy-dns/cloudflare README).
+{$SORTIE_DOMAIN} {
+	import sortie
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+		resolvers 1.1.1.1 1.0.0.1
+	}
+}
+
+# Old tailnet URL stays valid: Caddy fetches *.ts.net certificates from the local tailscaled at handshake time
+# (HTTPS certificates enabled in the tailnet; verified as the interactive user on 2026-09-11). Delete this block to drop it.
+{$TS_HOSTNAME} {
+	import sortie
 }

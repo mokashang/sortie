@@ -23,7 +23,7 @@
 
 网址两阶段:
 1. **上线当天:Tailscale Serve**。`tailscale serve --bg 3000` 把 `https://<机名>.<tailnet>.ts.net` 转到本机 3000。零入站端口、证书由 Tailscale 自动签、服务器绑定不改。前提:tailnet 管理台开 MagicDNS + HTTPS Certificates。
-2. **域名到位后:Caddy**。在 Cloudflare Registrar 买域名;`sortie.<域名>` 的 A 记录指向 Windows 的 Tailscale IP(100.x,**DNS only 灰云**,不走 Cloudflare 代理)。Windows 上跑带 `caddy-dns/cloudflare` 模块的 Caddy,`bind <Tailscale IP>` 只监听 Tailscale 网卡的 443,证书走 Cloudflare **DNS-01** 自动签(API token 只给该域 Zone:DNS:Edit),`reverse_proxy 127.0.0.1:3000`。这时 `tailscale serve off`(两者都要 443)。外人能解析到 100.x 但连不上。可选:Caddy 也监听 ts.net 主机名(它能自动向本机 tailscaled 取证书),让老网址继续可用;不强求。
+2. **域名到位后:Caddy**。在 Cloudflare Registrar 买域名;`sortie.<域名>` 的 A 记录指向 Windows 的 Tailscale IP(100.x,**DNS only 灰云**,不走 Cloudflare 代理)。Windows 上跑带 `caddy-dns/cloudflare` 模块的 Caddy,`bind <Tailscale IP>` 只监听 Tailscale 网卡的 443,证书走 Cloudflare **DNS-01** 自动签(API token 只给该域,权限 Zone:Read + Zone:DNS:Edit;caddy-dns/cloudflare 要用 Zone:Read 查 zone id,只给 DNS:Edit 会报 zone 找不到),`reverse_proxy 127.0.0.1:3000`。这时 `tailscale serve off`(两者都要 443)。外人能解析到 100.x 但连不上。可选:Caddy 也监听 ts.net 主机名(它能自动向本机 tailscaled 取证书),让老网址继续可用;不强求。
 
 安全边界:App 不加登录,tailnet 就是围墙(默认 ACL 只有本人设备互通)。Windows 防火墙只给 `caddy.exe` 放行来源 `100.64.0.0/10`。ntfy 话题用长随机名(通知内容只有公司名与状态,低敏)。
 
@@ -86,7 +86,7 @@ Chrome 一次性准备:新建求职档案,手动登录 LinkedIn / Workday / Hand
    - **核心一条**:桌面 App 关着时在 App 点「开始投递」→ 10 秒内执行器面板显示 spawn → run 日志出现接单 → Windows Chrome 开始填表 → Mac 上确认 → 提交成功。
    - 重启演练:Windows 重启 → 自动登录 → pm2、Chrome 自动起来 → 网址 2 分钟内恢复。
    - 次日 `data/backups/` 出现自动备份文件。
-5. **阶段 2(域名,随时做,不阻塞以上)**:Cloudflare 买域名 → A 记录指 Tailscale IP(灰云)→ 只有该域 DNS 编辑权限的 API token 写进 `.env` → 下载带 cloudflare 模块的 Caddy → 填 Caddyfile → `setup.ps1` 注册 `Sortie Caddy` → `tailscale serve off` → 验证 `https://sortie.<域名>`。
+5. **阶段 2(域名,随时做,不阻塞以上)**:Cloudflare 买域名 → A 记录指 Tailscale IP(灰云)→ 只给该域、权限 Zone:Read + DNS:Edit 的 API token 写进 `.env` → 下载带 cloudflare 模块的 Caddy → 填 Caddyfile → `setup.ps1` 注册 `Sortie Caddy` → `tailscale serve off` → 验证 `https://sortie.<域名>`。
 
 回滚:切换后两周内 Mac 的仓库与 `data/` 原样保留(只是服务卸载)。出问题:Windows `pm2 stop sortie`,把 Windows 最新备份拷回 Mac,`launchctl bootstrap` 装回服务。两周稳定后清 Mac 的 `data/`,留一份 zip 归档。
 

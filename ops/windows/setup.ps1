@@ -12,13 +12,25 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$Root = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
+  [string]$Root,
   [string]$User = "$env:USERDOMAIN\$env:USERNAME",
   [switch]$WithCaddy,
   [string]$CaddyExe = "C:\caddy\caddy.exe",
   [switch]$SkipPower
 )
 $ErrorActionPreference = "Stop"
+if (-not $Root) {
+  # Resolved in the body: with [CmdletBinding()] $PSScriptRoot / $PSCommandPath are EMPTY inside param() defaults
+  # when the script runs via `powershell -File` (same fix as deploy.ps1, 2026-09-13).
+  $scriptPath = $PSCommandPath
+  if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+  if (-not $scriptPath) {
+    $cl = [Environment]::GetCommandLineArgs()
+    for ($i = 0; $i -lt $cl.Length - 1; $i++) { if ($cl[$i] -ieq "-File" -or $cl[$i] -ieq "-f") { $scriptPath = $cl[$i + 1]; break } }
+  }
+  if (-not $scriptPath) { throw "cannot locate this script (no PSCommandPath and no -File on the command line); pass -Root <repo>" }
+  $Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent ((Resolve-Path -LiteralPath $scriptPath).Path)))
+}
 
 function Resolve-Cmd($name) {
   $c = Get-Command $name -ErrorAction SilentlyContinue
@@ -70,18 +82,36 @@ Register-SortieTask "Sortie Backup" `
   (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"cd /d `"$Root`" && `"$npm`" run backup >> data\backup.log 2>&1`"" -WorkingDirectory $Root) `
   (New-ScheduledTaskTrigger -Daily -At 4:00AM) $oneShot
 
-# 4. Caddy (phase 2, custom domain) — only with -WithCaddy.
+# 4. Caddy (phase 2, custom domain) - only with -WithCaddy. This registers the task and the firewall rules;
+#    ops\windows\caddy-switch.ps1 does the hand-over of port 443 (tailscale serve off, start, verify, roll back).
+#    Re-registering stops a running Caddy: start the task again afterwards (caddy-switch.ps1 does).
 if ($WithCaddy) {
-  if (-not (Test-Path $CaddyExe)) { throw "Caddy not found at $CaddyExe (download a build with the cloudflare DNS module - see README)" }
+  if (-not (Test-Path $CaddyExe)) { throw "Caddy not found at $CaddyExe (download a build with the cloudflare DNS module - README section 8)" }
+  $mods = @(& $CaddyExe list-modules)
+  if (-not ($mods -match "^dns\.providers\.cloudflare$")) { throw "$CaddyExe lacks dns.providers.cloudflare - README section 8" }
+  if (-not (Test-Path $envFile)) { throw ".env not found at $envFile" }
+  $envLines = Get-Content -Path $envFile -Encoding UTF8   # ANSI (GBK here) would swallow the newline after a UTF-8 comment
+  foreach ($k in "SORTIE_DOMAIN", "TS_HOSTNAME", "TS_IP", "CF_API_TOKEN") {
+    if (-not ($envLines -match "^\s*$k\s*=\s*\S")) { throw "$k is empty in $envFile (README section 8)" }
+  }
+  Push-Location $Root
+  try {
+    & $CaddyExe validate --config $caddyfile --envfile $envFile | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Caddyfile did not validate" }
+  } finally { Pop-Location }
   Register-SortieTask "Sortie Caddy" `
     (New-ScheduledTaskAction -Execute $CaddyExe -Argument "run --config `"$caddyfile`" --envfile `"$envFile`"" -WorkingDirectory $Root) `
     (New-LogonTrigger 25) $longRunning
   Remove-NetFirewallRule -DisplayName "Sortie Caddy (tailnet only)" -ErrorAction SilentlyContinue
+  Remove-NetFirewallRule -DisplayName "Sortie Caddy (tailnet only, QUIC)" -ErrorAction SilentlyContinue
   New-NetFirewallRule -DisplayName "Sortie Caddy (tailnet only)" -Direction Inbound -Action Allow `
-    -Program $CaddyExe -Protocol TCP -LocalPort 443 -RemoteAddress 100.64.0.0/10 -Profile Any | Out-Null
-  Write-Host "[firewall] inbound 443 to caddy.exe allowed from 100.64.0.0/10 only"
-} else {
-  Unregister-ScheduledTask -TaskName "Sortie Caddy" -Confirm:$false -ErrorAction SilentlyContinue
+    -Program $CaddyExe -Protocol TCP -LocalPort @("80", "443") -RemoteAddress 100.64.0.0/10 -Profile Any | Out-Null
+  New-NetFirewallRule -DisplayName "Sortie Caddy (tailnet only, QUIC)" -Direction Inbound -Action Allow `
+    -Program $CaddyExe -Protocol UDP -LocalPort 443 -RemoteAddress 100.64.0.0/10 -Profile Any | Out-Null
+  Write-Host "[firewall] inbound 80/443 TCP and 443 UDP to caddy.exe allowed from 100.64.0.0/10 only"
+  Write-Host "[caddy] task registered, not started - hand 443 over with ops\windows\caddy-switch.ps1"
+} elseif (Get-ScheduledTask -TaskName "Sortie Caddy" -ErrorAction SilentlyContinue) {
+  Write-Host "[caddy] existing 'Sortie Caddy' task left untouched (re-run with -WithCaddy to refresh it)"
 }
 
 # 5. Defender: keep real-time scanning off the database and node_modules (file locks + speed).
