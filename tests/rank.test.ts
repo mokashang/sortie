@@ -64,7 +64,14 @@ describe("composite ranking (2026-09-11 relaxed time penalty)", () => {
 
   it("the SQL and the TS mirror agree day by day, for both company kinds", () => {
     const db = openDb(":memory:");
-    const ages = [0, 7, 13, 14, 18, 19, 20, 24, 29, 30, 31, 44, 45, 59, 60, 63, 64, 65, 100, 365];
+    // No seeded age sits exactly on a step boundary (14, 19, 24, 29, ... for everyone; 14, 24, 34, ... for well-known
+    // companies); each boundary is approached from half a day either side instead. The rows are stamped from JS
+    // Date.now() while the SQL ages them with SQLite's own 'now' a moment later, and on Windows those are two
+    // different clocks (V8 interpolates QueryPerformanceCounter on top of GetSystemTimeAsFileTime, SQLite reads the
+    // coarse one directly), so SQLite can read up to a timer tick (~1 ms) earlier than the Date.now() taken just
+    // before it. A row seeded at exactly 24 days then came back as 23.99999 days and floor() landed on the other
+    // side of the boundary: the 2026-09-13 flake "big @24d: expected +0 to be 1" under the full suite.
+    const ages = [0, 7, 13.5, 14.5, 18.5, 19.5, 23.5, 24.5, 28.5, 29.5, 30, 33.5, 34.5, 43.5, 44.5, 45, 58.5, 59.5, 60, 63.5, 64.5, 65, 100, 365];
     seed(db, [
       ...ages.map((a) => ({ title: `s${a}`, score: 80, ageDays: a })),
       ...ages.map((a) => ({ title: `b${a}`, score: 80, ageDays: a, big: true })),
