@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, ExternalLink, MessageSquare, RotateCcw, Trash, UserCheck } from "lucide-react";
 import { directionName, documentLabel, labelOf } from "@/app/lib/labels";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Section, Select, Tooltip, useToast } from "@/app/components/ui";
+import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Select, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
 import { useLang, useMessages } from "@/i18n/client";
 import type { Messages } from "@/i18n/messages";
@@ -112,7 +112,8 @@ function Head({ row, kindLabel, waiting }: { row: InfoRow; kindLabel: string; wa
 // 待处理: everything the assistant stopped on that only the user can move — a missing answer or
 // file, a site to log into once, something to do in the open tab, or a form to finish by hand.
 // Each card ends in an action that lets the assistant continue on its own; nothing here is a
-// dead end. Renders nothing in compact mode when there is nothing to do.
+// dead end. On 投递 it is the body of a tab (the tab carries the title and count); the 今日 page
+// embeds it compact, rendering nothing when there is nothing to do.
 export function InfoCards({ compact = false }: { compact?: boolean }) {
   const m = useMessages();
   const lang = useLang();
@@ -526,18 +527,14 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
 
   if (compact) return rows.length === 0 ? null : <div className="col gap-3">{cards}</div>;
 
+  if (rows.length === 0) return <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />;
+
   return (
-    <Section id="todo" title={m.apply.todo.sectionTitle} count={rows.length > 0 ? rows.length : undefined} description={m.apply.todo.sectionDescription}>
-      {rows.length === 0 ? (
-        <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />
-      ) : (
-        <>
-          <div className="col gap-3">{cards}</div>
-          <p className="muted xs mt-3">
-            <MessageSquare size={12} aria-hidden /> {m.apply.todo.footnote}
-          </p>
-        </>
-      )}
-    </Section>
+    <>
+      <div className="col gap-3">{cards}</div>
+      <p className="muted xs mt-3">
+        <MessageSquare size={12} aria-hidden /> {m.apply.todo.footnote}
+      </p>
+    </>
   );
 }

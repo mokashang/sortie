@@ -45,7 +45,6 @@ export const apply = defineMessages({
     todo: {
       fallbackManualLabel: "助手没能完成这份申请",
       sectionTitle: "待处理",
-      sectionDescription: "助手停下来等你的事:补答案、传文件、登录一次,或你亲自完成。做完自动继续。",
       emptyTitle: "没有等你的事",
       emptyDescription: "助手需要你补答案、传文件、登录一次,或亲自完成时,会出现在这里;处理完它自己接着投。",
       footnote: "岗位特有的题勾「仅本次」,其余会存进档案的标准答案;文件存进档案的「文件」标签,下次不再问。",
@@ -104,7 +103,6 @@ export const apply = defineMessages({
     },
     confirm: {
       sectionTitle: "待确认",
-      sectionDescription: "助手填好、停在提交前一步的申请。核对后点确认,它才会点提交。",
       expand: "展开",
       collapse: "收起",
       emptyTitle: "没有等待确认的申请",
@@ -132,7 +130,6 @@ export const apply = defineMessages({
     },
     referrals: {
       sectionTitle: "内推进行中",
-      sectionDescription: "助手找到的联系人和草稿。你批准的消息才会发出;拿到内推后点「有内推了」。",
       emptyTitle: "没有进行中的内推",
       emptyDescription: "在上方计划里给「找内推」填份数并开始投递,助手找到人后会在这里出现。",
       checkNow: "现在检查回复",
@@ -256,8 +253,6 @@ export const apply = defineMessages({
     todo: {
       fallbackManualLabel: "The assistant could not finish this application",
       sectionTitle: "To do",
-      sectionDescription:
-        "Things the assistant stopped to ask about: an answer, a file, signing in once, or something to finish yourself. It continues automatically once you do.",
       emptyTitle: "Nothing needs you right now",
       emptyDescription: "When the assistant needs an answer, a file, a sign-in, or something done by hand, it shows up here; it carries on by itself once you're done.",
       footnote: "Tick This time only for job-specific questions; everything else is saved to your profile's standard answers. Files are saved under the profile's Documents tab and not asked for again.",
@@ -317,7 +312,6 @@ export const apply = defineMessages({
     },
     confirm: {
       sectionTitle: "To confirm",
-      sectionDescription: "Applications the assistant has filled and is holding one step before Submit. Check them and confirm; only then does it press Submit.",
       expand: "Show more",
       collapse: "Show less",
       emptyTitle: "Nothing awaiting your confirmation",
@@ -345,7 +339,6 @@ export const apply = defineMessages({
     },
     referrals: {
       sectionTitle: "Referrals in progress",
-      sectionDescription: "Contacts the assistant found and the message drafts. Only messages you approve are sent; once you have a referral, press Got a referral.",
       emptyTitle: "No referrals in progress",
       emptyDescription: "Set a Find a referral count in the plan above and start; people the assistant finds appear here.",
       checkNow: "Check replies now",

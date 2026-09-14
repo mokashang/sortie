@@ -153,7 +153,7 @@ export function TodayClient({ initial }: { initial: Overview }) {
         <Stat label={m.today.stats.queueReady} value={c.queueMatched.toLocaleString()} href="/queue" hint={m.today.stats.queueReadyHint} />
         <Stat label={m.today.stats.submittedToday} value={c.submittedToday} href="/history" tone={c.submittedToday > 0 ? "good" : undefined} />
         <Stat label={m.today.stats.submittedThisWeek} value={c.submittedThisWeek} href="/history" />
-        <Stat label={m.today.stats.referralsInProgress} value={c.referralInFlight} href="/apply#referrals" tone={c.referralInFlight > 0 ? "accent" : undefined} />
+        <Stat label={m.today.stats.referralsInProgress} value={c.referralInFlight} href="/apply?tab=referrals" tone={c.referralInFlight > 0 ? "accent" : undefined} />
       </StatStrip>
 
       <Section title={m.today.inbox.title} count={attention > 0 ? attention : undefined}>
