@@ -5,6 +5,7 @@ import { directionLabel } from "@/matcher/directions";
 import { getJson, errorMessage } from "@/app/lib/api";
 import { DEGREE_LABEL, JD_STATUS_LABEL, ROLE_KIND_LABEL, SPONSORSHIP_LABEL, labelOf, modeLabel, tierLabel } from "@/app/lib/labels";
 import { relativeDays } from "@/app/lib/time";
+import { timePenalty, timePenaltyNote } from "@/app/lib/time-penalty";
 import { cx } from "@/app/lib/cx";
 import { Button, Chip, Drawer, LinkButton, SkeletonRows } from "@/app/components/ui";
 import { isInQueue, truncateLocations, type JobRowData, type RowHandlers } from "./job-row";
@@ -157,6 +158,10 @@ function DetailBody({
   const jd = d.jd_text?.trim() ?? "";
   const clamp = jd.length > JD_CLAMP_CHARS && !jdOpen;
   const mode = row.effective_mode;
+  // 队列默认按「分数 − 时间惩罚」排序(src/app/lib/time-penalty.ts);把这个排序用的分和扣分理由摆出来,
+  // 用户才看得懂为什么一条 88 分的岗排在 86 分后面。全部入库 tab 的行不参与这个排序,不显示。
+  const ageDays = relativeDays(row.posted_at).days;
+  const penalty = inQueue ? timePenalty(ageDays, row.referral_fit === 1) : 0;
 
   return (
     <div className="col gap-4">
@@ -171,6 +176,14 @@ function DetailBody({
                   {m.score}
                 </div>
               </div>
+              {inQueue ? (
+                <div>
+                  <div className="fact-label">排序综合分</div>
+                  <div className="fact-value serif" style={{ fontSize: 26 }} title="分数减去时间惩罚,职位队列默认按它排序">
+                    {(m.score ?? 0) - penalty}
+                  </div>
+                </div>
+              ) : null}
               <div>
                 <div className="fact-label">方向</div>
                 <div className="fact-value">{m.direction ? directionLabel(m.direction) : "未分类"}</div>
@@ -185,6 +198,7 @@ function DetailBody({
               </div>
             </div>
             <p className="mt-3">{m.reason ?? <span className="muted">没有记录打分理由。</span>}</p>
+            {inQueue ? <p className="muted small mt-2">{timePenaltyNote(ageDays, row.referral_fit === 1)}</p> : null}
           </>
         ) : (
           <p className="muted">还没有打分。扫描后的职位会陆续由助手评分。</p>

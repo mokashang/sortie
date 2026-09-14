@@ -3,6 +3,7 @@ import { ExternalLink, Handshake, Pin, PinOff, Send, SkipForward, Star, Undo2 } 
 import { directionLabel } from "@/matcher/directions";
 import { JD_STATUS_LABEL, modeLabel } from "@/app/lib/labels";
 import { localShort, relativeDays } from "@/app/lib/time";
+import { TIME_PENALTY_RULE, timePenalty } from "@/app/lib/time-penalty";
 import { cx } from "@/app/lib/cx";
 import { Chip, Menu } from "@/app/components/ui";
 import type { MenuEntry } from "@/app/components/ui";
@@ -96,6 +97,9 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
   const inQueue = isInQueue(row, allTab);
   const mode = row.effective_mode;
   const jdLabel = row.jd_status ? JD_STATUS_LABEL[row.jd_status] : undefined;
+  // 队列默认排序 = 分数 − 时间惩罚(src/app/lib/time-penalty.ts);悬停发布列能看到这条扣了几分。
+  const penalty = allTab ? 0 : timePenalty(rel.days, row.referral_fit === 1);
+  const penaltyHint = penalty > 0 ? ` · 排序时扣 ${penalty} 分` : "";
 
   return (
     <div
@@ -143,7 +147,7 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
         </div>
       </div>
       <div className="job-side">
-        <span className="job-when mono" title={allTab ? "入库时间" : row.posted_at ? `发布于 ${row.posted_at.slice(0, 10)}` : "来源没有给发布日期"}>
+        <span className="job-when mono" title={allTab ? "入库时间" : row.posted_at ? `发布于 ${row.posted_at.slice(0, 10)}${penaltyHint}` : `来源没有给发布日期,排序时按 ${TIME_PENALTY_RULE.unknownAgeDays} 天算${penaltyHint}`}>
           {allTab ? localShort(row.created_at ?? null) : rel.label}
         </span>
         {!allTab && rel.fresh ? <Chip tone="good">新</Chip> : null}

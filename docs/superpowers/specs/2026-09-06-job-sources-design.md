@@ -200,9 +200,8 @@ LinkedIn 游客接口拿不到外部申请链接;Handshake 必须登录;Tesla �
 
 ### 5.2 队列排序与发布时间
 
-- 综合分 SQL 常量(`src/apply/rank.ts`):
-  `COMPOSITE_SCORE_SQL = "(m.score - MIN(15, MAX(0, CAST((julianday('now') - julianday(COALESCE(j.posted_at, datetime('now','-30 days'))) - 7) / 4 AS INTEGER))))"`
-  即 7 天内不扣,之后每 4 天扣 1,封顶 15;无发布日期按 35 天算(扣 7)。
+- 综合分 SQL 常量(`src/apply/rank.ts`,规则常量与 TS 等价实现在 `src/app/lib/time-penalty.ts`):`COMPOSITE = m.score − 时间惩罚`。
+  **2026-09-11 放宽**(用户:知名公司的岗位开了 30 天依然值得优先投;原来 7 天后每 4 天扣 1、封顶 15,会把 89 分、36 天的 ByteDance 岗压到刚发的 80 分小公司岗后面):发布 14 天内不扣;之后每 5 天扣 1,封顶 10(约 64 天到顶);`m.referral_fit = 1`(助手判为「建议内推」的知名公司,即 分≥75 且大厂/知名)减半——每 10 天扣 1,封顶 5;无发布日期按 30 天算(扣 3 / 知名公司扣 1)。详情抽屉显示「排序综合分」和扣分说明,发布列悬停显示扣了几分。
 - `QueueSort` 新增 `composite`,方向 tab 默认 `composite`:`ORDER BY a.pinned DESC, COALESCE(m.tier,9) ASC, COMPOSITE DESC, m.score DESC, j.created_at DESC`。`takeNextApplication`、`/api/queue` 无参数的扁平列表同样改用综合分。`pagedAllJobs` 不变。
 - /queue 方向 tab 新增「发布」列:相对天数(今天 / 昨天 / N 天前 / —),悬停显示完整日期;≤3 天加「新」chip。排序下拉:综合(默认)/ 分数 / 新鲜度 / 公司名。
 
@@ -222,7 +221,7 @@ runs 列表识别 `scan`(标签「Chrome 扫描」);`/sources` 页嵌入按钮�
 - `upsert.test.ts`(原 scan-run.test 迁移):富记录覆盖语义不变 + board_key/ats 写入。
 - `migration-v12.test.ts`:v11 快照(临时文件)→ openDb → boards 表、jobs.board_key 回填、URL 解析出的 boards 行、retier 后 core。
 - `seed-sync.test.ts`、`import-directory.test.ts`(fixture 目录文件、错峰 next_due_at、不覆盖已存在)。
-- `rank.test.ts`:综合分排序样例(新 80 分排在 90 天前 88 分之前,排不过新 90 分;NULL 日期按 30 天)。
+- `rank.test.ts`:综合分排序样例(新 80 分排在 90 天前 88 分之前,排不过新 90 分;NULL 日期按 30 天;知名公司 30 天的 88 分排在新 86 分之前;SQL 与 `timePenalty()` 逐天一致)。
 - `ingest.test.ts`:zod 拒绝非法 source / URL / 超量;成功写 board last_ok_at。
 - `executor-scan-kind.test.ts`:headless 拒绝、user_chrome 入队、面板标签。
 - `readme-table.test.ts`、`linkedin-guest.test.ts`(HTML fixture)。
