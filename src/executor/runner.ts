@@ -3,6 +3,8 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { DB } from "@/lib/db";
+import { settleRunOutcome } from "@/apply/run-outcome";
+import type { RunOutcome, ChainInfo } from "@/app/lib/run-outcome";
 import {
   buildApplyPrompt,
   buildNetworkSendPrompt,
@@ -44,6 +46,10 @@ export interface StartOptions {
   // referral for them (referral). Referral mode is attended-session only.
   jobIds?: number[];
   mode?: "referral" | "direct";
+  // apply kind only — 接力 (src/apply/continue.ts): chunk = 本段最多做几份(海投填好待确认 + 内推进入
+  // 寻找,合计),做满就正常 finish,App 再排下一段;chain = 这段属于哪条接力链(root / 第几段 / 累计)。
+  chunk?: number;
+  chain?: ChainInfo;
   // scan kind only — 要扫哪些站、时间窗、每站最多抄多少个新岗(默认 全部 / 24h / 40)。
   sites?: ("linkedin" | "handshake" | "tesla")[];
   window?: "24h" | "7d";
@@ -97,7 +103,7 @@ function isAlive(pid: number | null | undefined): boolean {
 function buildPrompt(kind: ExecutorKind, options: StartOptions): string {
   switch (kind) {
     case "apply":
-      return buildApplyPrompt({ limit: options.limit, plan: options.plan, resume: options.resume });
+      return buildApplyPrompt({ limit: options.limit, plan: options.plan, resume: options.resume, chunk: options.chunk, chain: options.chain });
     case "network_send":
       return buildNetworkSendPrompt();
     case "network_find":
@@ -162,6 +168,7 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
         db.prepare(
           "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
         ).run("session gone", row.id);
+        settleRunOutcome(db, row.id);
       }
       continue;
     }
@@ -169,6 +176,7 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
       db.prepare(
         "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
       ).run("process gone", row.id);
+      settleRunOutcome(db, row.id);
       continue;
     }
     const mt = row.log_path ? mtime(row.log_path) : null;
@@ -178,6 +186,7 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
       db.prepare(
         "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
       ).run(`hung: no log activity for ${quietMin} min, process tree killed`, row.id);
+      settleRunOutcome(db, row.id);
     }
   }
 }
@@ -267,6 +276,7 @@ export function startExecutor(
     db.prepare(
       "UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?"
     ).run("process gone", row.id);
+    settleRunOutcome(db, row.id);
   }
 
   const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
@@ -335,9 +345,23 @@ export function startExecutor(
   // is the normal case (a long-running launchd-managed Next.js server).
   child.on("exit", (code) => {
     const status = code === 0 ? "done" : "failed";
-    db.prepare(
+    const ended = db.prepare(
       "UPDATE executor_runs SET status=?, ended_at=datetime('now') WHERE id=? AND status='running'"
     ).run(status, runId);
+    // 0 changes = the session already reported finish through the App; its outcome is settled.
+    if (ended.changes > 0) {
+      settleRunOutcome(db, runId);
+      // 接力: a headless segment that ended normally may need the next one queued (the attended
+      // path does this in the finish route). Dynamic import because continue.ts imports this
+      // module; db.open guards the fake-spawn tests that close the db before the import lands.
+      if (status === "done") {
+        void import("@/apply/continue")
+          .then((m) => {
+            if (db.open) m.maybeContinueApplyRun(db, runId);
+          })
+          .catch((e) => console.error("[apply continue] headless exit", e));
+      }
+    }
     try {
       fs.closeSync(logFd);
     } catch {
@@ -359,7 +383,9 @@ export function stopExecutor(db: DB, runId: number): void {
     | { pid: number | null; status: string; channel: string }
     | undefined;
   if (!row) throw new Error(`stopExecutor: no run #${runId}`);
-  if (row.status !== "running" && row.status !== "queued") {
+  // 'paused' = a 接力 segment parked behind the confirmation backlog (src/apply/continue.ts):
+  // stopping it is how the user ends the chain; there is no process to signal.
+  if (row.status !== "running" && row.status !== "queued" && row.status !== "paused") {
     throw new Error(`stopExecutor: run #${runId} is not running (status='${row.status}')`);
   }
 
@@ -373,6 +399,7 @@ export function stopExecutor(db: DB, runId: number): void {
   }
 
   db.prepare("UPDATE executor_runs SET status='stopped', ended_at=datetime('now') WHERE id=?").run(runId);
+  settleRunOutcome(db, runId);
 }
 
 export interface ClaimedRun {
@@ -441,6 +468,7 @@ export function finishRun(db: DB, runId: number, status: "done" | "failed" | "st
     summary ?? null,
     runId
   );
+  settleRunOutcome(db, runId);
 }
 
 export interface RunStatusRow {
@@ -452,6 +480,9 @@ export interface RunStatusRow {
   logPath: string | null;
   options: unknown;
   summary: string | null;
+  // Planned-vs-achieved snapshot for apply runs with a plan, written when the run reaches a
+  // terminal status (null otherwise, and while the run is live) — src/apply/run-outcome.ts.
+  outcome: RunOutcome | null;
   startedAt: string;
   claimedAt: string | null;
   endedAt: string | null;
@@ -487,11 +518,20 @@ function tailLines(filePath: string, n: number): string[] {
 // attached for any that are still 'running' so the UI can show live progress. Reaps stale runs
 // first so a dead-but-still-marked-'running' row self-heals to 'failed' on the very poll that
 // would otherwise keep showing it as active forever.
+function parseOutcome(raw: string | null): RunOutcome | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as RunOutcome;
+  } catch {
+    return null;
+  }
+}
+
 export function executorStatus(db: DB): RunStatusRow[] {
   reapStaleRuns(db);
   const rows = db
     .prepare(
-      "SELECT id, kind, status, channel, pid, log_path, options, summary, started_at, claimed_at, ended_at FROM executor_runs ORDER BY id DESC LIMIT 10"
+      "SELECT id, kind, status, channel, pid, log_path, options, summary, outcome, started_at, claimed_at, ended_at FROM executor_runs ORDER BY id DESC LIMIT 10"
     )
     .all() as {
     id: number;
@@ -502,6 +542,7 @@ export function executorStatus(db: DB): RunStatusRow[] {
     log_path: string | null;
     options: string;
     summary: string | null;
+    outcome: string | null;
     started_at: string;
     claimed_at: string | null;
     ended_at: string | null;
@@ -523,6 +564,7 @@ export function executorStatus(db: DB): RunStatusRow[] {
       logPath: r.log_path,
       options,
       summary: r.summary,
+      outcome: parseOutcome(r.outcome),
       startedAt: r.started_at,
       claimedAt: r.claimed_at,
       endedAt: r.ended_at,

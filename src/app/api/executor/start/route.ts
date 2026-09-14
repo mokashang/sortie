@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { startExecutor, ExecutorKind, ExecutorChannel } from "@/executor/runner";
+import { startExecutor, ExecutorKind, ExecutorChannel, StartOptions } from "@/executor/runner";
+import { supersedePausedChain, APPLY_CHUNK_SIZE } from "@/apply/continue";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
 const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
@@ -19,6 +20,9 @@ const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 // App UI is expected to pin jd_review to headless too (a later task), but the route enforces it
 // either way so an omitted/misrouted `channel` can never queue a jd_review run onto a channel
 // with no attended-session protocol to service it.
+//
+// An apply run with a plan is the first segment of a 接力 chain (src/apply/continue.ts): it gets
+// the default chunk size, and any chain still parked waiting for confirmations is superseded.
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -33,7 +37,13 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const result = startExecutor(getDb(), kind as ExecutorKind, body.options ?? {}, {}, channel as ExecutorChannel);
+    const db = getDb();
+    const options: StartOptions = body.options ?? {};
+    if (kind === "apply" && Array.isArray(options.plan) && options.plan.length > 0) {
+      supersedePausedChain(db);
+      if (typeof options.chunk !== "number" || options.chunk <= 0) options.chunk = APPLY_CHUNK_SIZE;
+    }
+    const result = startExecutor(db, kind as ExecutorKind, options, {}, channel as ExecutorChannel);
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 400 });

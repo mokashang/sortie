@@ -22,7 +22,7 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 export function openDb(file?: string): DB {
   const dbFile =
@@ -130,6 +130,13 @@ export function openDb(file?: string): DB {
     // them" (src/network/draft.ts, 2026-09-11 outreach wording rework: give before you ask).
     const peopleCols14 = (db.prepare("PRAGMA table_info(people)").all() as { name: string }[]).map((c) => c.name);
     if (!peopleCols14.includes("notes")) db.exec("ALTER TABLE people ADD COLUMN notes TEXT");
+    // v14 -> v15: applications.run_id (which apply run claimed the row) + executor_runs.outcome (the
+    // run's planned-vs-achieved snapshot, src/apply/run-outcome.ts) — so a task that filled 5 of a
+    // planned 70 shows 未完成 · 海投 5/70 instead of 已完成 (2026-09-13, task #68).
+    const appCols15 = (db.prepare("PRAGMA table_info(applications)").all() as { name: string }[]).map((c) => c.name);
+    if (!appCols15.includes("run_id")) db.exec("ALTER TABLE applications ADD COLUMN run_id INTEGER");
+    const runCols15 = (db.prepare("PRAGMA table_info(executor_runs)").all() as { name: string }[]).map((c) => c.name);
+    if (!runCols15.includes("outcome")) db.exec("ALTER TABLE executor_runs ADD COLUMN outcome TEXT");
     // v11 -> v12: boards 注册表 + jobs.board_key(spec 2026-09-06 job-sources §1)。boards 表由上面的
     // CREATE TABLE IF NOT EXISTS 建好;这里给老 jobs 加列、按 apply_url 回填 board_key/ats,并把解析出的
     // 板块登记进 boards(origin=url)。只处理 board_key 仍为空的行 —— 可重跑。

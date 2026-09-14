@@ -1,0 +1,75 @@
+// Client-safe: how a finished task is judged against what it was asked to do, and the 接力
+// (chained segments) vocabulary shared by server and UI. The server (src/apply/run-outcome.ts)
+// writes an outcome snapshot into executor_runs.outcome when an apply run with a plan reaches a
+// terminal status; the UI derives the status label from it so a task that filled 5 of a planned
+// 70 reads 「未完成 · 海投 5/70」, never 「已完成」 (2026-09-13, task #68).
+import { RUN_STATUS_LABEL, RUN_STATUS_TONE, labelOf, Tone } from "@/app/lib/labels";
+
+export interface ModeCounts {
+  direct: number;
+  referral: number;
+}
+
+// 接力 (src/apply/continue.ts): a plan bigger than one session can carry is done in segments.
+// Each segment is its own run; these constants are what the user agreed to on 2026-09-13.
+export const APPLY_CHUNK_SIZE = 10; // a segment stops after this many filled/claimed and finishes normally
+export const BACKLOG_PAUSE_AT = 10; // unconfirmed filled applications at a segment boundary → the chain pauses
+export const BACKLOG_RESUME_AT = 5; // …and resumes once the user has brought the backlog down to this
+
+// Carried in a continuation run's options.chain: which chain, which segment, what the whole
+// chain was asked for and what earlier segments already achieved.
+export interface ChainInfo {
+  root: number; // the run the user started (段 1)
+  step: number; // 1-based segment number of this run
+  planned: ModeCounts; // the whole chain's plan (the root run's quotas)
+  before: ModeCounts; // achieved by the segments before this one
+  zeroRuns: number; // consecutive segments so far that achieved nothing
+}
+
+export interface RunOutcome {
+  // What the plan asked for, per mode: the whole chain's quotas for a chained run, else this
+  // run's options.plan quotas (or a targeted jobIds run's size).
+  planned: ModeCounts;
+  // Cumulative achievement (earlier segments + this run), protocol count semantics
+  // (CLAUDE.md §3.3): 海投 = filled and reported awaiting_confirm (whatever happened after);
+  // 内推 = jobs that entered referral_seeking and got a contact (a 找不到人 company does not count).
+  achieved: ModeCounts;
+  own: ModeCounts; // this run's share of achieved
+  submitted: number; // of own.direct: already submitted when the run ended
+  awaiting: number; // of own.direct: still waiting for the user's confirmation
+  manual: number; // parked for a human (needs_manual, user-rejected fill, referral 找不到人)
+  archived: number; // live page proved the job ineligible → archived
+  info: number; // waiting on / timed out waiting for the user's answers (待补信息)
+  complete: boolean; // achieved >= planned for both modes
+  chain?: { root: number; step: number }; // present for continuation segments
+}
+
+// Status chip for a task. A normally-ended run that fell short of its plan is 未完成, not 已完成;
+// failed / stopped / paused / live runs keep their own labels (the progress text still shows).
+export function runStatusDisplay(status: string, outcome?: RunOutcome | null): { label: string; tone: Tone } {
+  if (status === "done" && outcome && !outcome.complete) return { label: "未完成", tone: "warn" };
+  return { label: labelOf(RUN_STATUS_LABEL, status, status), tone: RUN_STATUS_TONE[status] ?? "neutral" };
+}
+
+// "海投 15/70 · 内推 0/40 · 本段 10" — only the modes the plan asked for; the 本段 share only for
+// a chained segment; "" when there is no outcome.
+export function runProgressText(outcome?: RunOutcome | null): string {
+  if (!outcome) return "";
+  const parts: string[] = [];
+  if (outcome.planned.direct > 0) parts.push(`海投 ${outcome.achieved.direct}/${outcome.planned.direct}`);
+  if (outcome.planned.referral > 0) parts.push(`内推 ${outcome.achieved.referral}/${outcome.planned.referral}`);
+  if (outcome.chain) parts.push(`本段 ${outcome.own.direct + outcome.own.referral}`);
+  return parts.join(" · ");
+}
+
+// "提交 5 · 待确认 1 · 需人工 3 · 归档 2 · 待补 1" — zero buckets omitted; "" when nothing to say.
+export function runBreakdownText(outcome?: RunOutcome | null): string {
+  if (!outcome) return "";
+  const parts: string[] = [];
+  if (outcome.submitted > 0) parts.push(`提交 ${outcome.submitted}`);
+  if (outcome.awaiting > 0) parts.push(`待确认 ${outcome.awaiting}`);
+  if (outcome.manual > 0) parts.push(`需人工 ${outcome.manual}`);
+  if (outcome.archived > 0) parts.push(`归档 ${outcome.archived}`);
+  if (outcome.info > 0) parts.push(`待补 ${outcome.info}`);
+  return parts.join(" · ");
+}
