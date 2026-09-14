@@ -1065,3 +1065,116 @@ td.company {
 .auth-lang:hover {
   color: var(--ink);
 }
+
+/* ---- Public documents: /privacy and /terms (2026-09-14) ---- */
+
+.legal-wrap {
+  min-height: 100vh;
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: var(--s-6) var(--s-4) var(--s-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.legal-doc {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+  padding: var(--s-7) var(--s-7) var(--s-6);
+  line-height: 1.6;
+  animation: rise var(--dur) var(--ease);
+}
+
+.legal-doc h1 {
+  font-size: 26px;
+  margin: 0 0 var(--s-2);
+}
+
+.legal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--s-4);
+  color: var(--sub);
+  font-size: var(--t-sm);
+  margin-bottom: var(--s-5);
+}
+
+.legal-intro {
+  color: var(--ink-2);
+}
+
+.legal-doc section {
+  margin-top: var(--s-6);
+}
+
+.legal-doc h2 {
+  font-size: var(--t-lg);
+  margin-bottom: var(--s-3);
+}
+
+.legal-doc p + p,
+.legal-doc ul + p,
+.legal-doc p + ul {
+  margin-top: var(--s-3);
+}
+
+.legal-doc ul {
+  margin: 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.legal-doc li::marker {
+  color: var(--faint);
+}
+
+.legal-contact {
+  margin-top: var(--s-3);
+}
+
+.legal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-4);
+}
+
+.legal-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  font-size: var(--t-sm);
+  color: var(--sub);
+}
+
+.legal-nav a:hover {
+  color: var(--ink);
+}
+
+.legal-foot .auth-lang {
+  margin-top: 0;
+}
+
+@media (max-width: 600px) {
+  .legal-doc {
+    padding: var(--s-6) var(--s-4);
+  }
+}
+
+/* The two public documents, linked under the sign-in card. */
+.auth-legal {
+  display: flex;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+  font-size: var(--t-xs);
+  color: var(--faint);
+}
+
+.auth-legal a:hover {
+  color: var(--ink);
+}
