@@ -13,11 +13,27 @@
 [CmdletBinding()]
 param(
   [switch]$Force,
-  # $PSScriptRoot can be empty when the script is launched through a nested `powershell -File` (seen 2026-09-11).
-  [string]$Root = $(if ($PSScriptRoot) { Split-Path -Parent (Split-Path -Parent $PSScriptRoot) } else { Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }),
+  # Repo root. Resolved in the body, not here: with [CmdletBinding()] the automatic variables
+  # $PSScriptRoot / $PSCommandPath / $MyInvocation.MyCommand.Path are all EMPTY inside param()
+  # default expressions when the script runs via `powershell -File` (seen 2026-09-11, and again
+  # 2026-09-13 from Git Bash), so a default computed here always threw "Split-Path: Path is null".
+  [string]$Root,
   [string]$Base = "http://127.0.0.1:3000"
 )
 $ErrorActionPreference = "Stop"
+
+if (-not $Root) {
+  # In the body the automatic variables are populated. The process command line's -File argument is
+  # the last-resort fallback: it is always there when launched as `powershell -File <script>`.
+  $scriptPath = $PSCommandPath
+  if (-not $scriptPath) { $scriptPath = $MyInvocation.MyCommand.Path }
+  if (-not $scriptPath) {
+    $cl = [Environment]::GetCommandLineArgs()
+    for ($i = 0; $i -lt $cl.Length - 1; $i++) { if ($cl[$i] -ieq "-File" -or $cl[$i] -ieq "-f") { $scriptPath = $cl[$i + 1]; break } }
+  }
+  if (-not $scriptPath) { throw "cannot locate deploy.ps1 (no PSCommandPath and no -File on the command line); pass -Root <repo>" }
+  $Root = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent ((Resolve-Path -LiteralPath $scriptPath).Path)))
+}
 Set-Location $Root
 
 function Get-Json($url) {
