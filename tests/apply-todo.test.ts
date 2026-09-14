@@ -320,6 +320,30 @@ describe("answer pack extras", () => {
   });
 });
 
+describe("the assistant that asked is gone (its run failed or was reaped)", () => {
+  it("answering re-queues the job instead of handing it to nobody, and 让助手重新来 works from a waiting card", () => {
+    const db = openTestDb();
+    const a = seed(db);
+    reportFill(db, U, { jobId: a, status: "needs_info", questions: [{ key: "gpa", label: "GPA" }] });
+    expect(answerInfo(db, U, a, { gpa: { value: "3.9" } }, () => {}, { executorWaiting: false }).status).toBe("matched");
+    expect(app(db, a)).toMatchObject({ status: "matched", needs_manual_reason: null, pending_questions: null });
+    expect(confirmStatus(db, U, a).infoAnswers).toEqual({ gpa: "3.9" });
+
+    const b = seed(db);
+    reportFill(db, U, { jobId: b, status: "needs_info", questions: [{ key: "gpa", label: "GPA" }] });
+    unpark(db, U, b);
+    expect(app(db, b)).toMatchObject({ status: "matched", needs_manual_reason: null, pending_questions: null });
+    expect(pendingInfo(db, U)).toEqual([]);
+  });
+
+  it("with the executor still on the form, answering keeps the row for it (prepared)", () => {
+    const db = openTestDb();
+    const a = seed(db);
+    reportFill(db, U, { jobId: a, status: "needs_info", questions: [{ key: "gpa", label: "GPA" }] });
+    expect(answerInfo(db, U, a, { gpa: { value: "3.9" } }, () => {}, { executorWaiting: true }).status).toBe("prepared");
+  });
+});
+
 describe("notifications", () => {
   it("say what kind of thing is needed", () => {
     expect(needsInfoNotification("Apple", "SWE", [LOGIN]).title).toContain("登录一次");

@@ -759,12 +759,15 @@ export function unpark(db: DB, userId: string, jobId: number): void {
     | { status: string }
     | undefined;
   if (!row) throw new Error(`unpark: no application for job ${jobId}`);
-  if (row.status !== "matched") {
-    throw new Error(`unpark: cannot unpark from status '${row.status}' (must be 'matched')`);
+  // needs_info is allowed too: the assistant that asked may be gone (its run failed or was
+  // reaped), leaving the card "waiting" on nobody. Handing it back re-queues it; an executor that
+  // IS still polling sees status 'matched' and drops the tab (protocol §3.4).
+  if (row.status !== "matched" && row.status !== "needs_info") {
+    throw new Error(`unpark: cannot unpark from status '${row.status}' (must be 'matched' or 'needs_info')`);
   }
   // The to-do items go too: the next take starts clean and the executor re-derives whatever it
   // still needs under the current protocol.
-  db.prepare("UPDATE applications SET needs_manual_reason = NULL, pending_questions = NULL WHERE user_id = ? AND job_id = ?").run(userId, jobId);
+  db.prepare("UPDATE applications SET status = 'matched', needs_manual_reason = NULL, pending_questions = NULL WHERE user_id = ? AND job_id = ?").run(userId, jobId);
 }
 
 // Sentinel used wherever a NULL matches.direction needs a display/routing string — the

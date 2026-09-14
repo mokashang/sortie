@@ -5,6 +5,7 @@ import { answerInfo, InfoAnswer } from "@/apply/info";
 import { infoKind, InfoQuestion } from "@/apply/queue";
 import { isDocumentPath, userDocumentsDir } from "@/lib/documents";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
+import { currentApplyRunId } from "@/apply/run-outcome";
 import { withUser, failResponse } from "@/lib/actor";
 
 // User -> App from a 待处理 card's form: {jobId, answers: {key: {value, remember?}}}.
@@ -43,10 +44,21 @@ export const POST = withUser(async (req, { userId }) => {
       }
     }
 
-    const result = answerInfo(db, userId, jobId, answers, (remembered) => {
-      const current = (getProfileData(db, userId)?.standard_answers ?? {}) as Record<string, string>;
-      saveStandardAnswers(db, userId, { ...current, ...remembered });
-    });
+    // Only a running apply run of this account can be on the form; if none is, the row that
+    // asked is re-queued (and auto-started below) rather than handed to an executor that is no
+    // longer there.
+    const executorWaiting = currentApplyRunId(db, userId) !== null;
+    const result = answerInfo(
+      db,
+      userId,
+      jobId,
+      answers,
+      (remembered) => {
+        const current = (getProfileData(db, userId)?.standard_answers ?? {}) as Record<string, string>;
+        saveStandardAnswers(db, userId, { ...current, ...remembered });
+      },
+      { executorWaiting }
+    );
     const started = result.status === "matched" ? maybeAutoStartApply(db, userId, { jobIds: [jobId], mode: "direct" }) : { autoStarted: false };
     return NextResponse.json({ ok: true, ...result, ...started });
   } catch (e) {

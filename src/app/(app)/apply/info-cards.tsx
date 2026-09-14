@@ -72,7 +72,9 @@ async function uploadDocument(key: string, file: File): Promise<DocumentRow> {
   return j.document;
 }
 
-function Head({ row, kindLabel }: { row: InfoRow; kindLabel: string }) {
+// `waiting` = an apply run is actually running, so a needs_info row really has an assistant on
+// its tab; otherwise the one that asked is gone and answering re-queues the job instead.
+function Head({ row, kindLabel, waiting }: { row: InfoRow; kindLabel: string; waiting: boolean }) {
   return (
     <div className="row between">
       <div className="grow">
@@ -84,8 +86,10 @@ function Head({ row, kindLabel }: { row: InfoRow; kindLabel: string }) {
         <div className="row mt-2">
           <Chip>{row.direction ? directionLabel(row.direction) : "未分类"}</Chip>
           <Chip tone="accent">{kindLabel}</Chip>
-          {row.status === "needs_info" ? (
+          {row.status === "needs_info" && waiting ? (
             <Chip tone="warn">助手等待中 · {row.askedAt}</Chip>
+          ) : row.status === "needs_info" ? (
+            <Chip tone="neutral">助手已离开 · 处理完自动重新排队</Chip>
           ) : (
             <Chip tone="neutral" title={row.needsManualReason ?? undefined}>
               已暂停 · 处理完自动继续
@@ -111,8 +115,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   const [docs, setDocs] = useState<DocumentRow[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Record<string, Draft>>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const { refresh: refreshOverview } = useOverview();
+  const { data: overview, refresh: refreshOverview } = useOverview();
   const { toast } = useToast();
+  const applyRunning = overview?.assistant?.kind === "apply" && overview?.assistant?.status === "running";
 
   const refresh = useCallback(async () => {
     try {
@@ -334,7 +339,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       const retryPrimary = first.key === "error" || first.key === "rejected" || first.key === "no_resume";
       return [
         <Card key={row.jobId} tone="warn" className="todo-card">
-          <Head row={row} kindLabel={INFO_KIND_LABEL.manual} />
+          <Head row={row} kindLabel={INFO_KIND_LABEL.manual} waiting={applyRunning} />
           <div className="col gap-2 mt-3">
             {items.map((q) => (
               <div key={q.key}>
@@ -367,7 +372,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     const kindLabel = kinds.has("file") ? INFO_KIND_LABEL.file : kinds.has("action") ? INFO_KIND_LABEL.action : INFO_KIND_LABEL.text;
     return [
       <Card key={row.jobId} tone="warn" className="todo-card">
-        <Head row={row} kindLabel={kindLabel} />
+        <Head row={row} kindLabel={kindLabel} waiting={applyRunning} />
 
         <div className="col gap-3 mt-4">
           {answerable.map((q) => {
@@ -504,7 +509,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
           <Button variant="primary" onClick={() => submit(row)} loading={busyKey === `submit-${row.jobId}`} disabled={missing || (busyKey !== null && busyKey !== `submit-${row.jobId}`)}>
             提交答案,继续投递
           </Button>
-          {row.status !== "needs_info" ? (
+          {row.status !== "needs_info" || !applyRunning ? (
             <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} onClick={() => retry(row)} loading={busyKey === `retry-${row.jobId}`} disabled={busyKey !== null && busyKey !== `retry-${row.jobId}`}>
               让助手重新来
             </Button>
