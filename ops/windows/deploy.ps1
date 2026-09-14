@@ -106,11 +106,19 @@ Write-Host "==> pm2 restart sortie"
 pm2 restart sortie --update-env
 if ($LASTEXITCODE -ne 0) { throw "pm2 restart failed (is the app registered? pm2 start ops\windows\ecosystem.config.cjs --only sortie)" }
 
+# Readiness = the server answers at all. Any HTTP status counts, 401 included: since accounts
+# (2026-09-13) every API route wants a principal, and the internal token only resolves to the
+# owner account — on a box where nobody has registered yet, a fresh server answers 401 to the
+# status probe while being perfectly healthy (seen on the accounts deploy itself).
+function Test-ServerUp($url) {
+  try { Invoke-RestMethod -Uri $url -TimeoutSec 5 -Headers (Get-AuthHeaders) | Out-Null; return $true }
+  catch { if ($_.Exception.Response) { return $true } else { return $false } }
+}
 $deadline = (Get-Date).AddSeconds(60)
-$ok = $null
+$ok = $false
 do {
   Start-Sleep -Seconds 2
-  $ok = Get-Json "$Base/api/executor/status"
+  $ok = Test-ServerUp "$Base/api/executor/status"
 } until ($ok -or (Get-Date) -gt $deadline)
 if (-not $ok) { throw "server did not answer on $Base within 60s - check: pm2 logs sortie" }
 
