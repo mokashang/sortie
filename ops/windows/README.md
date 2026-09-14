@@ -98,6 +98,7 @@ Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobsee
 - [ ] 次日 `C:\sortie\data\backups\` 里出现 `jobseeker-<日期>.db`。
 
 ## 8. 阶段 2:自定义域名(随时做,不阻塞以上)
+**2026-09-13 已完成**:域名 usesortie.com,网址 `https://usesortie.com`,老网址 ts.net 保留;Caddy 任务与防火墙已注册,Tailscale Serve 已关。下面的步骤保留作重做 / 换域名时的手册。
 本机实际仓库路径是 `E:\sortie`(下同)。**机器侧 2026-09-11 已备好**:`C:\caddy\caddy.exe`(2.11.4,caddyserver.com 定制构建,含 `dns.providers.cloudflare` 与 `tls.get_certificate.tailscale`);`ops\windows\Caddyfile` 不用再改,全部从 `.env` 取值(`SORTIE_DOMAIN` / `TS_HOSTNAME` / `TS_IP` / `CF_API_TOKEN`);`.env` 里 `TS_IP`、`TS_HOSTNAME` 已填;`ops\windows\caddy-switch.ps1` 负责预检 / 切换 / 回滚;已用 8443 端口做过真实联调(Caddy 绑 Tailscale IP、ts.net 证书由本机 tailscaled 签、反代 3000 返回 200)。剩下两步只能人做:
 1. **买域名**:Cloudflare Registrar(或别处买、DNS 托管到 Cloudflare)。然后 Cloudflare → 该域名 → DNS → Records → Add record:Type `A`,Name `@`(域名本身,2026-09-13 选定 `usesortie.com`,网址就是根域名),IPv4 address = `.env` 里的 `TS_IP`(`100.100.246.31`),**Proxy status 关掉(灰云 DNS only)**,TTL Auto。橙云(代理)会把访问引到 Cloudflare 公网,永远连不到 100.x。
 2. **建 API token**:Cloudflare → My Profile → API Tokens → Create Token → Create Custom Token:Permissions 加两行 **Zone · Zone · Read** 和 **Zone · DNS · Edit**;Zone Resources = Include · Specific zone · 你的域名;其余默认。**必须两条权限都有**:caddy-dns/cloudflare 先用 Zone:Read 查 zone id,只给 DNS:Edit(Cloudflare 的「Edit zone DNS」模板)会报 zone could not be found。
