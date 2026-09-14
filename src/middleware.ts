@@ -8,7 +8,7 @@ import { messages } from "@/i18n/messages";
 // the token known — happens in the handlers (src/lib/actor.ts) and pages (src/lib/session.ts);
 // this only spares the server rendering a whole page for a stranger.
 
-const PUBLIC_PAGES = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email"];
+const PUBLIC_PAGES = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/privacy", "/terms"];
 const COOKIE_PREFIX = "sortie";
 
 function isPublicPage(pathname: string): boolean {
