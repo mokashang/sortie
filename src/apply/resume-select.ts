@@ -1,4 +1,5 @@
 import { DB } from "@/lib/db";
+import { resolveResumePath } from "@/lib/paths";
 
 export interface ResumeSelection {
   resumeId: number;
@@ -25,6 +26,9 @@ interface ResumeRow {
 // recorded which version was actually used. Returns an error object (never throws) when there's
 // no direction to work from, or no resume has been generated for it yet — the caller is expected
 // to surface this as a "needs_manual" case ("go generate that direction's resume in Studio first").
+// pdfPath is resolved against the current data dir (resolveResumePath): the row may have been
+// compiled on another machine (the 2026-09-02 versions store Mac paths) and the executor needs a
+// path that exists here.
 export function selectResumeForJob(db: DB, jobId: number): ResumeSelection | ResumeSelectionError {
   const match = db.prepare("SELECT direction FROM matches WHERE job_id = ?").get(jobId) as
     | { direction: string | null }
@@ -53,5 +57,5 @@ export function selectResumeForJob(db: DB, jobId: number): ResumeSelection | Res
 
   db.prepare("UPDATE matches SET resume_id = ? WHERE job_id = ?").run(chosen.id, jobId);
 
-  return { resumeId: chosen.id, pdfPath: chosen.pdf_path ?? "", versionName: chosen.version_name };
+  return { resumeId: chosen.id, pdfPath: resolveResumePath(chosen.pdf_path), versionName: chosen.version_name };
 }

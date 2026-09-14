@@ -72,6 +72,12 @@ Before touching the browser, verify both halves of the system are actually reach
    blocked by the browser's CORS policy. `curl` from Bash has no such restriction because it isn't
    running inside any page's origin.
 
+   **On Windows, never put non-ASCII text inline in `-d '...'`.** curl.exe receives an inline
+   body through the ANSI code page (GBK), so Chinese in a log `line`, a `summary`, a `reason`
+   or `filledFields` reaches the App garbled. Write the JSON to a temp file first
+   (`cat > /tmp/sortie-body.json <<'EOF' ... EOF`) and send it with
+   `--data-binary @/tmp/sortie-body.json`. Pure-ASCII bodies may stay inline.
+
 2. **Chrome is connected.** Call `list_connected_browsers`. If none are connected, tell the user
    to connect Chrome via the claude-in-chrome extension and stop. If one or more are connected,
    `select_browser` the one the user indicates (or the only one, if there's just one), then
@@ -82,6 +88,8 @@ Only once both checks pass, tell the user you're starting and begin the loop bel
 ---
 
 ## 2. The loop
+
+**Segments (接力, CLAUDE.md §3.3b).** If the run's `options.chunk` is set (the App sets 10 for every plan run), stop the loop once that many applications are filled-and-reported (`awaiting_confirm`) plus referral jobs claimed (`referral_seeking`), and finish normally with `status: "done"` — the App queues the next segment itself with the remaining plan (`options.chain` tells you which segment this is and the cumulative progress; log that on your first line). Never quit early because the plan looks too big, and never push past the chunk.
 
 Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-breaker condition in
 §7 fires:

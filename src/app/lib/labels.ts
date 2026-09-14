@@ -10,6 +10,7 @@ export const RUN_STATUS_LABEL: Record<string, string> = {
   done: "已完成",
   failed: "失败",
   stopped: "已停止",
+  paused: "已暂停",
 };
 
 export const RUN_STATUS_TONE: Record<string, Tone> = {
@@ -18,6 +19,7 @@ export const RUN_STATUS_TONE: Record<string, Tone> = {
   done: "good",
   failed: "danger",
   stopped: "neutral",
+  paused: "warn",
 };
 
 export const RUN_KIND_LABEL: Record<string, string> = {

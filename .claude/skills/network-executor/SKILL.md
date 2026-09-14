@@ -54,6 +54,12 @@ Before touching the browser, verify both halves of the system are reachable:
    page's JS context is a cross-origin request the browser's CORS policy will block. `curl` from
    Bash has no such restriction because it isn't running inside any page's origin.
 
+   **On Windows, never put non-ASCII text inline in `-d '...'`.** curl.exe receives an inline
+   body through the ANSI code page (GBK), so Chinese in a log `line`, a `summary`, a person's
+   `notes` or the sent `text` reaches the App garbled. Write the JSON to a temp file first
+   (`cat > /tmp/sortie-body.json <<'EOF' ... EOF`) and send it with
+   `--data-binary @/tmp/sortie-body.json`. Pure-ASCII bodies may stay inline.
+
 2. **Chrome is connected.** Call `list_connected_browsers`. If none are connected, tell the user
    to connect Chrome via the claude-in-chrome extension and stop. If one or more are connected,
    `select_browser` the one the user indicates (or the only one, if there's just one), then

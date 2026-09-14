@@ -1,22 +1,35 @@
 import { NextResponse } from "next/server";
+import { readJsonBody } from "@/lib/request-body";
 import { getDb } from "@/lib/db";
 import { finishRun } from "@/executor/runner";
 import { tryAcquireMatching, releaseMatching } from "@/matcher/inflight";
+import { maybeContinueApplyRun, resumePausedChainIfReady, ContinueResult } from "@/apply/continue";
 
 // POST {runId, status: 'done'|'failed'|'stopped', summary?} — the attended session calls this
 // when it's done driving the browser for a run (or the user interrupted it). Only valid from
 // 'running'/'queued'; see src/executor/runner.ts's finishRun for the full transition rules.
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const status = body.status as string;
     if (status !== "done" && status !== "failed" && status !== "stopped") {
       return NextResponse.json({ error: `invalid status '${status}'` }, { status: 400 });
     }
     const db = getDb();
-    finishRun(db, Number(body.runId), status, body.summary ?? undefined);
+    const runId = Number(body.runId);
+    finishRun(db, runId, status, body.summary ?? undefined);
 
-    const run = db.prepare("SELECT kind FROM executor_runs WHERE id=?").get(Number(body.runId)) as { kind: string } | undefined;
+    const run = db.prepare("SELECT kind FROM executor_runs WHERE id=?").get(runId) as { kind: string } | undefined;
+
+    // 接力 (src/apply/continue.ts): a finished apply segment may need the next one queued (or
+    // parked behind the confirmation backlog); any other apply run finishing (a bare resume run,
+    // say) frees the session for a chain that was parked.
+    let continuation: ContinueResult | undefined;
+    if (run?.kind === "apply") {
+      continuation = maybeContinueApplyRun(db, runId);
+      if (continuation.action === "none") continuation = resumePausedChainIfReady(db);
+    }
+
     if (run?.kind === "jd_review") {
       // 回流的 discovered 行带完整 JD 重打,然后若还有待补且未到每日上限,接力下一个 run。不 await:
       // 匹配可能跑几分钟,HTTP 响应不能等。`tryAcquireMatching()` is the same process-wide lock the
@@ -48,7 +61,7 @@ export async function POST(req: Request) {
       })();
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, continuation });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 400 });
   }

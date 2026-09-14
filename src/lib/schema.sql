@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS applications (
   apply_mode TEXT,                 -- NULL (follow suggestion) | referral | direct — user override from /queue
   referral_info TEXT,              -- JSON {source, link?, code?, note?, at} once a referral is obtained
   referral_reached_at TEXT,        -- when the first referral request was actually sent (UTC)
+  run_id INTEGER,                  -- the apply run that last claimed this row (v15); the run's outcome is counted from it
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -165,7 +166,8 @@ CREATE TABLE IF NOT EXISTS executor_runs (
   summary TEXT,
   started_at TEXT NOT NULL DEFAULT (datetime('now')),
   claimed_at TEXT,               -- user_chrome only: when an attended session claimed a queued row
-  ended_at TEXT
+  ended_at TEXT,
+  outcome TEXT                   -- JSON RunOutcome (apply runs with a plan): planned / achieved per mode + 各去向, written at the terminal status (v15)
 );
 
 -- 信息源注册表:凡是被轮询的东西都是一行(spec 2026-09-06 job-sources §1)。
