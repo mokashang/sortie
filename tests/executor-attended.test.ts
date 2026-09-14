@@ -20,6 +20,10 @@ import {
 } from "@/executor/attended";
 import type { WindowsSpawnOptions } from "@/executor/attended-win";
 import { startExecutor, finishRun, claimNextRun } from "@/executor/runner";
+import { seedOwner } from "./helpers";
+
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
 
 describe("attended dispatcher — decide()", () => {
   it("does nothing when nothing is queued", () => {
@@ -50,15 +54,16 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
 
   it("records and ages heartbeats", () => {
     const db = openDb(":memory:");
-    expect(heartbeatAgeMs(db)).toBeNull();
-    recordHeartbeat(db, "desktop-1", "desktop", new Date("2026-09-06T10:00:00Z"));
-    expect(heartbeatAgeMs(db, new Date("2026-09-06T10:00:12Z"))).toBe(12_000);
+    expect(heartbeatAgeMs(db, U)).toBeNull();
+    recordHeartbeat(db, U, "desktop-1", "desktop", new Date("2026-09-06T10:00:00Z"));
+    expect(heartbeatAgeMs(db, U, new Date("2026-09-06T10:00:12Z"))).toBe(12_000);
   });
 
   it("spawns an expect-wrapped claude --chrome for a queued run, records it, then reaps after the run finishes", () => {
     const db = openDb(":memory:");
+    seedOwner(db, U);
     const logDir = tmp();
-    const run = startExecutor(db, "apply", { plan: [{ direction: "swe_general", count: 1 }] }, { logDir }, "user_chrome");
+    const run = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 1 }] }, { logDir }, "user_chrome");
     const spawned: { scriptPath: string; logPath: string }[] = [];
     const killed: number[] = [];
     // finishRun stamps ended_at with sqlite's real datetime('now'), so the fake clock must start
@@ -89,14 +94,14 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(script).toContain(`run #${run.id}`);
     expect(script).toContain("Enter to confirm");
     expect(currentSpawn(db)).toMatchObject({ pid: 4242, runId: run.id });
-    expect(attendedStatus(db, deps).spawn).toMatchObject({ pid: 4242, alive: true });
+    expect(attendedStatus(db, U, deps).spawn).toMatchObject({ pid: 4242, alive: true });
 
     // Second tick while the child works: nothing happens even though the run is still queued.
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
 
     // The child claims and finishes the run; after the grace period the dispatcher reaps it.
-    expect(claimNextRun(db, "user_chrome")?.id).toBe(run.id);
-    finishRun(db, run.id, "done", "ok");
+    expect(claimNextRun(db, U, "user_chrome")?.id).toBe(run.id);
+    finishRun(db, U, run.id, "done", "ok");
     clock = new Date(clock.getTime() + 5_000);
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
     clock = new Date(clock.getTime() + REAP_GRACE_MS + 1000);
@@ -108,17 +113,19 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
 
   it("does not spawn while a desktop session heartbeats", () => {
     const db = openDb(":memory:");
+    seedOwner(db, U);
     const logDir = tmp();
-    startExecutor(db, "apply", {}, { logDir }, "user_chrome");
-    recordHeartbeat(db, "desktop-1", "desktop", new Date("2026-09-06T10:00:00Z"));
+    startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    recordHeartbeat(db, U, "desktop-1", "desktop", new Date("2026-09-06T10:00:00Z"));
     const r = dispatchAttended(db, { now: () => new Date("2026-09-06T10:00:08Z"), spawnExpect: () => { throw new Error("must not spawn"); }, logDir, platform: "darwin" });
     expect(r.decision.action).toBe("none");
   });
 
   it("reaps a child that died without finishing its run, so the next tick can respawn", () => {
     const db = openDb(":memory:");
+    seedOwner(db, U);
     const logDir = tmp();
-    const run = startExecutor(db, "apply", {}, { logDir }, "user_chrome");
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
     let alive = true;
     const deps = { isAlive: () => alive, spawnExpect: () => ({ pid: 1 }), kill: () => {}, claudeBin: "/fake/claude", logDir, cwd: "/fake", platform: "darwin" as const };
     expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
@@ -147,8 +154,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
 
   it("on Windows hands the argv to the platform launcher instead of writing an expect script", () => {
     const db = openDb(":memory:");
+    seedOwner(db, U);
     const logDir = tmp();
-    const run = startExecutor(db, "apply", {}, { logDir }, "user_chrome");
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
     const calls: { mode: string; opts: WindowsSpawnOptions }[] = [];
     const deps = {
       platform: "win32" as const,
@@ -178,8 +186,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
 
   it("passes the console mode through to the Windows launcher", () => {
     const db = openDb(":memory:");
+    seedOwner(db, U);
     const logDir = tmp();
-    startExecutor(db, "apply", {}, { logDir }, "user_chrome");
+    startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
     const modes: string[] = [];
     dispatchAttended(db, { platform: "win32", spawnMode: "console", spawnWindows: (mode) => { modes.push(mode); return { pid: 1 }; }, claudeBin: "C:\\c.exe", logDir, cwd: "C:\\s" });
     expect(modes).toEqual(["console"]);

@@ -1,10 +1,12 @@
 import { getDb } from "../src/lib/db";
 import { loadProfile } from "../src/lib/profile";
+import { resolveScriptUser } from "./script-user";
 import { getBackend } from "../src/llm/registry";
 import { runMatching } from "../src/matcher/run";
 
 export interface MatchArgs {
   limit?: number;
+  user?: string;
   rescoreArchived: boolean;
   concurrency: number;
   rescoreMatched: boolean;
@@ -18,8 +20,14 @@ export function parseMatchArgs(argv: string[]): MatchArgs {
   let rescoreArchived = false;
   let concurrency = 6;
   let rescoreMatched = false;
+  let user: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === "--user") {
+      user = argv[i + 1];
+      i++;
+      continue;
+    }
     if (arg === "--rescore-archived") {
       rescoreArchived = true;
       continue;
@@ -37,15 +45,17 @@ export function parseMatchArgs(argv: string[]): MatchArgs {
     const n = Number(arg);
     if (arg.trim() !== "" && !Number.isNaN(n)) limit = n;
   }
-  return { limit, rescoreArchived, concurrency, rescoreMatched };
+  return { limit, rescoreArchived, concurrency, rescoreMatched, user };
 }
 
 const MAX_ITERATIONS = 60;
 
 async function main() {
-  const { limit, rescoreArchived, concurrency, rescoreMatched } = parseMatchArgs(process.argv.slice(2));
+  const { limit, rescoreArchived, concurrency, rescoreMatched, user } = parseMatchArgs(process.argv.slice(2));
   const db = getDb();
-  const profile = loadProfile();
+  const account = resolveScriptUser(db, user);
+  const profile = loadProfile(db, account.id);
+  console.log(`matching as ${account.email}`);
   const backend = getBackend();
 
   const totals = { scored: 0, matched: 0, archived: 0, errors: 0, durationMs: 0 };
@@ -58,6 +68,7 @@ async function main() {
   for (;;) {
     iteration++;
     const summary = await runMatching(db, {
+      userId: account.id,
       backend,
       profile: { directions: profile.directions, work_auth: profile.work_auth },
       batchSize: 10,

@@ -16,6 +16,7 @@ export const RUN_STATUS_TONE: Record<string, Tone> = {
   done: "good",
   failed: "danger",
   stopped: "neutral",
+  paused: "warn",
 };
 
 export const OUTREACH_STATUS_TONE: Record<string, Tone> = {
@@ -71,4 +72,10 @@ export function modeLabel(mode: "referral" | "direct" | null | undefined, fit: n
 export function directionName(slug: string | null | undefined, lang: Lang): string {
   if (!slug || slug === UNCLASSIFIED_DIRECTION) return messages[lang].labels.unclassified;
   return directionLabel(slug);
+}
+
+// Friendly names for the standing documents in data/documents (src/lib/documents.ts); any
+// other key is shown as-is.
+export function documentLabel(key: string, lang: Lang): string {
+  return (messages[lang].labels.documents as Record<string, string>)[key] ?? key;
 }

@@ -2,6 +2,7 @@ import type { Lang } from "../lang";
 import { answers } from "./answers";
 import { apply } from "./apply";
 import { assistant } from "./assistant";
+import { auth } from "./auth";
 import { common } from "./common";
 import { dashboard } from "./dashboard";
 import { errors } from "./errors";
@@ -50,6 +51,7 @@ function tree(l: Lang) {
     profile: profile[l],
     dashboard: dashboard[l],
     sources: sources[l],
+    auth: auth[l],
     assistant: assistant[l],
     palette: palette[l],
     scan: scan[l],

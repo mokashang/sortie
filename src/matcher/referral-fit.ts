@@ -8,6 +8,7 @@ import { extractJson } from "@/llm/extract";
 // company/title/score/direction), it must also cover the ~3200 jobs matched before this
 // feature existed, and keeping it separate means the match prompt's output schema stays as is.
 // The answer is a *suggestion* — /queue lets the user override per job (applications.apply_mode).
+// Per account: the classification lives on the user's own matches row.
 
 export interface ReferralFitJobInput {
   id: number;
@@ -58,6 +59,7 @@ export function parseReferralFitResults(text: string): ReferralFitResult[] {
 }
 
 export interface ReferralFitOptions {
+  userId: string;
   backend: LlmBackend;
   batchSize?: number; // default 40
   limit?: number;
@@ -82,19 +84,20 @@ interface Row {
 
 // Only jobs currently in the apply queue (status='matched') that have never been classified.
 // Archived / in-flight rows are left alone: their mode is either irrelevant or already committed.
-export function countUnclassified(db: DB): number {
+export function countUnclassified(db: DB, userId: string): number {
   return (
     db
       .prepare(
-        `SELECT COUNT(*) n FROM applications a JOIN matches m ON m.job_id = a.job_id
-         WHERE a.status = 'matched' AND m.referral_fit IS NULL`
+        `SELECT COUNT(*) n FROM applications a JOIN matches m ON m.job_id = a.job_id AND m.user_id = a.user_id
+         WHERE a.user_id = ? AND a.status = 'matched' AND m.referral_fit IS NULL`
       )
-      .get() as { n: number }
+      .get(userId) as { n: number }
   ).n;
 }
 
 export async function runReferralFit(db: DB, opts: ReferralFitOptions): Promise<ReferralFitSummary> {
   const startedAt = Date.now();
+  const userId = opts.userId;
   const batchSize = opts.batchSize ?? 40;
   const summary: ReferralFitSummary = { classified: 0, referral: 0, direct: 0, errors: [], durationMs: 0 };
 
@@ -103,15 +106,15 @@ export async function runReferralFit(db: DB, opts: ReferralFitOptions): Promise<
       `SELECT j.id, j.company, j.title, m.direction, m.score
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id
-       WHERE a.status = 'matched' AND m.referral_fit IS NULL
+       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.status = 'matched' AND m.referral_fit IS NULL
        ORDER BY COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC
        ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
     )
-    .all() as Row[];
+    .all(userId) as Row[];
 
   const update = db.prepare(
-    "UPDATE matches SET referral_fit = ?, referral_reason = ? WHERE job_id = ? AND referral_fit IS NULL"
+    "UPDATE matches SET referral_fit = ?, referral_reason = ? WHERE user_id = ? AND job_id = ? AND referral_fit IS NULL"
   );
 
   const batches: Row[][] = [];
@@ -132,7 +135,7 @@ export async function runReferralFit(db: DB, opts: ReferralFitOptions): Promise<
       for (const row of batch) {
         const r = byId.get(row.id);
         if (!r) continue;
-        const info = update.run(r.referral_fit ? 1 : 0, r.reason, row.id);
+        const info = update.run(r.referral_fit ? 1 : 0, r.reason, userId, row.id);
         if (info.changes === 0) continue;
         summary.classified++;
         if (r.referral_fit) summary.referral++;
@@ -153,7 +156,7 @@ export async function runReferralFit(db: DB, opts: ReferralFitOptions): Promise<
   await Promise.all(Array.from({ length: Math.min(concurrency, batches.length) }, worker));
 
   summary.durationMs = Date.now() - startedAt;
-  logEvent(db, "referral_fit_done", { entity: "matcher", payload: summary });
+  logEvent(db, "referral_fit_done", { userId, entity: "matcher", payload: summary });
   return summary;
 }
 

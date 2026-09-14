@@ -11,7 +11,7 @@ export interface LogStep {
 
 const RULES: [StepKind, RegExp][] = [
   ["error", /失败|错误|error|failed|异常|验证码|captcha|限流|rate.?limit/i],
-  ["warn", /跳过|needs_manual|需人工|归档|超时|不合格|拦下|skip|manual|archiv|timed? ?out|ineligible/i],
+  ["warn", /跳过|needs_manual|需人工|暂停|待处理|登录墙|归档|超时|不合格|拦下|skip|manual|archiv|timed? ?out|ineligible|paused|login wall|to.?do/i],
   ["wait", /等待|心跳|轮询|等你|排队|waiting|heartbeat|poll|queued/i],
   ["ok", /已提交|成功|完成|已发出|已发送|批准|submitted|success|done|complete|sent|approved/i],
 ];

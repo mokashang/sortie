@@ -3,6 +3,9 @@ import { openDb, DB } from "@/lib/db";
 import { upsertPerson, createOutreach } from "@/network/crm";
 import { funnel, byDirection, networkingFunnel, crossStats, weekly, todo } from "@/network/stats";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 function db(): DB {
   return openDb(":memory:");
 }
@@ -64,7 +67,7 @@ describe("funnel", () => {
     seedApp(d, { status: "offer_accepted", submittedAt: daysAgo(30) });
     seedApp(d, { status: "offer_declined", submittedAt: daysAgo(30) });
 
-    expect(funnel(d)).toEqual({
+    expect(funnel(d, U)).toEqual({
       discovered: 1,
       matched: 1,
       submitted: 1,
@@ -78,7 +81,7 @@ describe("funnel", () => {
 
   it("returns all zeros on an empty db", () => {
     const d = db();
-    expect(funnel(d)).toEqual({
+    expect(funnel(d, U)).toEqual({
       discovered: 0,
       matched: 0,
       submitted: 0,
@@ -109,7 +112,7 @@ describe("byDirection", () => {
     seedApp(d, { direction: "ai_infra", tier: 2, status: "offer_accepted", submittedAt: daysAgo(30) });
     seedApp(d, { direction: "ai_infra", tier: 2, status: "offer_declined", submittedAt: daysAgo(30) });
 
-    const rows = byDirection(d);
+    const rows = byDirection(d, U);
     const swe = rows.find((r) => r.direction === "swe_general" && r.tier === 1);
     const ai = rows.find((r) => r.direction === "ai_infra" && r.tier === 2);
 
@@ -119,7 +122,7 @@ describe("byDirection", () => {
 
   it("returns an empty array on an empty db", () => {
     const d = db();
-    expect(byDirection(d)).toEqual([]);
+    expect(byDirection(d, U)).toEqual([]);
   });
 
   it("sorts the NULL-direction bucket last, even when its tier would otherwise sort it first", () => {
@@ -129,7 +132,7 @@ describe("byDirection", () => {
     seedApp(d, { direction: null, tier: 1, status: "matched" });
     seedApp(d, { direction: "swe_general", tier: 3, status: "matched" });
 
-    const rows = byDirection(d);
+    const rows = byDirection(d, U);
     expect(rows).toHaveLength(2);
     expect(rows[rows.length - 1].direction).toBeNull();
     expect(rows[0].direction).toBe("swe_general");
@@ -139,14 +142,14 @@ describe("byDirection", () => {
 describe("networkingFunnel", () => {
   it("counts outreach by status for the named networking stages", () => {
     const d = db();
-    const personId = upsertPerson(d, { name: "Jane Doe" });
+    const personId = upsertPerson(d, U, { name: "Jane Doe" });
     const statuses = ["draft", "draft", "pending_send", "sent", "replied", "meeting", "referral_won", "no_response", "archived"];
     for (const status of statuses) {
-      const id = createOutreach(d, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "hi" });
+      const id = createOutreach(d, U, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "hi" });
       d.prepare("UPDATE outreach SET status = ? WHERE id = ?").run(status, id);
     }
 
-    expect(networkingFunnel(d)).toEqual({
+    expect(networkingFunnel(d, U)).toEqual({
       drafts: 2,
       pending: 1,
       sent: 1,
@@ -158,14 +161,14 @@ describe("networkingFunnel", () => {
 
   it("returns all zeros on an empty db", () => {
     const d = db();
-    expect(networkingFunnel(d)).toEqual({ drafts: 0, pending: 0, sent: 0, replied: 0, meetings: 0, referrals: 0 });
+    expect(networkingFunnel(d, U)).toEqual({ drafts: 0, pending: 0, sent: 0, replied: 0, meetings: 0, referrals: 0 });
   });
 });
 
 describe("crossStats", () => {
   it("splits submitted/interviews by whether the application has a referral_person_id", () => {
     const d = db();
-    const personId = upsertPerson(d, { name: "Referrer" });
+    const personId = upsertPerson(d, U, { name: "Referrer" });
 
     // With referral: 2 apps, both submitted, both interview-or-beyond.
     seedApp(d, { status: "interview", submittedAt: daysAgo(3), referralPersonId: personId });
@@ -176,7 +179,7 @@ describe("crossStats", () => {
     seedApp(d, { status: "oa", submittedAt: daysAgo(1) });
     seedApp(d, { status: "matched" }); // never submitted
 
-    expect(crossStats(d)).toEqual({
+    expect(crossStats(d, U)).toEqual({
       withReferral: { submitted: 2, interviews: 2 },
       without: { submitted: 2, interviews: 0 },
     });
@@ -186,7 +189,7 @@ describe("crossStats", () => {
 describe("weekly", () => {
   it("buckets applications.submitted_at and outreach.created_at into this-week / last-week (rolling 7-day windows)", () => {
     const d = db();
-    const personId = upsertPerson(d, { name: "Jane Doe" });
+    const personId = upsertPerson(d, U, { name: "Jane Doe" });
 
     // Applications: 3 submitted this week (0/3/6 days ago), 1 last week (10 days ago),
     // 1 too old for either bucket (20 days ago).
@@ -198,7 +201,7 @@ describe("weekly", () => {
 
     // Outreach: 2 created this week, 1 created last week.
     for (const [i, offset] of [0, 5, 9].entries()) {
-      const id = createOutreach(d, {
+      const id = createOutreach(d, U, {
         personId,
         playbook: "coffee_chat",
         channel: "linkedin",
@@ -207,7 +210,7 @@ describe("weekly", () => {
       d.prepare("UPDATE outreach SET created_at = ? WHERE id = ?").run(daysAgo(offset), id);
     }
 
-    expect(weekly(d)).toEqual({
+    expect(weekly(d, U)).toEqual({
       thisWeek: { submittedApplications: 3, newOutreach: 2 },
       lastWeek: { submittedApplications: 1, newOutreach: 1 },
     });
@@ -221,15 +224,15 @@ describe("todo", () => {
     seedApp(d, { status: "awaiting_confirm" });
     seedApp(d, { status: "matched" });
 
-    const personId = upsertPerson(d, { name: "Stale Contact", company: "Acme" });
-    upsertPerson(d, { name: "Recent Contact", company: "Acme" });
+    const personId = upsertPerson(d, U, { name: "Stale Contact", company: "Acme" });
+    upsertPerson(d, U, { name: "Recent Contact", company: "Acme" });
 
     // Two drafts awaiting the user's approve/reject decision.
-    createOutreach(d, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "d1" });
-    createOutreach(d, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "d2" });
+    createOutreach(d, U, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "d1" });
+    createOutreach(d, U, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "d2" });
 
     // Stale: sent 10 days ago, never replied.
-    const staleId = createOutreach(d, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "stale" });
+    const staleId = createOutreach(d, U, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "stale" });
     d.prepare("UPDATE outreach SET status = 'sent' WHERE id = ?").run(staleId);
     d.prepare("UPDATE outreach SET thread_log = ? WHERE id = ?").run(
       JSON.stringify([{ at: daysAgo(10), dir: "sent", text: "stale" }]),
@@ -237,7 +240,7 @@ describe("todo", () => {
     );
 
     // Not stale: sent 1 day ago.
-    const recentId = createOutreach(d, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "recent" });
+    const recentId = createOutreach(d, U, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "recent" });
     d.prepare("UPDATE outreach SET status = 'sent' WHERE id = ?").run(recentId);
     d.prepare("UPDATE outreach SET thread_log = ? WHERE id = ?").run(
       JSON.stringify([{ at: daysAgo(1), dir: "sent", text: "recent" }]),
@@ -245,7 +248,7 @@ describe("todo", () => {
     );
 
     // Not stale (excluded): replied, even though the original send was long ago.
-    const repliedId = createOutreach(d, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "replied" });
+    const repliedId = createOutreach(d, U, { personId, playbook: "coffee_chat", channel: "linkedin", draft: "replied" });
     d.prepare("UPDATE outreach SET status = 'replied' WHERE id = ?").run(repliedId);
     d.prepare("UPDATE outreach SET thread_log = ? WHERE id = ?").run(
       JSON.stringify([
@@ -255,7 +258,7 @@ describe("todo", () => {
       repliedId
     );
 
-    const result = todo(d);
+    const result = todo(d, U);
     expect(result.pendingConfirms).toBe(2);
     expect(result.pendingSends).toBe(2);
     expect(result.staleFollowups).toHaveLength(1);

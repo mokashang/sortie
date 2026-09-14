@@ -21,23 +21,23 @@ interface ResumeRow {
 }
 
 // Picks the resume version to attach to a job's application: looks up the direction the matcher
-// assigned (matches.direction), then finds the newest resumes row whose `directions` JSON array
-// contains that direction slug. Writes the chosen resume_id back onto the matches row so it's
-// recorded which version was actually used. Returns an error object (never throws) when there's
-// no direction to work from, or no resume has been generated for it yet — the caller is expected
-// to surface this as a "needs_manual" case ("go generate that direction's resume in Studio first").
+// assigned (matches.direction), then finds the newest of this user's resumes whose `directions`
+// JSON array contains that direction slug. Writes the chosen resume_id back onto the matches row
+// so it's recorded which version was actually used. Returns an error object (never throws) when
+// there's no direction to work from, or no resume has been generated for it yet — the caller is
+// expected to surface this as a "needs_manual" case ("go generate that direction's resume first").
 // pdfPath is resolved against the current data dir (resolveResumePath): the row may have been
 // compiled on another machine (the 2026-09-02 versions store Mac paths) and the executor needs a
 // path that exists here.
-export function selectResumeForJob(db: DB, jobId: number): ResumeSelection | ResumeSelectionError {
-  const match = db.prepare("SELECT direction FROM matches WHERE job_id = ?").get(jobId) as
+export function selectResumeForJob(db: DB, userId: string, jobId: number): ResumeSelection | ResumeSelectionError {
+  const match = db.prepare("SELECT direction FROM matches WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { direction: string | null }
     | undefined;
   const direction = match?.direction ?? null;
   if (!direction) return { error: "no_resume_for_direction", direction: null };
 
   const candidates = (
-    db.prepare("SELECT id, version_name, directions, pdf_path, compiled_at FROM resumes").all() as ResumeRow[]
+    db.prepare("SELECT id, version_name, directions, pdf_path, compiled_at FROM resumes WHERE user_id = ?").all(userId) as ResumeRow[]
   ).filter((r) => {
     try {
       return (JSON.parse(r.directions) as string[]).includes(direction);
@@ -55,7 +55,7 @@ export function selectResumeForJob(db: DB, jobId: number): ResumeSelection | Res
   });
   const chosen = candidates[0];
 
-  db.prepare("UPDATE matches SET resume_id = ? WHERE job_id = ?").run(chosen.id, jobId);
+  db.prepare("UPDATE matches SET resume_id = ? WHERE user_id = ? AND job_id = ?").run(chosen.id, userId, jobId);
 
   return { resumeId: chosen.id, pdfPath: resolveResumePath(chosen.pdf_path), versionName: chosen.version_name };
 }

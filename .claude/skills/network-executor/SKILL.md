@@ -35,6 +35,20 @@ ToolSearch({ query: "select:mcp__claude-in-chrome__list_connected_browsers,mcp__
 
 ---
 
+## 0. Authentication (accounts, 2026-09-13)
+
+Every App API call needs a bearer token (spec `docs/superpowers/specs/2026-09-13-accounts-design.md` §2).
+Set it once per session and put `-H "$AUTH"` on **every** `curl` below:
+
+```
+AUTH="authorization: Bearer $(cat data/internal-token)"   # on the server box: acts as the owner account
+```
+
+On another computer use a personal token from the App (设置 → 账号 → 助手令牌):
+`AUTH="authorization: Bearer sortie_…"`. A CLI session the dispatcher spawned already has its run
+token in the prompt — use that one. A 401 means the token is missing/revoked: stop and tell the user.
+Never write the token into run logs or into any web page.
+
 ## 1. Preflight
 
 Before touching the browser, verify both halves of the system are reachable:
@@ -42,7 +56,7 @@ Before touching the browser, verify both halves of the system are reachable:
 1. **App is running.** Use the **Bash tool** to call the App's API with `curl` — this is how you
    talk to `http://127.0.0.1:3000` for the *entire* skill, not just this check:
    ```
-   curl -s -X GET http://127.0.0.1:3000/api/network/sendables
+   curl -s -H "$AUTH" -X GET http://127.0.0.1:3000/api/network/sendables
    ```
    Expect a 200 with a JSON body shaped `{ "sendables": [...] }`. If the connection fails, tell
    the user the App isn't running (`npm run dev` in the project dir) and stop. Do not proceed on
@@ -84,14 +98,14 @@ selected.
 Before sending anything, sweep for replies to outreach already marked `sent`, so the CRM stays
 current and `followup` drafts you generate later have the real thread history:
 
-1. `curl -s "http://127.0.0.1:3000/api/network/outreach?status=sent"` → `{ "outreach": [...] }`,
+1. `curl -s -H "$AUTH" "http://127.0.0.1:3000/api/network/outreach?status=sent"` → `{ "outreach": [...] }`,
    each row shaped `{ id, personId, personName, personCompany, channel, draft, threadLog, status,
    ... }`. This is the set of people you're watching for replies.
 2. Open LinkedIn's messaging inbox (`linkedin.com/messaging`). For each conversation whose other
    participant's name matches a `personName` from step 1 (match on name; when a company is also
    visible in the conversation header, use it to disambiguate common names), check whether there's
    a message from them **after** the last entry in that row's `threadLog`.
-3. For each genuinely new reply, `curl -s -X POST http://127.0.0.1:3000/api/network/report
+3. For each genuinely new reply, `curl -s -H "$AUTH" -X POST http://127.0.0.1:3000/api/network/report
    -H 'content-type: application/json' -d '{"outreachId": <id>, "event": "reply", "text": "<the
    reply text, copied verbatim>"}'`. Copy the reply text exactly as it appears — don't summarize
    or paraphrase it into the CRM.
@@ -101,7 +115,7 @@ current and `followup` drafts you generate later have the real thread history:
 
 ### 2.2 Sending approved outreach
 
-1. `curl -s http://127.0.0.1:3000/api/network/sendables` → `{ "sendables": [...] }`, each row:
+1. `curl -s -H "$AUTH" http://127.0.0.1:3000/api/network/sendables` → `{ "sendables": [...] }`, each row:
    ```json
    {
      "id": 42,
@@ -167,7 +181,7 @@ current and `followup` drafts you generate later have the real thread history:
         content and confirm it's character-for-character identical to `row.draft` before clicking
         Send.
    e. **After a successful send** (connection request, DM, or a double-send-guard match found in
-      (d)): `curl -s -X POST http://127.0.0.1:3000/api/network/report -H 'content-type:
+      (d)): `curl -s -H "$AUTH" -X POST http://127.0.0.1:3000/api/network/report -H 'content-type:
       application/json' -d '{"outreachId": <row.id>, "event": "sent", "text": "<sentText, exactly
       what went out — JSON-escaped>"}'`. Always include `text` — even when it's identical to
       `row.draft` — so the App's thread_log records what was truly sent rather than assuming the
@@ -191,7 +205,7 @@ here always goes through the normal draft → approve → send-mode pipeline in 
 1. **Pick target companies.** Either the user names specific companies directly, or pull the
    queue's top companies:
    ```
-   curl -s "http://127.0.0.1:3000/api/queue?min=80"
+   curl -s -H "$AUTH" "http://127.0.0.1:3000/api/queue?min=80"
    ```
    → `{ "queue": [...] }`, rows include `company`, `tier`, `score`. Take the top-ranked distinct
    companies (lowest `tier`, then highest `score`) up to the session cap in §4.
@@ -228,7 +242,7 @@ here always goes through the normal draft → approve → send-mode pipeline in 
 
 4. **Write each person into the CRM:**
    ```
-   curl -s -X POST http://127.0.0.1:3000/api/network/people -H 'content-type: application/json' \
+   curl -s -H "$AUTH" -X POST http://127.0.0.1:3000/api/network/people -H 'content-type: application/json' \
      -d '{"name": "...", "company": "...", "role_title": "...", "linkedin_url": "...", "relation": "...", "source": "executor", "notes": "USC CS 2020, leads the payments platform team; posted about idempotency keys last week"}'
    ```
    `upsertPerson` on the App side dedupes on `linkedin_url`, so re-running this mode over

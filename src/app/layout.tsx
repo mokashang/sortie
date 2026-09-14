@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Archivo, Martian_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./components/providers";
-import { AppShell } from "./components/shell/app-shell";
 import { ThemeScript } from "./components/shell/theme-script";
 import { HTML_LANG } from "@/i18n/lang";
 import { getLang, getMessages } from "@/i18n/server";
@@ -44,6 +43,8 @@ export const viewport: Viewport = {
   ],
 };
 
+// The root layout only sets up fonts, theme, language and providers. The signed-in shell
+// (topbar, overview polling) lives in (app)/layout.tsx; the sign-in pages in (auth)/layout.tsx.
 // The UI language comes from the sortie.lang cookie (falling back to the saved preference), so
 // the server renders every page in the chosen language and the client picks it up from context.
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -54,9 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ThemeScript />
       </head>
       <body>
-        <Providers lang={lang}>
-          <AppShell>{children}</AppShell>
-        </Providers>
+        <Providers lang={lang}>{children}</Providers>
       </body>
     </html>
   );

@@ -5,6 +5,7 @@ import { defineMessages } from "../define";
 // the "front of the queue" list.
 export const today = defineMessages({
   zh: {
+    profileGate: { title: "先填好档案的基本信息", description: "助手要靠联系方式、学校、工作身份和方向来打分、生成简历、填表;填完就自动开始匹配。", cta: "去填写" },
     head: {
       nothingToDecide: "今天没有需要你决定的事",
       toDecide: (n: number) => `有 ${n} 件事等你决定`,
@@ -32,6 +33,11 @@ export const today = defineMessages({
     },
   },
   en: {
+    profileGate: {
+      title: "Fill in the basics of your profile first",
+      description: "The assistant needs your contact details, school, work authorization and tracks to score jobs, build resumes and fill forms; matching starts on its own once they are in.",
+      cta: "Fill them in",
+    },
     head: {
       nothingToDecide: "Nothing needs your decision today",
       toDecide: (n: number) => (n === 1 ? "1 thing needs your decision" : `${n} things need your decision`),

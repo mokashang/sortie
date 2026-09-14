@@ -15,8 +15,11 @@ import path from "path";
 // boot a Playwright MCP and a hanzi-browse server it never used (six at a time during a matching
 // pass), inherited from the user-scope config.
 
-export function browserProfileDir(cwd = process.cwd()): string {
-  return path.join(cwd, "data", "browser-profile");
+// The owner's profile stays at the pre-accounts location; every other account gets its own dir
+// under data/users/<id> (spec 2026-09-13 accounts §3) so two people's logins never share cookies.
+export function browserProfileDir(cwd = process.cwd(), userId: string | null = null): string {
+  const base = process.env.DATA_DIR || path.join(cwd, "data");
+  return userId ? path.join(base, "users", userId, "browser-profile") : path.join(base, "browser-profile");
 }
 
 export interface McpServerSpec {

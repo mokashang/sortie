@@ -3,7 +3,7 @@ import { DB } from "@/lib/db";
 // Dashboard stats (Plan 5 §10). Every function here is a pure, read-only SQL query (plus, for
 // staleFollowups, a bit of read-only JS post-processing over thread_log JSON — SQLite has no
 // convenient way to pull the max of a JSON array's timestamps in plain SQL). Nothing here writes
-// to the db.
+// to the db. All of it is per account.
 
 // ---- funnel -----------------------------------------------------------------------------
 
@@ -33,10 +33,10 @@ const FUNNEL_STATUSES: (keyof Funnel)[] = [
   "archived",
 ];
 
-export function funnel(db: DB): Funnel {
+export function funnel(db: DB, userId: string): Funnel {
   const rows = db
-    .prepare("SELECT status, COUNT(*) as n FROM applications GROUP BY status")
-    .all() as { status: string; n: number }[];
+    .prepare("SELECT status, COUNT(*) as n FROM applications WHERE user_id = ? GROUP BY status")
+    .all(userId) as { status: string; n: number }[];
   const counts = new Map(rows.map((r) => [r.status, r.n]));
   const result = {} as Funnel;
   for (const key of FUNNEL_STATUSES) result[key] = counts.get(key) ?? 0;
@@ -64,7 +64,7 @@ export interface DirectionRow {
 //   rejected still counts (submitted_at is a one-way marker, unlike status which moves on).
 // - interviews: status IN (INTERVIEW_OR_BEYOND) — reached interview stage or beyond, including
 //   offers that were since accepted or declined.
-export function byDirection(db: DB): DirectionRow[] {
+export function byDirection(db: DB, userId: string): DirectionRow[] {
   const rows = db
     .prepare(
       `SELECT m.direction as direction, m.tier as tier,
@@ -72,11 +72,12 @@ export function byDirection(db: DB): DirectionRow[] {
               SUM(CASE WHEN a.submitted_at IS NOT NULL THEN 1 ELSE 0 END) as submitted,
               SUM(CASE WHEN a.status IN ${INTERVIEW_OR_BEYOND} THEN 1 ELSE 0 END) as interviews
        FROM matches m
-       JOIN applications a ON a.job_id = m.job_id
+       JOIN applications a ON a.job_id = m.job_id AND a.user_id = m.user_id
+       WHERE m.user_id = ?
        GROUP BY m.direction, m.tier
        ORDER BY m.direction IS NULL ASC, m.tier ASC, m.direction ASC`
     )
-    .all() as { direction: string | null; tier: number | null; total: number; submitted: number; interviews: number }[];
+    .all(userId) as { direction: string | null; tier: number | null; total: number; submitted: number; interviews: number }[];
   return rows.map((r) => ({
     direction: r.direction,
     tier: r.tier,
@@ -108,10 +109,10 @@ const NETWORKING_STATUS_MAP: Record<keyof NetworkingFunnel, string> = {
   referrals: "referral_won",
 };
 
-export function networkingFunnel(db: DB): NetworkingFunnel {
+export function networkingFunnel(db: DB, userId: string): NetworkingFunnel {
   const rows = db
-    .prepare("SELECT status, COUNT(*) as n FROM outreach GROUP BY status")
-    .all() as { status: string; n: number }[];
+    .prepare("SELECT status, COUNT(*) as n FROM outreach WHERE user_id = ? GROUP BY status")
+    .all(userId) as { status: string; n: number }[];
   const counts = new Map(rows.map((r) => [r.status, r.n]));
   const result = {} as NetworkingFunnel;
   for (const key of Object.keys(NETWORKING_STATUS_MAP) as (keyof NetworkingFunnel)[]) {
@@ -135,21 +136,21 @@ export interface CrossStats {
 // applications split on referral_person_id IS NOT NULL vs IS NULL (§7.4's bidirectional link:
 // an application can point back at the outreach/person that produced it). Same submitted/
 // interviews definitions as byDirection above, for a like-for-like referral vs. cold comparison.
-function crossBucket(db: DB, hasReferral: boolean): CrossBucket {
+function crossBucket(db: DB, userId: string, hasReferral: boolean): CrossBucket {
   const row = db
     .prepare(
       `SELECT
          SUM(CASE WHEN submitted_at IS NOT NULL THEN 1 ELSE 0 END) as submitted,
          SUM(CASE WHEN status IN ${INTERVIEW_OR_BEYOND} THEN 1 ELSE 0 END) as interviews
        FROM applications
-       WHERE referral_person_id IS ${hasReferral ? "NOT NULL" : "NULL"}`
+       WHERE user_id = ? AND referral_person_id IS ${hasReferral ? "NOT NULL" : "NULL"}`
     )
-    .get() as { submitted: number | null; interviews: number | null };
+    .get(userId) as { submitted: number | null; interviews: number | null };
   return { submitted: row.submitted ?? 0, interviews: row.interviews ?? 0 };
 }
 
-export function crossStats(db: DB): CrossStats {
-  return { withReferral: crossBucket(db, true), without: crossBucket(db, false) };
+export function crossStats(db: DB, userId: string): CrossStats {
+  return { withReferral: crossBucket(db, userId, true), without: crossBucket(db, userId, false) };
 }
 
 // ---- weekly ---------------------------------------------------------------------------------
@@ -167,16 +168,16 @@ export interface Weekly {
 // Rolling 7-day windows anchored on "now" (not calendar weeks) — thisWeek = last 7 days,
 // lastWeek = the 7 days before that. Avoids Sunday/Monday-start ambiguity and stays simple to
 // reason about ("how much happened in the last week vs. the week before").
-export function weekly(db: DB): Weekly {
+export function weekly(db: DB, userId: string): Weekly {
   const submitted = db
     .prepare(
       `SELECT
          SUM(CASE WHEN julianday('now') - julianday(submitted_at) < 7 THEN 1 ELSE 0 END) as thisWeek,
          SUM(CASE WHEN julianday('now') - julianday(submitted_at) >= 7
                    AND julianday('now') - julianday(submitted_at) < 14 THEN 1 ELSE 0 END) as lastWeek
-       FROM applications WHERE submitted_at IS NOT NULL`
+       FROM applications WHERE user_id = ? AND submitted_at IS NOT NULL`
     )
-    .get() as { thisWeek: number | null; lastWeek: number | null };
+    .get(userId) as { thisWeek: number | null; lastWeek: number | null };
 
   const outreach = db
     .prepare(
@@ -184,9 +185,9 @@ export function weekly(db: DB): Weekly {
          SUM(CASE WHEN julianday('now') - julianday(created_at) < 7 THEN 1 ELSE 0 END) as thisWeek,
          SUM(CASE WHEN julianday('now') - julianday(created_at) >= 7
                    AND julianday('now') - julianday(created_at) < 14 THEN 1 ELSE 0 END) as lastWeek
-       FROM outreach`
+       FROM outreach WHERE user_id = ?`
     )
-    .get() as { thisWeek: number | null; lastWeek: number | null };
+    .get(userId) as { thisWeek: number | null; lastWeek: number | null };
 
   return {
     thisWeek: { submittedApplications: submitted.thisWeek ?? 0, newOutreach: outreach.thisWeek ?? 0 },
@@ -211,16 +212,16 @@ export interface Todo {
 
 const STALE_DAYS = 5;
 
-export function todo(db: DB): Todo {
+export function todo(db: DB, userId: string): Todo {
   const pendingConfirms = (
-    db.prepare("SELECT COUNT(*) as n FROM applications WHERE status = 'awaiting_confirm'").get() as { n: number }
+    db.prepare("SELECT COUNT(*) as n FROM applications WHERE user_id = ? AND status = 'awaiting_confirm'").get(userId) as { n: number }
   ).n;
 
   // "去批准" — outreach drafts still waiting on the user's approve/reject decision (the thing
   // blocking anything from ever reaching pending_send/sent). Named pendingSends per the plan's
   // signature, read as "outreach pending [being cleared to] send".
   const pendingSends = (
-    db.prepare("SELECT COUNT(*) as n FROM outreach WHERE status = 'draft'").get() as { n: number }
+    db.prepare("SELECT COUNT(*) as n FROM outreach WHERE user_id = ? AND status = 'draft'").get(userId) as { n: number }
   ).n;
 
   // Stale followups: status='sent' (no reply yet — 'replied' rows are excluded entirely,
@@ -231,9 +232,9 @@ export function todo(db: DB): Todo {
     .prepare(
       `SELECT o.id as id, o.thread_log as thread_log, p.name as person_name, p.company as person_company
        FROM outreach o JOIN people p ON p.id = o.person_id
-       WHERE o.status = 'sent'`
+       WHERE o.user_id = ? AND o.status = 'sent'`
     )
-    .all() as { id: number; thread_log: string; person_name: string; person_company: string | null }[];
+    .all(userId) as { id: number; thread_log: string; person_name: string; person_company: string | null }[];
 
   const staleFollowups: StaleFollowup[] = [];
   const now = Date.now();

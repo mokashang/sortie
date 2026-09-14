@@ -38,29 +38,34 @@ function rowToExperience(r: Row): Experience {
   };
 }
 
-export function createExperience(db: DB, input: ExperienceInput): number {
+// The experience bank is per account: every function takes the acting user and an update/delete
+// of another account's row is reported as unknown.
+export function createExperience(db: DB, userId: string, input: ExperienceInput): number {
   const e = ExperienceInputSchema.parse(input);
   const info = db
     .prepare(
-      `INSERT INTO experiences (kind, title, organization, location, start_date, end_date, bullets, sort_order)
-       VALUES (?,?,?,?,?,?,?,?)`
+      `INSERT INTO experiences (user_id, kind, title, organization, location, start_date, end_date, bullets, sort_order)
+       VALUES (?,?,?,?,?,?,?,?,?)`
     )
-    .run(e.kind, e.title, e.organization ?? null, e.location ?? null, e.start_date ?? null, e.end_date ?? null, JSON.stringify(e.bullets), e.sort_order);
+    .run(userId, e.kind, e.title, e.organization ?? null, e.location ?? null, e.start_date ?? null, e.end_date ?? null, JSON.stringify(e.bullets), e.sort_order);
   return Number(info.lastInsertRowid);
 }
 
-export function listExperiences(db: DB): Experience[] {
-  const rows = db.prepare("SELECT * FROM experiences ORDER BY kind ASC, sort_order ASC, id ASC").all() as Row[];
+export function listExperiences(db: DB, userId: string): Experience[] {
+  const rows = db
+    .prepare("SELECT id, kind, title, organization, location, start_date, end_date, bullets, sort_order FROM experiences WHERE user_id = ? ORDER BY kind ASC, sort_order ASC, id ASC")
+    .all(userId) as Row[];
   return rows.map(rowToExperience);
 }
 
-export function updateExperience(db: DB, id: number, input: ExperienceInput): void {
+export function updateExperience(db: DB, userId: string, id: number, input: ExperienceInput): void {
   const e = ExperienceInputSchema.parse(input);
-  db.prepare(
-    `UPDATE experiences SET kind=?, title=?, organization=?, location=?, start_date=?, end_date=?, bullets=?, sort_order=? WHERE id=?`
-  ).run(e.kind, e.title, e.organization ?? null, e.location ?? null, e.start_date ?? null, e.end_date ?? null, JSON.stringify(e.bullets), e.sort_order, id);
+  const info = db.prepare(
+    `UPDATE experiences SET kind=?, title=?, organization=?, location=?, start_date=?, end_date=?, bullets=?, sort_order=? WHERE user_id=? AND id=?`
+  ).run(e.kind, e.title, e.organization ?? null, e.location ?? null, e.start_date ?? null, e.end_date ?? null, JSON.stringify(e.bullets), e.sort_order, userId, id);
+  if (info.changes === 0) throw new Error(`updateExperience: unknown experience ${id}`);
 }
 
-export function deleteExperience(db: DB, id: number): void {
-  db.prepare("DELETE FROM experiences WHERE id=?").run(id);
+export function deleteExperience(db: DB, userId: string, id: number): void {
+  db.prepare("DELETE FROM experiences WHERE user_id = ? AND id = ?").run(userId, id);
 }

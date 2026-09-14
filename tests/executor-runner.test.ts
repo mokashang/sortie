@@ -3,6 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { openDb, DB } from "@/lib/db";
+import { seedOwner } from "./helpers";
 import {
   startExecutor,
   stopExecutor,
@@ -17,6 +18,9 @@ import {
   SpawnedChild,
   SpawnFn,
 } from "@/executor/runner";
+
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
 
 // A fake child process that never actually spawns `claude` — the fake spawn function below
 // tracks calls and returns one of these so tests can drive/inspect it without touching the
@@ -67,6 +71,7 @@ describe("executor/runner", () => {
 
   beforeEach(() => {
     db = openDb(":memory:");
+    seedOwner(db, U);
     tmpLogDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobseeker-executor-logs-"));
   });
 
@@ -77,7 +82,7 @@ describe("executor/runner", () => {
   describe("startExecutor", () => {
     it("creates a running row with pid + log_path, and writes the prompt to stdin", () => {
       const { spawnFn, child } = makeFakeSpawn(process.pid); // use our own pid: guaranteed "alive"
-      const result = startExecutor(db, "apply", { limit: 3 }, { spawn: spawnFn, logDir: tmpLogDir });
+      const result = startExecutor(db, U, "apply", { limit: 3 }, { spawn: spawnFn, logDir: tmpLogDir });
 
       expect(result.id).toBeGreaterThan(0);
       expect(result.pid).toBe(process.pid);
@@ -107,28 +112,28 @@ describe("executor/runner", () => {
 
     it("refuses to start a duplicate kind while one is already running", () => {
       const { spawnFn: spawn1 } = makeFakeSpawn(process.pid);
-      startExecutor(db, "apply", {}, { spawn: spawn1, logDir: tmpLogDir });
+      startExecutor(db, U, "apply", {}, { spawn: spawn1, logDir: tmpLogDir });
 
       const { spawnFn: spawn2 } = makeFakeSpawn(process.pid);
-      expect(() => startExecutor(db, "apply", {}, { spawn: spawn2, logDir: tmpLogDir })).toThrow(/already/i);
+      expect(() => startExecutor(db, U, "apply", {}, { spawn: spawn2, logDir: tmpLogDir })).toThrow(/already/i);
       expect(spawn2).not.toHaveBeenCalled();
     });
 
     it("allows a different kind to start concurrently", () => {
       const { spawnFn: spawn1 } = makeFakeSpawn(process.pid);
-      startExecutor(db, "apply", {}, { spawn: spawn1, logDir: tmpLogDir });
+      startExecutor(db, U, "apply", {}, { spawn: spawn1, logDir: tmpLogDir });
 
       const { spawnFn: spawn2 } = makeFakeSpawn(process.pid);
-      expect(() => startExecutor(db, "network_send", {}, { spawn: spawn2, logDir: tmpLogDir })).not.toThrow();
+      expect(() => startExecutor(db, U, "network_send", {}, { spawn: spawn2, logDir: tmpLogDir })).not.toThrow();
     });
 
     it("reclaims a duplicate-kind slot whose pid is dead and proceeds", () => {
       const deadPid = 999999; // astronomically unlikely to be a live pid
       const { spawnFn: spawn1 } = makeFakeSpawn(deadPid);
-      const first = startExecutor(db, "apply", {}, { spawn: spawn1, logDir: tmpLogDir });
+      const first = startExecutor(db, U, "apply", {}, { spawn: spawn1, logDir: tmpLogDir });
 
       const { spawnFn: spawn2 } = makeFakeSpawn(process.pid);
-      const second = startExecutor(db, "apply", {}, { spawn: spawn2, logDir: tmpLogDir });
+      const second = startExecutor(db, U, "apply", {}, { spawn: spawn2, logDir: tmpLogDir });
       expect(second.id).not.toBe(first.id);
 
       const firstRow = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(first.id) as { status: string };
@@ -137,7 +142,7 @@ describe("executor/runner", () => {
 
     it("updates status to done/failed on child exit", () => {
       const { spawnFn, child } = makeFakeSpawn(process.pid);
-      const result = startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir });
+      const result = startExecutor(db, U, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir });
 
       child.emitExit(0);
       const rowOk = db.prepare("SELECT status, ended_at FROM executor_runs WHERE id=?").get(result.id) as {
@@ -150,7 +155,7 @@ describe("executor/runner", () => {
 
     it("marks the run failed on a nonzero exit code", () => {
       const { spawnFn, child } = makeFakeSpawn(process.pid);
-      const result = startExecutor(db, "network_find", {}, { spawn: spawnFn, logDir: tmpLogDir });
+      const result = startExecutor(db, U, "network_find", {}, { spawn: spawnFn, logDir: tmpLogDir });
 
       child.emitExit(1);
       const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(result.id) as { status: string };
@@ -159,7 +164,7 @@ describe("executor/runner", () => {
 
     it("starts a headless jd_review run and pipes the jd_review prompt to stdin", () => {
       const { spawnFn, child } = makeFakeSpawn(process.pid);
-      const r = startExecutor(db, "jd_review", { limit: 40 }, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+      const r = startExecutor(db, U, "jd_review", { limit: 40 }, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
       expect(r.pid).toBe(process.pid);
       expect(child.written).toContain("/api/jd-review/batch?limit=40");
       const row = db.prepare("SELECT kind, channel FROM executor_runs WHERE id=?").get(r.id) as any;
@@ -175,11 +180,11 @@ describe("executor/runner", () => {
       // that cannot exist — with our own pid the test would kill the vitest worker itself.
       const win = process.platform === "win32";
       const { spawnFn } = makeFakeSpawn(win ? 999999 : process.pid);
-      const result = startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir });
+      const result = startExecutor(db, U, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir });
 
       const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
       try {
-        stopExecutor(db, result.id);
+        stopExecutor(db, U, result.id);
 
         // Assert on the spy BEFORE restoring — mockRestore() also clears recorded call history
         // (it's mockReset() + restore-original), so asserting after restore would always fail.
@@ -199,14 +204,14 @@ describe("executor/runner", () => {
     });
 
     it("throws for an unknown run id", () => {
-      expect(() => stopExecutor(db, 999)).toThrow();
+      expect(() => stopExecutor(db, U, 999)).toThrow();
     });
 
     it("throws when the run is not currently running", () => {
       const { spawnFn, child } = makeFakeSpawn(process.pid);
-      const result = startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir });
+      const result = startExecutor(db, U, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir });
       child.emitExit(0);
-      expect(() => stopExecutor(db, result.id)).toThrow(/not running/i);
+      expect(() => stopExecutor(db, U, result.id)).toThrow(/not running/i);
     });
   });
 
@@ -269,45 +274,45 @@ describe("executor/runner", () => {
 
   describe("hasLiveRun", () => {
     it("is false when there is no running row of that kind", () => {
-      expect(hasLiveRun(db, "apply")).toBe(false);
+      expect(hasLiveRun(db, U, "apply")).toBe(false);
     });
 
     it("is true when a running row of that kind has a live pid", () => {
       db.prepare(
         "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('apply','running', ?, '/tmp/x.log')"
       ).run(process.pid);
-      expect(hasLiveRun(db, "apply")).toBe(true);
+      expect(hasLiveRun(db, U, "apply")).toBe(true);
     });
 
     it("is false when the only running row of that kind has a dead pid", () => {
       db.prepare(
         "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('apply','running', 999999, '/tmp/x.log')"
       ).run();
-      expect(hasLiveRun(db, "apply")).toBe(false);
+      expect(hasLiveRun(db, U, "apply")).toBe(false);
     });
 
     it("does not count a running row of a different kind", () => {
       db.prepare(
         "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('network_send','running', ?, '/tmp/x.log')"
       ).run(process.pid);
-      expect(hasLiveRun(db, "apply")).toBe(false);
+      expect(hasLiveRun(db, U, "apply")).toBe(false);
     });
 
     it("does not count a done/failed/stopped row even with a live-looking pid", () => {
       db.prepare(
         "INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('apply','done', ?, '/tmp/x.log')"
       ).run(process.pid);
-      expect(hasLiveRun(db, "apply")).toBe(false);
+      expect(hasLiveRun(db, U, "apply")).toBe(false);
     });
   });
 
   describe("executorStatus", () => {
     it("lists recent runs (most recent first) up to 10, and tails the log for running ones", () => {
       const { spawnFn } = makeFakeSpawn(process.pid);
-      const result = startExecutor(db, "apply", { limit: 2 }, { spawn: spawnFn, logDir: tmpLogDir });
+      const result = startExecutor(db, U, "apply", { limit: 2 }, { spawn: spawnFn, logDir: tmpLogDir });
       fs.appendFileSync(result.logPath, "line1\nline2\nline3\n");
 
-      const rows = executorStatus(db);
+      const rows = executorStatus(db, U);
       expect(rows.length).toBeGreaterThan(0);
       const row = rows.find((r) => r.id === result.id)!;
       expect(row.kind).toBe("apply");
@@ -318,7 +323,7 @@ describe("executor/runner", () => {
 
     it("reaps stale runs before listing", () => {
       db.prepare("INSERT INTO executor_runs (kind, status, pid, log_path) VALUES ('apply','running', 999999, '/tmp/x.log')").run();
-      const rows = executorStatus(db);
+      const rows = executorStatus(db, U);
       const row = rows.find((r) => r.kind === "apply")!;
       expect(row.status).toBe("failed");
     });
@@ -327,7 +332,7 @@ describe("executor/runner", () => {
   describe("user_chrome channel", () => {
     it("startExecutor(..., 'user_chrome') queues a row with no spawn, pid NULL, and an empty log file", () => {
       const { spawnFn } = makeFakeSpawn(process.pid);
-      const result = startExecutor(db, "apply", { resume: true }, { spawn: spawnFn, logDir: tmpLogDir }, "user_chrome");
+      const result = startExecutor(db, U, "apply", { resume: true }, { spawn: spawnFn, logDir: tmpLogDir }, "user_chrome");
 
       expect(spawnFn).not.toHaveBeenCalled();
       expect(result.pid).toBeNull();
@@ -342,33 +347,33 @@ describe("executor/runner", () => {
     });
 
     it("refuses a duplicate user_chrome start while one of the same kind is queued", () => {
-      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-      expect(() => startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).toThrow(/already/i);
+      startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      expect(() => startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).toThrow(/already/i);
     });
 
     it("refuses a duplicate user_chrome start while one of the same kind is running (claimed)", () => {
-      const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-      claimNextRun(db, "user_chrome");
+      const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      claimNextRun(db, U, "user_chrome");
       expect(queued).toBeTruthy();
-      expect(() => startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).toThrow(/already/i);
+      expect(() => startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).toThrow(/already/i);
     });
 
     it("headless and user_chrome runs of the same kind do not block each other", () => {
       const { spawnFn } = makeFakeSpawn(process.pid);
-      expect(() => startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless")).not.toThrow();
-      expect(() => startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).not.toThrow();
+      expect(() => startExecutor(db, U, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless")).not.toThrow();
+      expect(() => startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome")).not.toThrow();
     });
 
     describe("claimNextRun", () => {
       it("returns null when nothing is queued", () => {
-        expect(claimNextRun(db, "user_chrome")).toBeNull();
+        expect(claimNextRun(db, U, "user_chrome")).toBeNull();
       });
 
       it("claims the oldest queued run of the channel, marks it running, and returns its shape", () => {
-        const first = startExecutor(db, "apply", { limit: 2 }, { logDir: tmpLogDir }, "user_chrome");
-        const second = startExecutor(db, "network_send", {}, { logDir: tmpLogDir }, "user_chrome");
+        const first = startExecutor(db, U, "apply", { limit: 2 }, { logDir: tmpLogDir }, "user_chrome");
+        const second = startExecutor(db, U, "network_send", {}, { logDir: tmpLogDir }, "user_chrome");
 
-        const claimed = claimNextRun(db, "user_chrome");
+        const claimed = claimNextRun(db, U, "user_chrome");
         expect(claimed).not.toBeNull();
         expect(claimed!.id).toBe(first.id);
         expect(claimed!.kind).toBe("apply");
@@ -393,34 +398,34 @@ describe("executor/runner", () => {
         db.prepare(
           "INSERT INTO executor_runs (kind, status, channel, options, log_path) VALUES ('apply','queued','headless','{}','/tmp/x.log')"
         ).run();
-        expect(claimNextRun(db, "user_chrome")).toBeNull();
+        expect(claimNextRun(db, U, "user_chrome")).toBeNull();
       });
     });
 
     describe("appendRunLog", () => {
       it("appends a timestamped line to the run's log file", () => {
-        const result = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        appendRunLog(db, result.id, "opened Workday tab");
+        const result = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        appendRunLog(db, U, result.id, "opened Workday tab");
 
         const content = fs.readFileSync(result.logPath, "utf8");
         expect(content).toMatch(/^\[\d{2}:\d{2}:\d{2}\] opened Workday tab\n$/);
 
-        appendRunLog(db, result.id, "filled form");
+        appendRunLog(db, U, result.id, "filled form");
         const content2 = fs.readFileSync(result.logPath, "utf8");
         expect(content2).toContain("opened Workday tab");
         expect(content2).toContain("filled form");
       });
 
       it("throws for an unknown run id", () => {
-        expect(() => appendRunLog(db, 999, "x")).toThrow();
+        expect(() => appendRunLog(db, U, 999, "x")).toThrow();
       });
     });
 
     describe("finishRun", () => {
       it("transitions a running run to done with a summary", () => {
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        claimNextRun(db, "user_chrome");
-        finishRun(db, queued.id, "done", "submitted 3 applications");
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
+        finishRun(db, U, queued.id, "done", "submitted 3 applications");
 
         const row = db.prepare("SELECT status, summary, ended_at FROM executor_runs WHERE id=?").get(queued.id) as {
           status: string;
@@ -433,30 +438,30 @@ describe("executor/runner", () => {
       });
 
       it("transitions a still-queued run to failed (attended session claimed it out of band, e.g. crashed before claiming)", () => {
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        finishRun(db, queued.id, "failed", "extension disconnected");
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        finishRun(db, U, queued.id, "failed", "extension disconnected");
 
         const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string };
         expect(row.status).toBe("failed");
       });
 
       it("throws when finishing an already-terminal run", () => {
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        claimNextRun(db, "user_chrome");
-        finishRun(db, queued.id, "done");
-        expect(() => finishRun(db, queued.id, "failed")).toThrow();
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
+        finishRun(db, U, queued.id, "done");
+        expect(() => finishRun(db, U, queued.id, "failed")).toThrow();
       });
 
       it("throws for an unknown run id", () => {
-        expect(() => finishRun(db, 999, "done")).toThrow();
+        expect(() => finishRun(db, U, 999, "done")).toThrow();
       });
     });
 
     describe("stopExecutor on user_chrome rows", () => {
       it("marks a queued run stopped without touching process.kill", () => {
         const killSpy = vi.spyOn(process, "kill");
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        stopExecutor(db, queued.id);
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        stopExecutor(db, U, queued.id);
         expect(killSpy).not.toHaveBeenCalled();
         killSpy.mockRestore();
 
@@ -466,9 +471,9 @@ describe("executor/runner", () => {
 
       it("marks a running (claimed) run stopped without touching process.kill", () => {
         const killSpy = vi.spyOn(process, "kill");
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        claimNextRun(db, "user_chrome");
-        stopExecutor(db, queued.id);
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
+        stopExecutor(db, U, queued.id);
         expect(killSpy).not.toHaveBeenCalled();
         killSpy.mockRestore();
 
@@ -479,8 +484,8 @@ describe("executor/runner", () => {
 
     describe("reapStaleRuns for user_chrome", () => {
       it("leaves a fresh user_chrome running run alone", () => {
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        claimNextRun(db, "user_chrome");
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
 
         const now = Date.now();
         reapStaleRuns(db, { now: () => now, mtime: () => now - 60_000 }); // 1 minute old
@@ -490,8 +495,8 @@ describe("executor/runner", () => {
       });
 
       it("fails a user_chrome running run whose log hasn't been touched in 20+ minutes", () => {
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        claimNextRun(db, "user_chrome");
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
 
         const now = Date.now();
         reapStaleRuns(db, { now: () => now, mtime: () => now - 21 * 60_000 });
@@ -505,8 +510,8 @@ describe("executor/runner", () => {
       });
 
       it("does not apply pid-liveness checks to user_chrome rows (pid is NULL)", () => {
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        claimNextRun(db, "user_chrome");
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
 
         // No mtime override needed — a fresh log file (just created) is well within the window,
         // and a NULL pid would otherwise look "dead" under the headless isAlive() check.
@@ -520,8 +525,8 @@ describe("executor/runner", () => {
         db.prepare(
           "INSERT INTO executor_runs (kind, status, channel, pid, log_path) VALUES ('network_send','running','headless', 999999, '/tmp/x.log')"
         ).run();
-        const queued = startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-        claimNextRun(db, "user_chrome");
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
 
         reapStaleRuns(db);
 
@@ -539,40 +544,40 @@ describe("executor/runner", () => {
 
   describe("hasLiveOrQueuedRun", () => {
     it("is true for a queued user_chrome run even though it has no pid", () => {
-      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-      expect(hasLiveOrQueuedRun(db, "apply")).toBe(true);
+      startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      expect(hasLiveOrQueuedRun(db, U, "apply")).toBe(true);
     });
 
     it("is true for a live headless running run", () => {
       const { spawnFn } = makeFakeSpawn(process.pid);
-      startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
-      expect(hasLiveOrQueuedRun(db, "apply")).toBe(true);
+      startExecutor(db, U, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+      expect(hasLiveOrQueuedRun(db, U, "apply")).toBe(true);
     });
 
     it("is false when there's nothing queued or running", () => {
-      expect(hasLiveOrQueuedRun(db, "apply")).toBe(false);
+      expect(hasLiveOrQueuedRun(db, U, "apply")).toBe(false);
     });
 
     it("is true for a claimed (running) user_chrome run even though it has no pid", () => {
-      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-      const claimed = claimNextRun(db, "user_chrome");
+      startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      const claimed = claimNextRun(db, U, "user_chrome");
       expect(claimed).not.toBeNull();
-      expect(hasLiveOrQueuedRun(db, "apply")).toBe(true);
-      finishRun(db, claimed!.id, "done");
-      expect(hasLiveOrQueuedRun(db, "apply")).toBe(false);
+      expect(hasLiveOrQueuedRun(db, U, "apply")).toBe(true);
+      finishRun(db, U, claimed!.id, "done");
+      expect(hasLiveOrQueuedRun(db, U, "apply")).toBe(false);
     });
   });
 
   describe("lastRunChannel", () => {
     it("is null when there's no prior run of that kind", () => {
-      expect(lastRunChannel(db, "apply")).toBeNull();
+      expect(lastRunChannel(db, U, "apply")).toBeNull();
     });
 
     it("returns the channel of the most recent run of that kind", () => {
       const { spawnFn } = makeFakeSpawn(process.pid);
-      startExecutor(db, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
-      startExecutor(db, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
-      expect(lastRunChannel(db, "apply")).toBe("user_chrome");
+      startExecutor(db, U, "apply", {}, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+      startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+      expect(lastRunChannel(db, U, "apply")).toBe("user_chrome");
     });
   });
 });
@@ -585,17 +590,18 @@ describe("executor/runner referral mode", () => {
     expect(() =>
       startExecutor(
         db,
+        U,
         "apply",
         { plan: [{ direction: "swe_general", count: 1, mode: "referral" }] },
         { spawn: spawnFn, logDir: tmpLogDir },
         "headless"
       )
     ).toThrow(/attended/);
-    expect(() => startExecutor(db, "apply", { jobIds: [1], mode: "referral" }, { spawn: spawnFn, logDir: tmpLogDir }, "headless")).toThrow(
+    expect(() => startExecutor(db, U, "apply", { jobIds: [1], mode: "referral" }, { spawn: spawnFn, logDir: tmpLogDir }, "headless")).toThrow(
       /attended/
     );
     expect(spawnFn).not.toHaveBeenCalled();
-    const r = startExecutor(db, "apply", { jobIds: [1, 2], mode: "referral" }, { logDir: tmpLogDir }, "user_chrome");
+    const r = startExecutor(db, U, "apply", { jobIds: [1, 2], mode: "referral" }, { logDir: tmpLogDir }, "user_chrome");
     const row = db.prepare("SELECT options, status FROM executor_runs WHERE id = ?").get(r.id) as { options: string; status: string };
     expect(row.status).toBe("queued");
     expect(JSON.parse(row.options)).toEqual({ jobIds: [1, 2], mode: "referral" });

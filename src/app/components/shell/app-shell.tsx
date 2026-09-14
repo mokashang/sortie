@@ -1,11 +1,13 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Ellipsis, Languages, Monitor, Moon, Search, Settings, Sun } from "lucide-react";
+import { Ellipsis, Languages, LogOut, Monitor, Moon, Search, Settings, Sun, UserRound } from "lucide-react";
 import { attentionTotal } from "@/app/lib/overview-types";
 import { cx } from "@/app/lib/cx";
 import { getTheme, setTheme, type Theme } from "@/app/lib/settings";
+import { authClient } from "@/lib/auth-client";
+import { Menu, useToast } from "@/app/components/ui";
 import { useMessages } from "@/i18n/client";
 import { useOverview } from "../overview-context";
 import { AssistantPill } from "../assistant-card";
@@ -15,6 +17,13 @@ import { NAV, SETTINGS_NAV, TABBAR_HREFS, isActivePath } from "./nav";
 import { useLangToggle } from "./use-lang-toggle";
 
 const THEME_NEXT: Record<Theme, Theme> = { system: "light", light: "dark", dark: "system" };
+
+export interface ShellUser {
+  name: string;
+  email: string;
+  role: string;
+  emailVerified: boolean;
+}
 
 export function useThemeCycle() {
   const m = useMessages();
@@ -58,7 +67,66 @@ function useShortcutLabel(): string {
   return label;
 }
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+function initials(name: string, email: string): string {
+  const src = name.trim() || email;
+  const first = [...src][0] ?? "?";
+  return first.toUpperCase();
+}
+
+// Ends the session and lands on /login. A failure stays on the page with a toast: the user is
+// still signed in and the shell must keep saying so.
+function useSignOut() {
+  const m = useMessages();
+  const router = useRouter();
+  const { toast } = useToast();
+  return async () => {
+    const { error } = await authClient.signOut();
+    if (error) {
+      toast({ title: m.shell.signOutFailed, description: error.message ?? "", tone: "danger" });
+      return;
+    }
+    router.push("/login");
+    router.refresh();
+  };
+}
+
+// The account menu at the right end of the topbar: who is signed in (avatar initial, email in
+// the tooltip), with 账号与设置 / 我的档案 / 退出登录.
+function UserMenu({ user }: { user: ShellUser }) {
+  const m = useMessages();
+  const router = useRouter();
+  const signOut = useSignOut();
+  return (
+    <Menu
+      align="end"
+      label={m.shell.account(user.email)}
+      items={[
+        {
+          label: (
+            <span className="user-menu-head">
+              <span className="user-chip-name truncate">{user.name || user.email}</span>
+              <span className="user-chip-mail truncate">{user.email}</span>
+            </span>
+          ),
+          icon: <Settings size={14} />,
+          onSelect: () => router.push("/settings#account"),
+        },
+        { label: m.shell.myProfile, icon: <UserRound size={14} />, onSelect: () => router.push("/profile?tab=basics") },
+        "sep",
+        { label: m.shell.signOut, icon: <LogOut size={14} />, onSelect: () => void signOut() },
+      ]}
+      trigger={(p) => (
+        <button type="button" className="btn btn-ghost btn-icon btn-sm topbar-icon user-menu-trigger" title={user.email} aria-label={m.shell.account(user.email)} {...p}>
+          <span className="user-avatar" aria-hidden>
+            {initials(user.name, user.email)}
+          </span>
+        </button>
+      )}
+    />
+  );
+}
+
+export function AppShell({ children, user }: { children: React.ReactNode; user: ShellUser }) {
   const m = useMessages();
   const pathname = usePathname();
   const { data } = useOverview();
@@ -67,6 +135,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const shortcut = useShortcutLabel();
   const { label: themeLabel, Icon: ThemeIcon, cycle: cycleTheme } = useThemeCycle();
   const langToggle = useLangToggle();
+  const signOut = useSignOut();
 
   useEffect(() => setMoreOpen(false), [pathname]);
   useEffect(() => {
@@ -142,6 +211,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             <Settings size={16} aria-hidden />
           </Link>
+          <span className="hide-mobile">
+            <UserMenu user={user} />
+          </span>
         </div>
       </header>
 
@@ -195,6 +267,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Settings size={18} aria-hidden />
               <span>{m.shell.settings}</span>
             </Link>
+            <div className="sheet-sep" />
+            <Link href="/settings#account" className="sheet-item" title={user.email}>
+              <span className="user-avatar" aria-hidden>
+                {initials(user.name, user.email)}
+              </span>
+              <span className="grow" style={{ minWidth: 0 }}>
+                <span className="user-chip-name truncate">{user.name || user.email}</span>
+                <span className="user-chip-mail truncate">{user.email}</span>
+              </span>
+            </Link>
+            <button type="button" className="sheet-item" onClick={() => void signOut()}>
+              <LogOut size={18} aria-hidden />
+              <span>{m.shell.signOut}</span>
+            </button>
           </div>
         </>
       ) : null}

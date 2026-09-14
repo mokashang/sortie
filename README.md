@@ -2,6 +2,9 @@
 
 本地求职作战系统(Phase A:个人版)。spec 见 `docs/superpowers/specs/2026-08-30-jobseeker-os-design.md`。
 
+## 账号(2026-09-13)
+每个人一个账号,数据彼此隔离(职位库是公共的)。邮箱+密码注册/登录、找回密码、验证邮箱;配了 `GOOGLE_CLIENT_ID/SECRET` 就多一个「使用 Google 继续」。**第一个注册的账号成为主账号**:认领账号系统之前的全部数据,并把 `profile/profile.yaml` 导进档案(之后在档案页「基本信息」里改,不再读 yaml)。设置 → 账号:改名、改邮箱、改密码、已登录设备、Google 关联、**助手令牌**(别的电脑上跑值守会话时用)、删除账号。邮件:配 `SMTP_URL` 真发,不配则写到 `data/outbox/`。所有 API 需要凭证:浏览器 cookie / 个人令牌 / 机器内部令牌 `data/internal-token`(调度器、部署脚本、常开机上的桌面会话用,以主账号身份)。设计:`docs/superpowers/specs/2026-09-13-accounts-design.md`。
+
 ## 页面(2026-09-08 重做)
 侧边导航:今日(收件箱)· 职位 · 投递 · 历史 · 人脉 · 档案(经历 / 简历 / 标准答案)· 统计;底部 设置。手机上是顶栏 + 滑出导航。前端结构见 CLAUDE.md §6。
 
@@ -175,7 +178,9 @@ claude-in-chrome + 你日常登录的浏览器,和 headless 执行器走的专�
 ## 数据
 - SQLite:`data/jobseeker.db`(gitignored)
 - 生成的简历(.tex/.pdf):`data/resumes/`(gitignored)
-- 个人档案:`profile/profile.yaml`(gitignored)
+- 个人档案:`profiles` 表(每账号一行 JSON;`profile/profile.yaml` 只在主账号首次注册时导入一次)
+- 账号:`user/session/account/verification` 表(Better Auth)、`api_tokens`;机器凭证 `data/internal-token`、`data/auth-secret`(自动生成,gitignored)
+- 每账号目录:`data/users/<id>/`(简历 PDF、后台浏览器档案);主账号沿用 `data/resumes/`、`data/browser-profile`
 - watchlist 种子:`config/watchlist.seed.json`
 
 ## 测试

@@ -130,3 +130,12 @@ Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobsee
 
 ## 10. 回滚(切换后两周内)
 Windows `pm2 stop sortie`;把 Windows 最新备份拷回 Mac 的 `data/jobseeker.db`;Mac 把 plist 移回 `~/Library/LaunchAgents/` 并 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jobseeker.os.plist`。两周稳定后再清 Mac 的 `data/`(留一份 zip 归档)。
+
+## 11. 账号系统上线(2026-09-13)
+部署带账号系统的版本后(`deploy.ps1` 照常),第一次访问 `https://usesortie.com` 会跳到 `/login`。
+1. **先在 `.env` 写 `SORTIE_OWNER_EMAIL=<你的邮箱>`**(可选但推荐:保证只有这个邮箱能成为主账号),`pm2 restart sortie --update-env`。
+2. 打开 `/signup` 用该邮箱注册。服务器日志出现 `[auth] <邮箱> created — became owner, claimed legacy rows {...}` 即认领完成:队列、历史、人脉、简历、经历原样在;`profile/profile.yaml` 已导入档案页「基本信息」。没配邮件时验证链接在 `E:\sortie\data\outbox\*.txt`(不验证也能用)。
+3. 机器内部令牌在 `E:\sortie\data\internal-token`(首次启动自动生成):调度器、`deploy.ps1`、常开机上的桌面值守会话都用它(值守会话按 CLAUDE.md §3 每条 curl 加 `-H "$AUTH"`)。
+4. Google 登录(可选):Google Cloud Console → APIs & Services → Credentials → OAuth client ID(Web application),Authorized redirect URI 填 `https://usesortie.com/api/auth/callback/google`(老网址也要用就再加 `https://<TS_HOSTNAME>/api/auth/callback/google`),把 client id/secret 写进 `.env` 的 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`,重启。同邮箱的 Google 账号会自动关联到已有账号。
+5. 邮件(可选):`SMTP_URL=smtps://<user>:<app-password>@smtp.gmail.com:465`、`MAIL_FROM=Sortie <you@gmail.com>`;配了之后新账号必须验证邮箱才能登录。
+6. 关闭注册:`SIGNUP_DISABLED=1`。会话密钥 `data/auth-secret` 自动生成;备份任务已把整个 `data/` 之外的库文件备份,`internal-token` / `auth-secret` 丢了只是要重新登录、重新拿令牌。

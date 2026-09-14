@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getBackend } from "@/llm/registry";
 import { harvestOutreach, HarvestMessage } from "@/network/harvest";
+import { withUser, failResponse } from "@/lib/actor";
 
 // Session -> App: what LinkedIn shows for one referral outreach right now — whether the invite
 // was accepted and any messages (both directions) in the thread. Read-only on LinkedIn; the App
 // merges, moves status and classifies the stage.
-export async function POST(req: Request) {
+export const POST = withUser(async (req, { userId }) => {
   try {
     const body = await req.json();
     const messages: HarvestMessage[] = Array.isArray(body.messages)
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
           }))
       : [];
     const result = await harvestOutreach(getDb(), {
+      userId,
       backend: getBackend(),
       outreachId: Number(body.outreachId),
       accepted: Boolean(body.accepted),
@@ -26,6 +28,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json(result);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return failResponse(e);
   }
-}
+});

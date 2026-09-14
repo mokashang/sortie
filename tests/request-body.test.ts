@@ -14,9 +14,28 @@ vi.mock("@/lib/db", async (importOriginal) => {
 import { getDb } from "@/lib/db";
 import { decodeRequestText, readJsonBody } from "@/lib/request-body";
 import { startExecutor, finishRun, runLogLines } from "@/executor/runner";
-import { POST as postLog } from "@/app/api/executor/log/route";
-import { POST as postFinish } from "@/app/api/executor/finish/route";
-import { POST as postReport } from "@/app/api/apply/report/route";
+import { POST as postLogRoute } from "@/app/api/executor/log/route";
+import { POST as postFinishRoute } from "@/app/api/executor/finish/route";
+import { POST as postReportRoute } from "@/app/api/apply/report/route";
+
+// withUser handlers take Next's route context as a second argument; none of these routes has
+// dynamic segments.
+const CTX = { params: Promise.resolve({}) };
+const postLog = (r: Request) => postLogRoute(r, CTX);
+const postFinish = (r: Request) => postFinishRoute(r, CTX);
+const postReport = (r: Request) => postReportRoute(r, CTX);
+import { resetInternalTokenCacheForTests } from "@/lib/internal-token";
+import { seedOwner } from "./helpers";
+
+// The routes are account-scoped (withUser): act as the owner through the internal token, the way
+// the scheduler and the attended session do. DATA_DIR points at a scratch dir so the token file
+// never lands in the repo's data/.
+const U = "legacy";
+const TOKEN = "sortie_internal_gbktest_0123456789abcdef";
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "sortie-body-data-"));
+process.env.SORTIE_INTERNAL_TOKEN = TOKEN;
+resetInternalTokenCacheForTests();
+seedOwner(getDb(), U);
 
 // GBK (Windows code page 936) bytes of the strings below — what Git for Windows' curl.exe puts on
 // the wire for an inline `-d '...'` body on the production box (run #68, 2026-09-13).
@@ -42,7 +61,11 @@ function gbkBody(prefix: string, valueGbk: string, suffix: string): Uint8Array<A
   return out;
 }
 const post = (url: string, body: Uint8Array<ArrayBuffer> | string) =>
-  new Request(`http://127.0.0.1:3000${url}`, { method: "POST", headers: { "content-type": "application/json" }, body });
+  new Request(`http://127.0.0.1:3000${url}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+    body,
+  });
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "sortie-body-"));
 
 describe("request body decoding", () => {
@@ -67,12 +90,12 @@ describe("request body decoding", () => {
 describe("session-facing routes accept a GBK body", () => {
   it("POST /api/executor/log stores the original Chinese line", async () => {
     const db = getDb();
-    const run = startExecutor(db, "apply", {}, { logDir: tmp() }, "user_chrome");
+    const run = startExecutor(db, U, "apply", {}, { logDir: tmp() }, "user_chrome");
     const res = await postLog(post("/api/executor/log", gbkBody(`{"runId":${run.id},"line":"`, LINE_GBK, '"}')));
     expect(res.status).toBe(200);
     await postLog(post("/api/executor/log", JSON.stringify({ runId: run.id, line: LINE })));
-    const lines = runLogLines(db, run.id).filter(Boolean);
-    finishRun(db, run.id, "stopped"); // free the apply slot: startExecutor refuses a second live apply run
+    const lines = runLogLines(db, U, run.id).filter(Boolean);
+    finishRun(db, U, run.id, "stopped"); // free the apply slot: startExecutor refuses a second live apply run
     expect(lines).toHaveLength(2);
     for (const l of lines) {
       expect(l.endsWith(` ${LINE}`)).toBe(true);
@@ -81,7 +104,7 @@ describe("session-facing routes accept a GBK body", () => {
   });
   it("POST /api/executor/finish stores the original Chinese summary", async () => {
     const db = getDb();
-    const run = startExecutor(db, "apply", {}, { logDir: tmp() }, "user_chrome");
+    const run = startExecutor(db, U, "apply", {}, { logDir: tmp() }, "user_chrome");
     const body = gbkBody(`{"runId":${run.id},"status":"done","summary":"`, SUMMARY_GBK, '"}');
     expect((await postFinish(post("/api/executor/finish", body))).status).toBe(200);
     const row = db.prepare("SELECT status, summary FROM executor_runs WHERE id=?").get(run.id);

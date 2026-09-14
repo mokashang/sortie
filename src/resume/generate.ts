@@ -51,6 +51,8 @@ const SECTION_ORDER: { kind: Experience["kind"]; heading: string }[] = [
 ];
 
 export interface GenerateOptions {
+  // The account whose experience bank is used and whose resumes row is written.
+  userId: string;
   backend: LlmBackend;
   contact: ResumeContact;
   direction: string;
@@ -232,7 +234,7 @@ function dateRange(e: Experience): string | null {
 }
 
 export async function generateResume(db: DB, opts: GenerateOptions): Promise<GenerateResult> {
-  const experiences = listExperiences(db);
+  const experiences = listExperiences(db, opts.userId);
   const req = buildPrompt(experiences, opts.direction);
   const res = await opts.backend.complete(req);
   const selection = SelectionSchema.parse(extractJson(res.text));
@@ -288,10 +290,11 @@ export async function generateResume(db: DB, opts: GenerateOptions): Promise<Gen
   // Paths are stored relative to the data dir when they fall inside it ("resumes/<name>.pdf") so the
   // row survives a move to another machine; every reader goes through resolveResumePath.
   db.prepare(
-    `INSERT INTO resumes (version_name, directions, tex_path, pdf_path, compiled_at)
-     VALUES (?,?,?,?, datetime('now'))
-     ON CONFLICT(version_name) DO UPDATE SET directions=excluded.directions, tex_path=excluded.tex_path, pdf_path=excluded.pdf_path, compiled_at=excluded.compiled_at`
+    `INSERT INTO resumes (user_id, version_name, directions, tex_path, pdf_path, compiled_at)
+     VALUES (?,?,?,?,?, datetime('now'))
+     ON CONFLICT(user_id, version_name) DO UPDATE SET directions=excluded.directions, tex_path=excluded.tex_path, pdf_path=excluded.pdf_path, compiled_at=excluded.compiled_at`
   ).run(
+    opts.userId,
     opts.versionName,
     JSON.stringify([opts.direction]),
     toStoredResumePath(texPath, opts.dataDir),
@@ -300,7 +303,7 @@ export async function generateResume(db: DB, opts: GenerateOptions): Promise<Gen
   // SQLite's last_insert_rowid() is NOT reset by ON CONFLICT DO UPDATE — it keeps the last real
   // INSERT's rowid on the connection, so `info.lastInsertRowid` can be a stale id from an earlier
   // insert when this call takes the UPDATE branch. Always resolve by the unique key instead.
-  const resumeId = (db.prepare("SELECT id FROM resumes WHERE version_name=?").get(opts.versionName) as { id: number }).id;
+  const resumeId = (db.prepare("SELECT id FROM resumes WHERE user_id=? AND version_name=?").get(opts.userId, opts.versionName) as { id: number }).id;
 
   return { resumeId, texPath, pdfPath: compiled.pdfPath, pages: compiled.pages, trimmed, overfullCount: compiled.overfullCount, warnings };
 }

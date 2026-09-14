@@ -1,4 +1,5 @@
 import { DB, logEvent } from "@/lib/db";
+import { currentApplyRunId } from "@/apply/run-outcome";
 import { Profile } from "@/lib/profile";
 import { LlmBackend } from "@/llm/types";
 import { EFFECTIVE_MODE_SQL } from "@/apply/mode";
@@ -11,6 +12,8 @@ import { generateDraft } from "@/network/draft";
 // approves it on /apply (existing gate.ts red line); once actually sent, markReached stamps the
 // jobs; the user then resolves each company card with referralDecide. The direct picker in
 // queue.ts never sees referral_seeking/referral_ready rows, so the two modes can't collide.
+// Everything here is per account (userId): applications, matches, people and outreach are all
+// tenant rows (spec 2026-09-13 accounts §3).
 
 export const MAX_SIBLINGS = 2; // 1 primary + 2 siblings = 3 jobs per outreach
 // How many people the attended session contacts per company, in parallel (one person is a coin
@@ -53,43 +56,45 @@ interface JobRow {
 const ELIGIBLE = `a.needs_manual_reason IS NULL AND j.loc_flag IS NULL`;
 const ORDER = `ORDER BY a.pinned DESC, COALESCE(m.tier, 9) ASC, m.score DESC, j.created_at DESC`;
 const SELECT = `SELECT j.id as job_id, j.company, j.title, j.apply_url, m.direction, m.score
-       FROM applications a JOIN jobs j ON j.id = a.job_id JOIN matches m ON m.job_id = j.id`;
+       FROM applications a JOIN jobs j ON j.id = a.job_id JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id`;
 
 // Session -> App: the next company to seek a referral at. Batch mode picks the best queued job
 // whose effective mode is 'referral' (optionally within one direction); targeted mode (jobIds,
 // from the board's 换人再问) only considers the given ids. Up to MAX_SIBLINGS more queued
 // referral-mode jobs at the same company ride along so one message can cover them all.
-export function takeNextReferral(db: DB, opts: { direction?: string; jobIds?: number[] } = {}): ReferralTask | { done: true } {
+export function takeNextReferral(db: DB, userId: string, opts: { direction?: string; jobIds?: number[] } = {}): ReferralTask | { done: true } {
   const targeted = !!opts.jobIds?.length;
   const idList = targeted ? opts.jobIds!.map(() => "?").join(",") : "";
   for (;;) {
     const primary = (
       targeted
         ? db
-            .prepare(`${SELECT} WHERE a.status = 'matched' AND ${ELIGIBLE} AND a.job_id IN (${idList}) ${ORDER} LIMIT 1`)
-            .get(...opts.jobIds!)
+            .prepare(`${SELECT} WHERE a.user_id = ? AND a.status = 'matched' AND ${ELIGIBLE} AND a.job_id IN (${idList}) ${ORDER} LIMIT 1`)
+            .get(userId, ...opts.jobIds!)
         : db
             .prepare(
-              `${SELECT} WHERE a.status = 'matched' AND ${ELIGIBLE} AND ${EFFECTIVE_MODE_SQL} = 'referral'
+              `${SELECT} WHERE a.user_id = ? AND a.status = 'matched' AND ${ELIGIBLE} AND ${EFFECTIVE_MODE_SQL} = 'referral'
                ${opts.direction ? "AND m.direction = ?" : ""} ${ORDER} LIMIT 1`
             )
-            .get(...(opts.direction ? [opts.direction] : []))
+            .get(userId, ...(opts.direction ? [opts.direction] : []))
     ) as JobRow | undefined;
     if (!primary) return { done: true };
 
     const siblings = db
       .prepare(
-        `${SELECT} WHERE a.status = 'matched' AND ${ELIGIBLE} AND j.id <> ? AND j.company = ? COLLATE NOCASE
+        `${SELECT} WHERE a.user_id = ? AND a.status = 'matched' AND ${ELIGIBLE} AND j.id <> ? AND j.company = ? COLLATE NOCASE
          ${targeted ? `AND a.job_id IN (${idList})` : `AND ${EFFECTIVE_MODE_SQL} = 'referral'`}
          ${ORDER} LIMIT ${MAX_SIBLINGS}`
       )
-      .all(primary.job_id, primary.company, ...(targeted ? opts.jobIds! : [])) as JobRow[];
+      .all(userId, primary.job_id, primary.company, ...(targeted ? opts.jobIds! : [])) as JobRow[];
 
     const jobs = [primary, ...siblings];
+    // run_id: which apply run took these jobs — the run's outcome (计划完成度) is counted from it.
+    const runId = currentApplyRunId(db, userId);
     const claim = db.prepare(
-      "UPDATE applications SET status = 'referral_seeking', confirm_decision = NULL WHERE job_id = ? AND status = 'matched'"
+      "UPDATE applications SET status = 'referral_seeking', confirm_decision = NULL, run_id = ? WHERE user_id = ? AND job_id = ? AND status = 'matched'"
     );
-    const claimed = db.transaction(() => jobs.filter((r) => claim.run(r.job_id).changes === 1))();
+    const claimed = db.transaction(() => jobs.filter((r) => claim.run(runId, userId, r.job_id).changes === 1))();
     if (claimed.length === 0) continue; // lost a race on every row — pick again
 
     const people = db
@@ -97,9 +102,9 @@ export function takeNextReferral(db: DB, opts: { direction?: string; jobIds?: nu
         `SELECT p.id, p.name, p.relation, p.role_title, p.linkedin_url, p.email,
                 EXISTS (SELECT 1 FROM outreach o WHERE o.person_id = p.id AND o.playbook = 'referral'
                         AND o.status NOT IN ('draft','archived')) AS contacted
-         FROM people p WHERE p.company = ? COLLATE NOCASE ORDER BY (p.relation = 'alum') DESC, p.id ASC`
+         FROM people p WHERE p.user_id = ? AND p.company = ? COLLATE NOCASE ORDER BY (p.relation = 'alum') DESC, p.id ASC`
       )
-      .all(primary.company) as {
+      .all(userId, primary.company) as {
       id: number;
       name: string;
       relation: string | null;
@@ -128,35 +133,37 @@ export function takeNextReferral(db: DB, opts: { direction?: string; jobIds?: nu
 
 // Session -> App: nobody reachable at this company. Stays referral_seeking (the user decides:
 // 直接投 / fill a WeChat referral / retry later); the reason surfaces on the board card.
-export function reportNoContact(db: DB, jobIds: number[], reason: string): void {
-  const stmt = db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ? AND status = 'referral_seeking'");
+export function reportNoContact(db: DB, userId: string, jobIds: number[], reason: string): void {
+  const stmt = db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE user_id = ? AND job_id = ? AND status = 'referral_seeking'");
   db.transaction(() => {
-    for (const id of jobIds) stmt.run(`no contact found: ${reason}`, id);
+    for (const id of jobIds) stmt.run(`no contact found: ${reason}`, userId, id);
   })();
 }
 
 // Called right after gate.reportSent for an outreach that covers jobs: stamps when the request
 // actually went out (the "已等 N 天" clock) and which outreach it was. No-op for coffee-chat
 // outreach with no linked jobs.
-export function markReached(db: DB, outreachId: number): void {
+export function markReached(db: DB, userId: string, outreachId: number): void {
   const ids = outreachJobIds(db, outreachId);
   const stmt = db.prepare(
-    "UPDATE applications SET referral_reached_at = datetime('now'), origin_outreach_id = ?, needs_manual_reason = NULL WHERE job_id = ? AND status = 'referral_seeking'"
+    "UPDATE applications SET referral_reached_at = datetime('now'), origin_outreach_id = ?, needs_manual_reason = NULL WHERE user_id = ? AND job_id = ? AND status = 'referral_seeking'"
   );
   db.transaction(() => {
-    for (const id of ids) stmt.run(outreachId, id);
+    for (const id of ids) stmt.run(outreachId, userId, id);
   })();
 }
 
 export async function createReferralOutreach(
   db: DB,
+  userId: string,
   opts: { backend: LlmBackend; profile: Profile; jobIds: number[]; person: PersonInput; channel?: Channel }
 ): Promise<{ outreachId: number; draft: string }> {
   if (opts.jobIds.length === 0 || opts.jobIds.length > MAX_SIBLINGS + 1) {
     throw new Error(`createReferralOutreach: jobIds must have 1..${MAX_SIBLINGS + 1} entries`);
   }
-  const personId = upsertPerson(db, opts.person);
+  const personId = upsertPerson(db, userId, opts.person);
   const res = await generateDraft(db, {
+    userId,
     backend: opts.backend,
     profile: opts.profile,
     personId,
@@ -164,7 +171,7 @@ export async function createReferralOutreach(
     jobIds: opts.jobIds,
     channel: opts.channel ?? "linkedin",
   });
-  logEvent(db, "referral_outreach_created", { entity: "outreach", entityId: res.outreachId, payload: { jobIds: opts.jobIds, personId } });
+  logEvent(db, "referral_outreach_created", { userId, entity: "outreach", entityId: res.outreachId, payload: { jobIds: opts.jobIds, personId } });
   return res;
 }
 
@@ -213,17 +220,17 @@ export interface ReferralCard {
 }
 
 // /apply's 内推进行中 board: one card per company, its in-flight jobs, and the latest outreach.
-export function referralBoard(db: DB, now: () => number = () => Date.now()): ReferralCard[] {
+export function referralBoard(db: DB, userId: string, now: () => number = () => Date.now()): ReferralCard[] {
   const rows = db
     .prepare(
       `SELECT j.id as job_id, j.company, j.title, j.apply_url, m.direction, m.score, a.status, a.needs_manual_reason,
               a.referral_info, a.referral_reached_at, p.name as referral_person_name
-       FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN matches m ON m.job_id = j.id
+       FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
        LEFT JOIN people p ON p.id = a.referral_person_id
-       WHERE a.status IN ('referral_seeking','referral_ready')
+       WHERE a.user_id = ? AND a.status IN ('referral_seeking','referral_ready')
        ORDER BY j.company COLLATE NOCASE, m.score DESC`
     )
-    .all() as (JobRow & {
+    .all(userId) as (JobRow & {
     status: "referral_seeking" | "referral_ready";
     needs_manual_reason: string | null;
     referral_info: string | null;
@@ -239,7 +246,7 @@ export function referralBoard(db: DB, now: () => number = () => Date.now()): Ref
   const cards: ReferralCard[] = [];
   for (const group of byCompany.values()) {
     // Every outreach across the group's jobs (several people per company), archived ones hidden.
-    const outreaches: ReferralCardOutreach[] = outreachesForJobs(db, group.map((r) => r.job_id))
+    const outreaches: ReferralCardOutreach[] = outreachesForJobs(db, userId, group.map((r) => r.job_id))
       .filter((o) => o.status !== "archived")
       .map((o) => {
         const person = db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as {
@@ -314,19 +321,19 @@ export interface ReferralDecideResult {
 
 // User -> App from the board card buttons. Every action is a transaction over all jobIds; the
 // caller (API route) is responsible for enqueueing the run described by startMode.
-export function referralDecide(db: DB, input: ReferralDecideInput): ReferralDecideResult {
+export function referralDecide(db: DB, userId: string, input: ReferralDecideInput): ReferralDecideResult {
   if (!input.jobIds?.length) throw new Error("referralDecide: jobIds is empty");
   const rows = input.jobIds.map((id) => {
     const r = db
-      .prepare("SELECT a.status, j.company FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.job_id = ?")
-      .get(id) as { status: string; company: string } | undefined;
+      .prepare("SELECT a.status, j.company FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.user_id = ? AND a.job_id = ?")
+      .get(userId, id) as { status: string; company: string } | undefined;
     if (!r) throw new Error(`referralDecide: no application for job ${id}`);
     if (r.status !== "referral_seeking" && r.status !== "referral_ready") {
       throw new Error(`referralDecide: job ${id} is '${r.status}' (must be referral_seeking or referral_ready)`);
     }
     return { id, ...r };
   });
-  const outreachIds = new Set<number>(outreachesForJobs(db, rows.map((r) => r.id)).map((o) => o.id));
+  const outreachIds = new Set<number>(outreachesForJobs(db, userId, rows.map((r) => r.id)).map((o) => o.id));
   const setOutreach = (from: string[], to: string) => {
     const stmt = db.prepare(`UPDATE outreach SET status = ? WHERE id = ? AND status IN (${from.map(() => "?").join(",")})`);
     for (const oid of outreachIds) stmt.run(to, oid, ...from);
@@ -336,7 +343,7 @@ export function referralDecide(db: DB, input: ReferralDecideInput): ReferralDeci
     switch (input.action) {
       case "direct":
         for (const r of rows) {
-          db.prepare("UPDATE applications SET status = 'matched', apply_mode = 'direct', needs_manual_reason = NULL WHERE job_id = ?").run(r.id);
+          db.prepare("UPDATE applications SET status = 'matched', apply_mode = 'direct', needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?").run(userId, r.id);
         }
         setOutreach(["draft", "pending_send"], "archived");
         break;
@@ -344,7 +351,7 @@ export function referralDecide(db: DB, input: ReferralDecideInput): ReferralDeci
         if (!input.info) throw new Error("referralDecide: action 'won' requires info");
         let personId: number | null = null;
         if (input.personName?.trim()) {
-          personId = upsertPerson(db, { name: input.personName.trim(), company: rows[0].company, relation: "other", source: "referral_won" });
+          personId = upsertPerson(db, userId, { name: input.personName.trim(), company: rows[0].company, relation: "other", source: "referral_won" });
         } else {
           for (const oid of outreachIds) {
             personId = (db.prepare("SELECT person_id FROM outreach WHERE id = ?").get(oid) as { person_id: number }).person_id;
@@ -353,29 +360,29 @@ export function referralDecide(db: DB, input: ReferralDecideInput): ReferralDeci
         const info: ReferralInfo = { ...input.info, at: new Date().toISOString() };
         for (const r of rows) {
           db.prepare(
-            "UPDATE applications SET status = 'referral_ready', referral_info = ?, referral_person_id = COALESCE(?, referral_person_id), needs_manual_reason = NULL WHERE job_id = ?"
-          ).run(JSON.stringify(info), personId, r.id);
+            "UPDATE applications SET status = 'referral_ready', referral_info = ?, referral_person_id = COALESCE(?, referral_person_id), needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?"
+          ).run(JSON.stringify(info), personId, userId, r.id);
         }
         setOutreach(["sent", "replied", "pending_send", "draft"], "referral_won");
         break;
       }
       case "retry":
         for (const r of rows) {
-          db.prepare("UPDATE applications SET status = 'matched', apply_mode = 'referral', pinned = 1, needs_manual_reason = NULL WHERE job_id = ?").run(r.id);
+          db.prepare("UPDATE applications SET status = 'matched', apply_mode = 'referral', pinned = 1, needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?").run(userId, r.id);
         }
         setOutreach(["sent", "replied"], "no_response");
         setOutreach(["draft", "pending_send"], "archived");
         break;
       case "archive":
         for (const r of rows) {
-          db.prepare("UPDATE applications SET status = 'archived', needs_manual_reason = 'user gave up referral' WHERE job_id = ?").run(r.id);
+          db.prepare("UPDATE applications SET status = 'archived', needs_manual_reason = 'user gave up referral' WHERE user_id = ? AND job_id = ?").run(userId, r.id);
         }
         setOutreach(["draft", "pending_send"], "archived");
         break;
       default:
         throw new Error(`referralDecide: invalid action '${String(input.action)}'`);
     }
-    logEvent(db, "referral_decide", { entity: "application", payload: { jobIds: input.jobIds, action: input.action } });
+    logEvent(db, "referral_decide", { userId, entity: "application", payload: { jobIds: input.jobIds, action: input.action } });
     return {
       jobIds: input.jobIds,
       startMode: input.action === "direct" || input.action === "won" ? "direct" : input.action === "retry" ? "referral" : null,

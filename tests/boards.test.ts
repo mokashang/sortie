@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb } from "@/lib/db";
-import { upsertBoards, syncBoardsSeed, discoverBoardsFromJobs, dueBoards, markBoardResult, nextDueAfter, getBoard, boardStats, iso, setBoardTier } from "@/scanner/boards";
+import { upsertBoards, syncBoardsSeed, discoverBoardsFromJobs, dueBoards, markBoardResult, nextDueAfter, getBoard, boardStats, iso, setBoardTier, muteBoard } from "@/scanner/boards";
 
 const NOW = new Date("2026-09-06T10:00:00Z");
 
@@ -77,5 +77,21 @@ describe("boards", () => {
     const s = boardStats(db);
     expect(s.get("greenhouse:acme")).toMatchObject({ ge75_90d: 1, ge60_90d: 2, jobs30: 2, ge75_30: 1 });
     expect(s.get("greenhouse:other")).toMatchObject({ ge75_90d: 0, ge60_90d: 0, jobs30: 1 });
+  });
+});
+
+describe("muteBoard (executor saw the whole board vanish)", () => {
+  it("mutes an active board with the reason, unlocked, and logs the retier; ignores unknown or already-muted keys", () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, [{ key: "ashby:cursor", company: "Anysphere", origin: "url" }]);
+    muteBoard(db, "ashby:cursor", "executor: board gone");
+    expect(getBoard(db, "ashby:cursor")).toMatchObject({ tier: "muted", tier_reason: "executor: board gone", tier_locked: 0, next_due_at: null });
+    const events = db.prepare("SELECT payload FROM events WHERE kind = 'board_retier'").all() as { payload: string }[];
+    expect(events).toHaveLength(1);
+    expect(JSON.parse(events[0].payload)).toMatchObject({ key: "ashby:cursor", to: "muted" });
+    muteBoard(db, "ashby:cursor", "again");
+    muteBoard(db, "greenhouse:nobody", "x");
+    expect(getBoard(db, "ashby:cursor")!.tier_reason).toBe("executor: board gone");
+    expect(db.prepare("SELECT COUNT(*) n FROM events WHERE kind = 'board_retier'").get()).toEqual({ n: 1 });
   });
 });

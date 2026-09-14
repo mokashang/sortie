@@ -6,6 +6,9 @@ import os from "os";
 import path from "path";
 import { dataDir } from "@/lib/paths";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 function makeJobWithDirection(db: DB, direction: string | null): number {
   const jobId = db
     .prepare("INSERT INTO jobs (fingerprint, company, title, source) VALUES (?,?,?,?)")
@@ -34,7 +37,7 @@ describe("selectResumeForJob", () => {
     const jobId = makeJobWithDirection(db, "ai_infra");
     const resumeId = insertResume(db, "ai_infra-v1", ["ai_infra"], "/data/r/ai_infra-v1.pdf", "2026-01-01 00:00:00");
 
-    const result = selectResumeForJob(db, jobId);
+    const result = selectResumeForJob(db, U, jobId);
 
     expect(result).toEqual({ resumeId, pdfPath: path.join(dataDir(), "resumes", "ai_infra-v1.pdf"), versionName: "ai_infra-v1" });
   });
@@ -44,7 +47,7 @@ describe("selectResumeForJob", () => {
     const jobId = makeJobWithDirection(db, "ai_infra");
     const resumeId = insertResume(db, "ai_infra-v1", ["ai_infra"], "/data/r/ai_infra-v1.pdf", "2026-01-01 00:00:00");
 
-    selectResumeForJob(db, jobId);
+    selectResumeForJob(db, U, jobId);
 
     const row = db.prepare("SELECT resume_id FROM matches WHERE job_id=?").get(jobId) as { resume_id: number };
     expect(row.resume_id).toBe(resumeId);
@@ -54,7 +57,7 @@ describe("selectResumeForJob", () => {
     const db = openDb(":memory:");
     const jobId = makeJobWithDirection(db, null);
 
-    const result = selectResumeForJob(db, jobId);
+    const result = selectResumeForJob(db, U, jobId);
 
     expect(result).toEqual({ error: "no_resume_for_direction", direction: null });
   });
@@ -65,7 +68,7 @@ describe("selectResumeForJob", () => {
       .prepare("INSERT INTO jobs (fingerprint, company, title, source) VALUES (?,?,?,?)")
       .run("fp-unmatched", "A", "T", "s").lastInsertRowid as number;
 
-    const result = selectResumeForJob(db, jobId);
+    const result = selectResumeForJob(db, U, jobId);
 
     expect(result).toEqual({ error: "no_resume_for_direction", direction: null });
   });
@@ -75,7 +78,7 @@ describe("selectResumeForJob", () => {
     const jobId = makeJobWithDirection(db, "quant");
     insertResume(db, "ai_infra-v1", ["ai_infra"], "/data/r/ai_infra-v1.pdf", "2026-01-01 00:00:00");
 
-    const result = selectResumeForJob(db, jobId);
+    const result = selectResumeForJob(db, U, jobId);
 
     expect(result).toEqual({ error: "no_resume_for_direction", direction: "quant" });
   });
@@ -87,7 +90,7 @@ describe("selectResumeForJob", () => {
     const newestId = insertResume(db, "ai_infra-v2", ["ai_infra"], "/data/r/ai_infra-v2.pdf", "2026-06-01 00:00:00");
     insertResume(db, "ai_infra-v0", ["ai_infra"], "/data/r/ai_infra-v0.pdf", "2025-01-01 00:00:00");
 
-    const result = selectResumeForJob(db, jobId);
+    const result = selectResumeForJob(db, U, jobId);
 
     expect(result).toEqual({ resumeId: newestId, pdfPath: path.join(dataDir(), "resumes", "ai_infra-v2.pdf"), versionName: "ai_infra-v2" });
   });
@@ -104,7 +107,7 @@ describe("selectResumeForJob", () => {
       "2026-09-02 19:56:38"
     );
 
-    const result = selectResumeForJob(db, jobId);
+    const result = selectResumeForJob(db, U, jobId);
 
     expect(result).toEqual({ resumeId, pdfPath: path.join(dataDir(), "resumes", "ai_infra-v1.pdf"), versionName: "ai_infra-v1" });
   });
@@ -117,7 +120,7 @@ describe("selectResumeForJob", () => {
     fs.writeFileSync(file, "%PDF");
     try {
       const resumeId = insertResume(db, "ai_infra-v1", ["ai_infra"], file, "2026-01-01 00:00:00");
-      expect(selectResumeForJob(db, jobId)).toEqual({ resumeId, pdfPath: file, versionName: "ai_infra-v1" });
+      expect(selectResumeForJob(db, U, jobId)).toEqual({ resumeId, pdfPath: file, versionName: "ai_infra-v1" });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

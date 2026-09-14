@@ -53,7 +53,14 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
      WHERE excluded.jd_text<>'' AND (jobs.jd_text='' OR jobs.jd_text LIKE '[listing metadata]%')
        AND excluded.jd_text<>jobs.jd_text`
   );
-  const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
+  // One applications row per account for every new job (spec 2026-09-13 accounts §3). Before any
+  // account exists (a fresh install, or the minutes between the v16 migration and the owner's
+  // sign-up) the row lands in the legacy bucket, which the first account claims.
+  const insApp = db.prepare(
+    `INSERT OR IGNORE INTO applications (user_id, job_id)
+     SELECT u.id, ? FROM "user" u
+     UNION ALL SELECT 'legacy', ? WHERE NOT EXISTS (SELECT 1 FROM "user")`
+  );
 
   const tx = db.transaction((batch: RawJob[]) => {
     for (const r of batch) {
@@ -77,7 +84,7 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
         if (!existing) {
           // Brand-new job: create its application row. Never done for upgrades — the job id
           // (and its application) must stay stable across re-scans of the same fingerprint.
-          insApp.run(info.lastInsertRowid);
+          insApp.run(info.lastInsertRowid, info.lastInsertRowid);
           summary.inserted++;
           if (flag) summary.visaSkipped++;
           if (locF) summary.locSkipped++;

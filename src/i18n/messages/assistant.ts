@@ -32,6 +32,10 @@ export const assistant = defineMessages({
     noLogYet: "还没有记录。",
     pillLive: (kind: string, status: string) => `助手 · ${kind} · ${status}`,
     pillIdle: "助手空闲",
+    pillPaused: "助手 · 已暂停,等你确认",
+    chainPaused: (unconfirmed: number | null | undefined, resumeAt: number) =>
+      `接力已暂停 · 有 ${unconfirmed ?? "若干"} 份填好的申请等你确认,降到 ${resumeAt} 份以下会自动继续(先补提交已批准的,再填新的)。`,
+    chainPausedHint: (id: number) => `任务 #${id} · 点「停止」可以结束这条接力`,
   },
   en: {
     idle: "Idle",
@@ -61,5 +65,9 @@ export const assistant = defineMessages({
     noLogYet: "Nothing logged yet.",
     pillLive: (kind: string, status: string) => `Assistant · ${kind} · ${status}`,
     pillIdle: "Assistant idle",
+    pillPaused: "Assistant · paused, waiting for you",
+    chainPaused: (unconfirmed: number | null | undefined, resumeAt: number) =>
+      `Relay paused · ${unconfirmed ?? "some"} filled applications are waiting for your confirmation; it resumes on its own once fewer than ${resumeAt} remain (submitting the approved ones first, then filling new ones).`,
+    chainPausedHint: (id: number) => `Task #${id} · press Stop to end this relay`,
   },
 });

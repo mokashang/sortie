@@ -3,6 +3,9 @@ import { openDb, DB } from "@/lib/db";
 import { buildReferralFitPrompt, parseReferralFitResults, runReferralFit, countUnclassified } from "@/matcher/referral-fit";
 import { LlmBackend } from "@/llm/types";
 
+// Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
+const U = "legacy";
+
 function seed(db: DB, company: string, title: string, score: number, status = "matched"): number {
   const jobId = db
     .prepare("INSERT INTO jobs (fingerprint, company, title, source) VALUES (?,?,?,?)")
@@ -51,9 +54,9 @@ describe("matcher/referral-fit", () => {
     const archived = seed(db, "Meta", "SWE", 90, "archived");
     const done = seed(db, "Amazon", "SWE", 90);
     db.prepare("UPDATE matches SET referral_fit = 0 WHERE job_id = ?").run(done);
-    expect(countUnclassified(db)).toBe(2);
+    expect(countUnclassified(db, U)).toBe(2);
 
-    const summary = await runReferralFit(db, { backend: scripted({ Google: true, TinyCo: false, Meta: true }), batchSize: 10 });
+    const summary = await runReferralFit(db, { userId: U, backend: scripted({ Google: true, TinyCo: false, Meta: true }), batchSize: 10 });
     expect(summary.classified).toBe(2);
     expect(summary.referral).toBe(1);
     const fit = (id: number) =>
@@ -64,15 +67,15 @@ describe("matcher/referral-fit", () => {
     expect(fit(g)).toEqual({ referral_fit: 1, referral_reason: "test" });
     expect(fit(s).referral_fit).toBe(0);
     expect(fit(archived).referral_fit).toBeNull();
-    expect(countUnclassified(db)).toBe(0);
+    expect(countUnclassified(db, U)).toBe(0);
   });
 
   it("a failing batch is reported, not thrown", async () => {
     const db = openDb(":memory:");
     seed(db, "Google", "SWE", 90);
     const backend: LlmBackend = { name: "bad", complete: async () => ({ text: "not json", backend: "bad" }) };
-    const summary = await runReferralFit(db, { backend });
+    const summary = await runReferralFit(db, { userId: U, backend });
     expect(summary.errors.length).toBe(1);
-    expect(countUnclassified(db)).toBe(1);
+    expect(countUnclassified(db, U)).toBe(1);
   });
 });

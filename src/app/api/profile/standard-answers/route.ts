@@ -1,27 +1,26 @@
 import { NextResponse } from "next/server";
-import { loadProfile, saveStandardAnswers } from "@/lib/profile";
+import { getDb } from "@/lib/db";
+import { getProfileData, saveStandardAnswers } from "@/lib/profile";
+import { withUser, failResponse } from "@/lib/actor";
 
 // The /profile 标准答案 editor. GET returns the current map; PUT {answers: {key: value}}
-// replaces it in profile/profile.yaml (see saveStandardAnswers). These answers are what the
-// apply executor's answer pack exposes as `custom`, so anything the user adds here is available
-// to the next fill without touching the file by hand — the "all interaction in the App" rule.
-export async function GET() {
-  try {
-    return NextResponse.json({ answers: loadProfile().standard_answers });
-  } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
-  }
-}
+// replaces it on the account's stored profile (see saveStandardAnswers). These answers are what
+// the apply executor's answer pack exposes as `custom`, so anything the user adds here is
+// available to the next fill — the "all interaction in the App" rule.
+export const GET = withUser(async (_req, { userId }) => {
+  const answers = (getProfileData(getDb(), userId)?.standard_answers ?? {}) as Record<string, string>;
+  return NextResponse.json({ answers });
+});
 
-export async function PUT(req: Request) {
+export const PUT = withUser(async (req, { userId }) => {
   try {
     const body = await req.json();
     if (!body || typeof body.answers !== "object" || Array.isArray(body.answers)) {
       return NextResponse.json({ error: "answers must be an object" }, { status: 400 });
     }
-    saveStandardAnswers(body.answers);
-    return NextResponse.json({ ok: true, answers: loadProfile().standard_answers });
+    const answers = saveStandardAnswers(getDb(), userId, body.answers);
+    return NextResponse.json({ ok: true, answers });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    return failResponse(e);
   }
-}
+});

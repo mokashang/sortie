@@ -134,6 +134,15 @@ export function mergeBoardMeta(db: DB, key: string, patch: Record<string, unknow
   db.prepare("UPDATE boards SET meta=?, updated_at=datetime('now') WHERE key=?").run(JSON.stringify({ ...cur, ...patch }), key);
 }
 
+// 执行器在活页面上发现整个板块没了(例如 Ashby 的公司页 404):静音,不锁定(用户仍可在来源页手动改回)。
+// 已经静音的不动;没有这行的 key(老岗位没解析出板块)静默忽略。
+export function muteBoard(db: DB, key: string, reason: string): void {
+  const b = getBoard(db, key);
+  if (!b || b.tier === "muted") return;
+  db.prepare("UPDATE boards SET tier='muted', tier_reason=?, next_due_at=NULL, updated_at=datetime('now') WHERE key=?").run(reason.slice(0, 200), key);
+  logEvent(db, "board_retier", { entity: "board", entityId: b.id, payload: { key, from: b.tier, to: "muted", reason } });
+}
+
 // 用户在来源页手动改层级:锁定,自动升降不再碰它;非静音时立刻到期。
 export function setBoardTier(db: DB, key: string, tier: Tier): void {
   const b = getBoard(db, key);

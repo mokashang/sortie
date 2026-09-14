@@ -1,13 +1,16 @@
+import fs from "fs";
 import { getDb } from "@/lib/db";
 import { resolveResumePath } from "@/lib/paths";
-import fs from "fs";
+import { withUser } from "@/lib/actor";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export const GET = withUser(async (_req, { userId }, { params }) => {
   const { id } = await params;
-  const row = getDb().prepare("SELECT pdf_path FROM resumes WHERE id=?").get(Number(id)) as { pdf_path: string | null } | undefined;
+  const row = getDb().prepare("SELECT pdf_path FROM resumes WHERE user_id = ? AND id = ?").get(userId, Number(id)) as
+    | { pdf_path: string | null }
+    | undefined;
   // The stored path may come from another machine (the Mac-era rows): resolve it before looking.
   const file = row ? resolveResumePath(row.pdf_path) : "";
   if (!file || !fs.existsSync(file)) return new Response("not found", { status: 404 });
   const buf = fs.readFileSync(file);
   return new Response(new Uint8Array(buf), { headers: { "content-type": "application/pdf" } });
-}
+});

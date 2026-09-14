@@ -11,7 +11,7 @@ export const queue = defineMessages({
       visible: "入库可见",
       visibleHint: "扫描进来、并通过签证与地点硬过滤的职位",
       scored: "已打分",
-      scoredHint: "助手已按 12 个方向打过分的职位",
+      scoredHint: "助手已按 12 个方向为你打过分的职位",
       ready: "可投",
       readyHint: "分数达标、未归档、未投递的职位,也就是各方向标签页里的数量",
       hidden: "已隐藏",

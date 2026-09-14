@@ -41,6 +41,7 @@ export interface HarvestMessage {
   text: string;
 }
 export interface HarvestInput {
+  userId: string;
   outreachId: number;
   accepted?: boolean;
   messages?: HarvestMessage[];
@@ -102,9 +103,9 @@ export async function harvestOutreach(db: DB, opts: HarvestInput & { backend: Ll
   const row = db
     .prepare(
       `SELECT o.status, o.thread_log, p.name as person_name, p.relation, p.company
-       FROM outreach o JOIN people p ON p.id = o.person_id WHERE o.id = ?`
+       FROM outreach o JOIN people p ON p.id = o.person_id WHERE o.user_id = ? AND o.id = ?`
     )
-    .get(opts.outreachId) as Row | undefined;
+    .get(opts.userId, opts.outreachId) as Row | undefined;
   if (!row) throw new Error(`harvestOutreach: unknown outreach ${opts.outreachId}`);
   if (!["sent", "accepted", "replied"].includes(row.status)) {
     throw new Error(`harvestOutreach: nothing to monitor at status '${row.status}' (must be sent/accepted/replied)`);
@@ -148,7 +149,7 @@ export async function harvestOutreach(db: DB, opts: HarvestInput & { backend: Ll
       // Classification is best-effort: keep the thread + 'replied' status and show the raw tail.
       const last = [...thread].reverse().find((t) => t.dir === "received");
       summary = last ? last.text.slice(0, 120) : null;
-      logEvent(db, "referral_stage_error", { entity: "outreach", entityId: opts.outreachId, payload: { error: String(e) } });
+      logEvent(db, "referral_stage_error", { userId: opts.userId, entity: "outreach", entityId: opts.outreachId, payload: { error: String(e) } });
     }
   }
 
@@ -156,7 +157,7 @@ export async function harvestOutreach(db: DB, opts: HarvestInput & { backend: Ll
     `UPDATE outreach SET status = ?, thread_log = ?, referral_stage = ?, stage_summary = ?, stage_action = ?, stage_link = ?,
        last_checked_at = datetime('now') WHERE id = ?`
   ).run(status, JSON.stringify(thread), stage, summary, action, link, opts.outreachId);
-  logEvent(db, "referral_harvest", { entity: "outreach", entityId: opts.outreachId, payload: { status, stage, newMessages: added, accepted: !!opts.accepted } });
+  logEvent(db, "referral_harvest", { userId: opts.userId, entity: "outreach", entityId: opts.outreachId, payload: { status, stage, newMessages: added, accepted: !!opts.accepted } });
   return { status, stage, summary, action, link, newMessages: added };
 }
 
@@ -174,15 +175,15 @@ export interface ChecklistRow {
 
 // Everything the attended session should look at on LinkedIn: job-linked referral outreach that
 // actually went out and isn't resolved yet. Oldest check first.
-export function referralChecklist(db: DB): ChecklistRow[] {
+export function referralChecklist(db: DB, userId: string): ChecklistRow[] {
   const rows = db
     .prepare(
       `SELECT o.id, o.status, o.person_id, p.name as person_name, p.linkedin_url, p.company, o.thread_log, o.last_checked_at
        FROM outreach o JOIN people p ON p.id = o.person_id
-       WHERE o.status IN ('sent','accepted','replied') AND o.channel = 'linkedin' AND ${JOB_LINKED_SQL}
+       WHERE o.user_id = ? AND o.status IN ('sent','accepted','replied') AND o.channel = 'linkedin' AND ${JOB_LINKED_SQL}
        ORDER BY COALESCE(o.last_checked_at, '') ASC, o.id ASC`
     )
-    .all() as { id: number; status: string; person_id: number; person_name: string; linkedin_url: string | null; company: string | null; thread_log: string; last_checked_at: string | null }[];
+    .all(userId) as { id: number; status: string; person_id: number; person_name: string; linkedin_url: string | null; company: string | null; thread_log: string; last_checked_at: string | null }[];
   return rows.map((r) => {
     let thread: ThreadEntry[] = [];
     try {

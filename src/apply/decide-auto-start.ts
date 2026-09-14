@@ -1,6 +1,7 @@
 import { DB } from "@/lib/db";
 import { decide } from "@/apply/queue";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
+import { resumePausedChainIfReady } from "@/apply/continue";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
 // named export on route.ts) because Next's typed-routes checker only tolerates the recognized
@@ -13,6 +14,8 @@ export interface DecideAutoStartDeps {
   hasLiveOrQueuedRun?: typeof hasLiveOrQueuedRun;
   lastRunChannel?: typeof lastRunChannel;
   startExecutor?: typeof startExecutor;
+  // Log dir for a resumed 接力 segment (tests point it at a temp dir).
+  logDir?: string;
 }
 
 export interface DecideAutoStartResult {
@@ -22,9 +25,10 @@ export interface DecideAutoStartResult {
 }
 
 // User -> App from the in-app confirmation queue: approve or reject a filled application.
-// On a successful 'approve', if no 'apply' executor is currently alive or queued, auto-starts one
-// in resume mode — otherwise an approval just sits in the DB forever with nobody to act on it
-// (the gap this closes: the user clicks 确认提交 with no executor running, and nothing happens).
+// On a successful 'approve', if no 'apply' executor is currently alive or queued for this
+// account, auto-starts one in resume mode — otherwise an approval just sits in the DB forever
+// with nobody to act on it (the gap this closes: the user clicks 确认提交 with no executor
+// running, and nothing happens).
 //
 // Which channel to auto-start follows whatever the user last used for 'apply' — headless stays
 // headless, user_chrome stays user_chrome — and defaults to user_chrome (the App's default
@@ -39,14 +43,14 @@ export interface DecideAutoStartResult {
 // the apply confirm (resume:true), the network approve for job-linked outreach (resume:true) and
 // the referral board's 直接投/有内推/换人 buttons ({jobIds, mode}). Never throws: a failure here
 // must never break the caller's own state change, which already succeeded.
-export function maybeAutoStartApply(db: DB, options: StartOptions, deps: DecideAutoStartDeps = {}): DecideAutoStartResult {
+export function maybeAutoStartApply(db: DB, userId: string, options: StartOptions, deps: DecideAutoStartDeps = {}): DecideAutoStartResult {
   const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
   const getLastChannel = deps.lastRunChannel ?? lastRunChannel;
   const start = deps.startExecutor ?? startExecutor;
   try {
-    if (!checkLiveOrQueued(db, "apply")) {
-      const channel: ExecutorChannel = getLastChannel(db, "apply") === "headless" ? "headless" : "user_chrome";
-      const result = start(db, "apply", options, {}, channel);
+    if (!checkLiveOrQueued(db, userId, "apply")) {
+      const channel: ExecutorChannel = getLastChannel(db, userId, "apply") === "headless" ? "headless" : "user_chrome";
+      const result = start(db, userId, "apply", options, {}, channel);
       return { autoStarted: true, runId: result.id, channel };
     }
   } catch {
@@ -57,12 +61,18 @@ export function maybeAutoStartApply(db: DB, options: StartOptions, deps: DecideA
 
 export function decideAndMaybeAutoStart(
   db: DB,
+  userId: string,
   jobId: number,
   decision: "approve" | "reject",
   reason: string | undefined,
   deps: DecideAutoStartDeps = {}
 ): DecideAutoStartResult {
-  decide(db, jobId, decision, reason);
+  decide(db, userId, jobId, decision, reason);
+  // A 接力 chain parked behind the confirmation backlog (src/apply/continue.ts) gets first claim
+  // on the session: approving or rejecting shrinks the backlog, and the chain's next segment
+  // starts with the resume phase, so it submits the approvals itself.
+  const resumed = resumePausedChainIfReady(db, userId, deps);
+  if (resumed.action === "queued") return { autoStarted: true, runId: resumed.runId, channel: resumed.channel };
   if (decision !== "approve") return { autoStarted: false };
-  return maybeAutoStartApply(db, { resume: true }, deps);
+  return maybeAutoStartApply(db, userId, { resume: true }, deps);
 }

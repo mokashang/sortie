@@ -37,3 +37,9 @@
 - `src/lib/prefs.ts`(`prefs.json`)· `src/app/api/settings/lang/route.ts`。
 - 改过签名的共享库:`src/app/lib/{labels,time,time-penalty,describe-run,answer-labels}.ts`、`src/apply/{stages,funnel,info}.ts`、`src/executor/runner.ts`(`ExecutorStartError` 带 code,route 按语言出文案)。
 - 壳:`layout.tsx`(读 cookie、`generateMetadata`)、`providers.tsx`(`LangProvider` 最外层)、`shell/nav.ts`(`key` 代替 `label`)、`shell/app-shell.tsx`(语言按钮)、`settings/settings-client.tsx`(语言分段控件)。
+
+## 5. 与账号系统合并后的补充(2026-09-14)
+
+- 页面搬进了 `src/app/(app)/`(登录后)和 `src/app/(auth)/`(登录 / 注册 / 找回密码 / 验证邮箱,命名空间 `auth`);`tests/i18n.test.ts` 扫描 `src/app/**`,两组都在内。根布局只挂 `LangProvider` + `ToastProvider`;`(app)/layout.tsx` 再挂 `OverviewProvider` + `AppShell`(顶栏多了账号菜单,文案在 `shell`)。
+- API 报错:`src/lib/actor.ts` 的 `AuthError` 只带 `kind`(`signIn` / `ownerOnly`),`errorResponse(e, lang)` / `failResponse(e, status, lang)` 按语言出文案(`withUser` 用请求的 cookie,其余用 `serverLang()` 兜底);各 route 里写给用户看的字符串一律 `messagesFor(langFromRequest(req)).errors.*`;`src/middleware.ts` 读 cookie(边缘运行时没有 prefs.json,退到中文)。
+- 任务结果 `src/app/lib/run-outcome.ts`(未完成 / 海投 n/m / 本段 / 提交 · 待确认 · 待处理 …)与接力描述在 `runs` 命名空间;待处理卡片的通知按种类(补信息 / 登录一次 / 亲自处理 / 上传文件 / 现场完成)在 `notify.todo.*`;卡片种类和文件名在 `labels.infoKind` / `labels.documents`(`documentLabel(key, lang)`)。

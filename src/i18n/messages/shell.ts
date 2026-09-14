@@ -1,6 +1,7 @@
 import { defineMessages } from "../define";
 
-// The app frame: top bar, phone tab bar, the 「更多」 sheet, and the document metadata.
+// The app frame: top bar, phone tab bar, the 「更多」 sheet, the account menu and the document
+// metadata.
 export const shell = defineMessages({
   zh: {
     appDescription: "Sortie — 你的求职助手:找岗、匹配、投递、内推、追踪,一处搞定。",
@@ -19,6 +20,10 @@ export const shell = defineMessages({
     languageTitle: (name: string) => `语言 · ${name}`,
     more: "更多",
     settings: "设置",
+    account: (email: string) => `账号:${email}`,
+    myProfile: "我的档案",
+    signOut: "退出登录",
+    signOutFailed: "退出失败",
   },
   en: {
     appDescription: "Sortie — your job-search assistant: find, match, apply, get referred and track, in one place.",
@@ -37,5 +42,9 @@ export const shell = defineMessages({
     languageTitle: (name: string) => `Language · ${name}`,
     more: "More",
     settings: "Settings",
+    account: (email: string) => `Account: ${email}`,
+    myProfile: "My profile",
+    signOut: "Sign out",
+    signOutFailed: "Could not sign out",
   },
 });

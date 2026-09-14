@@ -19,24 +19,25 @@ export function isApplyMode(s: unknown): s is ApplyMode {
 // User -> App from /queue's 改为海投 / 改为找内推 / 跟随建议 buttons. null clears the override.
 // Only while the job is still sitting in the queue (status='matched'): once it has been taken
 // by a batch (prepared / referral_seeking / …) the mode is already committed.
-export function setApplyMode(db: DB, jobId: number, mode: ApplyMode | null): void {
+export function setApplyMode(db: DB, userId: string, jobId: number, mode: ApplyMode | null): void {
   if (mode !== null && !isApplyMode(mode)) {
     throw new Error(`setApplyMode: invalid mode '${String(mode)}' (must be referral, direct or null)`);
   }
-  const row = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(jobId) as { status: string } | undefined;
+  const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as { status: string } | undefined;
   if (!row) throw new Error(`setApplyMode: no application for job ${jobId}`);
   if (row.status !== "matched") {
     throw new Error(`setApplyMode: cannot change mode from status '${row.status}' (must be 'matched')`);
   }
-  db.prepare("UPDATE applications SET apply_mode = ? WHERE job_id = ?").run(mode, jobId);
+  db.prepare("UPDATE applications SET apply_mode = ? WHERE user_id = ? AND job_id = ?").run(mode, userId, jobId);
 }
 
-export function effectiveMode(db: DB, jobId: number): ApplyMode {
+export function effectiveMode(db: DB, userId: string, jobId: number): ApplyMode {
   const row = db
     .prepare(
-      `SELECT ${EFFECTIVE_MODE_SQL} AS mode FROM applications a JOIN matches m ON m.job_id = a.job_id WHERE a.job_id = ?`
+      `SELECT ${EFFECTIVE_MODE_SQL} AS mode FROM applications a JOIN matches m ON m.job_id = a.job_id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.job_id = ?`
     )
-    .get(jobId) as { mode: string } | undefined;
+    .get(userId, jobId) as { mode: string } | undefined;
   if (!row) throw new Error(`effectiveMode: no application+match for job ${jobId}`);
   return row.mode as ApplyMode;
 }

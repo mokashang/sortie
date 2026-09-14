@@ -5,7 +5,8 @@ import { ListChecks, Square } from "lucide-react";
 import { LogoMark } from "./shell/logo";
 import type { RunStatusRow } from "@/executor/runner";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { RUN_STATUS_TONE, labelOf } from "@/app/lib/labels";
+import { labelOf } from "@/app/lib/labels";
+import { runStatusDisplay, runProgressText, runBreakdownText, BACKLOG_RESUME_AT } from "@/app/lib/run-outcome";
 import { describeRun } from "@/app/lib/describe-run";
 import { parseLog, parseLogLine } from "@/app/lib/log-steps";
 import { localShort } from "@/app/lib/time";
@@ -49,7 +50,7 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
   const m = useMessages();
   const lang = useLang();
   const { runs, refresh } = useRuns();
-  const { refresh: refreshOverview } = useOverview();
+  const { data: overview, refresh: refreshOverview } = useOverview();
   const { toast } = useToast();
   const [stepsFor, setStepsFor] = useState<RunStatusRow | null>(null);
   const [stopFor, setStopFor] = useState<RunStatusRow | null>(null);
@@ -58,6 +59,10 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
   const relevant = useMemo(() => (runs ?? []).filter((r) => !filterKinds || filterKinds.includes(r.kind)), [runs, filterKinds]);
   const run = relevant.find((r) => isLive(r.status)) ?? relevant[0] ?? null;
   const live = !!run && isLive(run.status);
+  // 接力 segment parked behind the confirmation backlog (src/apply/continue.ts): not live, but
+  // the user can end the chain with 停止, and the card says what it is waiting for.
+  const paused = run?.status === "paused";
+  const unconfirmed = overview ? Math.max(0, overview.counts.awaitingConfirm - overview.counts.approvedWaiting) : null;
   const lastLine = run?.logTail?.length ? parseLogLine(run.logTail[run.logTail.length - 1]) : null;
 
   async function stop() {
@@ -76,11 +81,10 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
     }
   }
 
-  const statusChip = run ? (
-    <Chip tone={RUN_STATUS_TONE[run.status] ?? "neutral"}>{labelOf(m.labels.runStatus, run.status, run.status)}</Chip>
-  ) : (
-    <Chip>{m.assistant.idle}</Chip>
-  );
+  // 已完成 only when the plan was met; a run that filled 5 of 70 is 未完成 · 海投 5/70.
+  const display = run ? runStatusDisplay(run.status, run.outcome, lang) : null;
+  const progress = run ? runProgressText(run.outcome, lang) : "";
+  const statusChip = display ? <Chip tone={display.tone}>{display.label}</Chip> : <Chip>{m.assistant.idle}</Chip>;
 
   return (
     <>
@@ -95,6 +99,7 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
               <span className="muted small">
                 {labelOf(m.labels.runKind, run.kind, run.kind)}
                 {describeRun(run.kind, run.options, lang) ? ` · ${describeRun(run.kind, run.options, lang)}` : ""}
+                {progress ? ` · ${progress}` : ""}
               </span>
             ) : null}
           </div>
@@ -105,7 +110,7 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
                 {m.assistant.viewSteps}
               </Button>
             ) : null}
-            {live ? (
+            {live || paused ? (
               <Button size="sm" variant="danger" icon={<Square size={12} />} onClick={() => setStopFor(run)}>
                 {m.common.stop}
               </Button>
@@ -134,13 +139,19 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
               {m.assistant.startedPrefix}<RelativeTime value={run.startedAt} /> · {m.assistant.taskRef(run.id)}
             </p>
           </div>
+        ) : paused && run ? (
+          <div className="assistant-body">
+            <p className="small">{m.assistant.chainPaused(unconfirmed, BACKLOG_RESUME_AT)}</p>
+            <p className="muted xs mt-2">{m.assistant.chainPausedHint(run.id)}</p>
+          </div>
         ) : (
           <div className="assistant-body muted small">
             {run ? (
               <>
                 <div>
                   {m.assistant.lastPrefix}
-                  {labelOf(m.labels.runKind, run.kind, run.kind)} · {labelOf(m.labels.runStatus, run.status, run.status)} ·{" "}
+                  {labelOf(m.labels.runKind, run.kind, run.kind)} · {display?.label}
+                  {progress ? ` · ${progress}` : ""} ·{" "}
                   <RelativeTime value={run.endedAt ?? run.startedAt} />
                 </div>
                 {run.summary ? <RunSummary text={run.summary} /> : null}
@@ -175,7 +186,8 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
                       <td>{labelOf(m.labels.runKind, r.kind, r.kind)}</td>
                       <td className="muted small">{describeRun(r.kind, r.options, lang) || labelOf(m.labels.channel, r.channel, r.channel)}</td>
                       <td>
-                        <Chip tone={RUN_STATUS_TONE[r.status] ?? "neutral"}>{labelOf(m.labels.runStatus, r.status, r.status)}</Chip>
+                        <Chip tone={runStatusDisplay(r.status, r.outcome, lang).tone}>{runStatusDisplay(r.status, r.outcome, lang).label}</Chip>
+                        {runProgressText(r.outcome, lang) ? <div className="muted xs nowrap">{runProgressText(r.outcome, lang)}</div> : null}
                       </td>
                       <td className="mono muted small nowrap">{localShort(r.startedAt)}</td>
                       <td className="mono muted small nowrap">{localShort(r.endedAt)}</td>
@@ -271,8 +283,10 @@ export function RunStepsDialog({ run, open, onClose }: { run: RunStatusRow; open
       title={m.assistant.stepsTitle(run.id, labelOf(m.labels.runKind, run.kind, run.kind))}
       description={
         <>
-          <Chip tone={RUN_STATUS_TONE[run.status] ?? "neutral"}>{labelOf(m.labels.runStatus, run.status, run.status)}</Chip>{" "}
+          <Chip tone={runStatusDisplay(run.status, run.outcome, lang).tone}>{runStatusDisplay(run.status, run.outcome, lang).label}</Chip>{" "}
           {describeRun(run.kind, run.options, lang)}
+          {runProgressText(run.outcome, lang) ? ` · ${runProgressText(run.outcome, lang)}` : ""}
+          {runBreakdownText(run.outcome, lang) ? ` · ${runBreakdownText(run.outcome, lang)}` : ""}
           {run.summary ? ` · ${run.summary}` : ""}
         </>
       }
@@ -300,11 +314,17 @@ export function RunStepsDialog({ run, open, onClose }: { run: RunStatusRow; open
 // Sidebar footer: one line on what the assistant is doing, linking to the 投递 page.
 export function AssistantPill() {
   const m = useMessages();
+  const lang = useLang();
   const { data } = useOverview();
   const run = data?.assistant ?? null;
   const live = !!run && isLive(run.status);
+  const paused = run?.status === "paused";
   const text =
-    live && run ? m.assistant.pillLive(labelOf(m.labels.runKind, run.kind, run.kind), labelOf(m.labels.runStatus, run.status, run.status)) : m.assistant.pillIdle;
+    live && run
+      ? m.assistant.pillLive(labelOf(m.labels.runKind, run.kind, run.kind), runStatusDisplay(run.status, run.outcome, lang).label)
+      : paused
+        ? m.assistant.pillPaused
+        : m.assistant.pillIdle;
   return (
     <Link href="/apply" className={cx("assistant-pill", live && "is-live")} title={text}>
       <span className={cx("dot", run?.status === "running" && "is-running", run?.status === "queued" && "is-queued")} aria-hidden />
