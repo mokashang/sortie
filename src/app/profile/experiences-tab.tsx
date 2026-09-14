@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { GraduationCap, Pencil, Plus, Trash } from "lucide-react";
+import { Pencil, Plus, Trash } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
 import { getJson, deleteJson, errorMessage } from "@/app/lib/api";
 import { EXPERIENCE_KIND_LABEL } from "@/app/lib/labels";
@@ -58,7 +58,7 @@ export function ExperiencesTab({ initial }: { initial: Exp[] }) {
     <div>
       {items.length === 0 ? (
         <EmptyState
-          icon={<GraduationCap size={26} />}
+          art="paper"
           title="还没有录入经历"
           description="像填网申一样,把教育、实习、项目、技能一条条录进来。生成简历时会按目标方向从这里挑选。"
           action={addButton}

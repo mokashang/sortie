@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import path from "path";
+import { resumesDir } from "@/lib/paths";
 import { getDb } from "@/lib/db";
 import { loadProfile } from "@/lib/profile";
 import { getBackend } from "@/llm/registry";
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       direction,
       versionName: name,
       compile: makeTectonicCompiler(),
-      outDir: path.join(process.env.DATA_DIR || path.join(process.cwd(), "data"), "resumes"),
+      outDir: resumesDir(),
     });
     return NextResponse.json(res);
   } catch (e) {

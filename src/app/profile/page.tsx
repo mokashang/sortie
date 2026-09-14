@@ -41,7 +41,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   }
   return (
     <>
-      <PageHeader title="档案" subtitle="你的经历、由此生成的简历版本,以及网申常见问题的标准答案。" />
+      <PageHeader title="档案" />
       <ProfileTabs tab={tab} experiences={experiences} resumes={resumes} answers={answers} />
     </>
   );

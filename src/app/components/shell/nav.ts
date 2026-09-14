@@ -20,6 +20,9 @@ export const NAV: NavItem[] = [
 
 export const SETTINGS_NAV: NavItem = { href: "/settings", label: "设置", icon: Settings };
 
+// The phone tab bar holds the four daily destinations; everything else sits behind 「更多」.
+export const TABBAR_HREFS = ["/", "/queue", "/apply", "/network"];
+
 export function isActivePath(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
   if (href === "/") return pathname === "/";

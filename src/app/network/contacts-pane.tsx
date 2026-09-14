@@ -1,5 +1,5 @@
 "use client";
-import { Search, UserPlus, Users } from "lucide-react";
+import { Search, UserPlus } from "lucide-react";
 import { RELATION_LABEL, labelOf } from "@/app/lib/labels";
 import { cx } from "@/app/lib/cx";
 import { Button, Chip, EmptyState, Input, Select } from "@/app/components/ui";
@@ -38,7 +38,7 @@ export function ContactsPane({ people, total, selectedId, onSelect, onAdd, query
         </Button>
       </div>
       {total === 0 ? (
-        <EmptyState compact icon={<Users size={22} />} title="还没有联系人" description="手动添加,或让助手去队列头部的公司找人。" />
+        <EmptyState compact art="people" title="还没有联系人" description="手动添加,或让助手去队列头部的公司找人。" />
       ) : people.length === 0 ? (
         <EmptyState compact title="没有匹配的联系人" />
       ) : (

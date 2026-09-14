@@ -18,3 +18,5 @@ export { EmptyState } from "./empty-state";
 export { Tooltip } from "./tooltip";
 export { RelativeTime } from "./relative-time";
 export { PageHeader } from "./page-header";
+export { Illustration } from "./illustrations";
+export type { IllustrationName } from "./illustrations";

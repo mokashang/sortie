@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readJsonBody } from "@/lib/request-body";
 import { getDb } from "@/lib/db";
 import { finishRun } from "@/executor/runner";
 import { tryAcquireMatching, releaseMatching } from "@/matcher/inflight";
@@ -9,7 +10,7 @@ import { maybeContinueApplyRun, resumePausedChainIfReady, ContinueResult } from 
 // 'running'/'queued'; see src/executor/runner.ts's finishRun for the full transition rules.
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const status = body.status as string;
     if (status !== "done" && status !== "failed" && status !== "stopped") {
       return NextResponse.json({ error: `invalid status '${status}'` }, { status: 400 });

@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import { dataDir } from "@/lib/paths";
 import { dedupKey } from "@/scanner/fingerprint";
 import { jdStatusFor } from "@/scanner/jd-status";
 import { parseBoard, atsFromUrl } from "@/scanner/board-key";
@@ -25,9 +26,7 @@ function readSchema(): string {
 const SCHEMA_VERSION = 15;
 
 export function openDb(file?: string): DB {
-  const dbFile =
-    file ??
-    path.join(process.env.DATA_DIR || path.join(process.cwd(), "data"), "jobseeker.db");
+  const dbFile = file ?? path.join(dataDir(), "jobseeker.db");
   if (dbFile !== ":memory:") fs.mkdirSync(path.dirname(dbFile), { recursive: true });
   const db = new Database(dbFile);
   db.pragma("journal_mode = WAL");

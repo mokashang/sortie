@@ -7,6 +7,7 @@ import { listExperiences, Experience } from "@/resume/experiences";
 import { DIRECTIONS, directionLabel } from "@/matcher/directions";
 import { renderResumeLatex, ResumeContact, ResumeDoc, ResumeSection, ResumeEntry } from "@/resume/latex";
 import { extractPdfText } from "@/resume/pdf-text";
+import { toStoredResumePath } from "@/lib/paths";
 
 export interface CompileResult {
   pdfPath: string;
@@ -59,6 +60,9 @@ export interface GenerateOptions {
   // Extracts plain text from a compiled PDF for the content self-check. Defaults to the real
   // pdftotext-backed extractPdfText; tests inject a fake so they don't need pdftotext installed.
   extractText?: (pdfPath: string) => Promise<string | null>;
+  // Base directory the stored tex_path/pdf_path are made relative to when outDir lies inside it
+  // (see toStoredResumePath). Defaults to the app data dir; tests pass a scratch dir.
+  dataDir?: string;
 }
 
 export interface GenerateResult {
@@ -281,11 +285,18 @@ export async function generateResume(db: DB, opts: GenerateOptions): Promise<Gen
     );
   }
 
+  // Paths are stored relative to the data dir when they fall inside it ("resumes/<name>.pdf") so the
+  // row survives a move to another machine; every reader goes through resolveResumePath.
   db.prepare(
     `INSERT INTO resumes (version_name, directions, tex_path, pdf_path, compiled_at)
      VALUES (?,?,?,?, datetime('now'))
      ON CONFLICT(version_name) DO UPDATE SET directions=excluded.directions, tex_path=excluded.tex_path, pdf_path=excluded.pdf_path, compiled_at=excluded.compiled_at`
-  ).run(opts.versionName, JSON.stringify([opts.direction]), texPath, compiled.pdfPath);
+  ).run(
+    opts.versionName,
+    JSON.stringify([opts.direction]),
+    toStoredResumePath(texPath, opts.dataDir),
+    toStoredResumePath(compiled.pdfPath, opts.dataDir)
+  );
   // SQLite's last_insert_rowid() is NOT reset by ON CONFLICT DO UPDATE — it keeps the last real
   // INSERT's rowid on the connection, so `info.lastInsertRowid` can be a stale id from an earlier
   // insert when this call takes the UPDATE branch. Always resolve by the unique key instead.

@@ -52,6 +52,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       <div className="toast-stack" aria-live="polite" aria-relevant="additions">
         {items.map((t) => (
           <div key={t.id} className={cx("toast", t.tone && t.tone !== "neutral" && `toast-${t.tone}`)} role="status">
+            <span className="toast-dot" aria-hidden />
             <div className="toast-body">
               <div className="toast-title">{t.title}</div>
               {t.description ? <div className="toast-desc">{t.description}</div> : null}

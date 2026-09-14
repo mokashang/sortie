@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
+import path from "path";
+import { dataDir } from "@/lib/paths";
 import { parseProfile, Profile } from "@/lib/profile";
 import {
   takeNextApplication,
@@ -198,7 +200,7 @@ describe("takeNextApplication", () => {
       ats: "greenhouse",
     });
     expect(result.answerPack.contact.first_name).toBe("Mengjia");
-    expect(result.answerPack.resume).toEqual({ version_name: "ai_infra-v1", pdf_path: "/data/r/ai_infra-v1.pdf" });
+    expect(result.answerPack.resume).toEqual({ version_name: "ai_infra-v1", pdf_path: path.join(dataDir(), "resumes", "ai_infra-v1.pdf") });
   });
 
   it("writes the answer_pack JSON onto the applications row", () => {
@@ -641,6 +643,25 @@ describe("getApplyTask", () => {
 
     expect(task.jobId).toBe(taken.jobId);
     expect(task.answerPack).toEqual(taken.answerPack);
+  });
+
+  it("re-resolves a Mac-era resume path baked into the stored answer_pack (a job prepared before the move to Windows)", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    seedJob(db, { company: "Acme" });
+    const taken = takeNextApplication(db, testProfile()) as ApplyTask;
+    const legacy = {
+      ...taken.answerPack,
+      resume: { version_name: "ai_infra-v1", pdf_path: "/Users/moka/Documents/job_seeker/data/resumes/ai_infra-v1.pdf" },
+    };
+    db.prepare("UPDATE applications SET answer_pack = ? WHERE job_id = ?").run(JSON.stringify(legacy), taken.jobId);
+
+    const task = getApplyTask(db, taken.jobId) as ApplyTask;
+
+    expect(task.answerPack.resume).toEqual({
+      version_name: "ai_infra-v1",
+      pdf_path: path.join(dataDir(), "resumes", "ai_infra-v1.pdf"),
+    });
   });
 
   it("returns an error for an unknown jobId", () => {

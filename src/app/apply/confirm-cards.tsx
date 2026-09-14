@@ -106,7 +106,7 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
 
   if (rows.length === 0) {
     if (compact) return null;
-    return <EmptyState compact icon={<CircleCheck size={24} />} title="没有等待确认的申请" description="助手填好表单后,会在这里停下等你确认,再点提交。" />;
+    return <EmptyState compact art="inbox" title="没有等待确认的申请" description="助手填好表单后,会在这里停下等你确认,再点提交。" />;
   }
 
   return (

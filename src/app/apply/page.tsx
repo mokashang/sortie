@@ -34,7 +34,7 @@ export default function ApplyPage() {
 
   return (
     <>
-      <PageHeader title="投递" subtitle="选好每个方向的份数,助手在你的 Chrome 里找人或填表;任何提交和发送都先经你确认。" />
+      <PageHeader title="投递" subtitle="任何提交和发送都先经你确认。" />
       <AssistantCard />
       <PlanCard />
       <InfoCards />
