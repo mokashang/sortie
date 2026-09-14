@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { buildFunnel, FunnelKind, FunnelNode } from "@/apply/funnel";
 import type { HistoryRow } from "@/apply/stages";
 import { Section } from "@/app/components/ui";
+import { useLang, useMessages } from "@/i18n/client";
 
 // 投递漏斗 — a hand-laid Sankey of the post-submit pipeline. Layout is a fixed five-column tree
 // (every node has exactly one parent), so no d3-sankey: columns are equally spaced, each column
@@ -44,8 +45,10 @@ interface Placed extends FunnelNode {
 }
 
 export function HistorySankey({ rows }: { rows: HistoryRow[] }) {
+  const m = useMessages();
+  const lang = useLang();
   const layout = useMemo(() => {
-    const { nodes, links } = buildFunnel(rows);
+    const { nodes, links } = buildFunnel(rows, lang);
     if (nodes.length === 0) return null;
     const total = rows.length;
     const maxStack = Math.max(...[0, 1, 2, 3, 4].map((l) => nodes.filter((n) => n.layer === l).length));
@@ -88,23 +91,23 @@ export function HistorySankey({ rows }: { rows: HistoryRow[] }) {
       });
 
     return { nodes: [...placed.values()], bands, height, total };
-  }, [rows]);
+  }, [rows, lang]);
 
   if (!layout) return null;
 
   return (
-    <Section title="投递漏斗" count={layout.total}>
+    <Section title={m.history.funnel.title} count={layout.total}>
       <div style={{ overflowX: "auto" }}>
         <svg
           viewBox={`0 0 ${W} ${layout.height}`}
           width="100%"
           style={{ maxWidth: W, display: "block", fontFamily: "var(--font-sans)" }}
           role="img"
-          aria-label="投递漏斗桑基图"
+          aria-label={m.history.funnel.chartLabel}
         >
           {layout.bands.map((b) => (
             <path key={b.key} d={b.d} fill={b.fill} opacity={0.32}>
-              <title>{`${b.from.label} → ${b.to.label}: ${b.count}`}</title>
+              <title>{m.history.funnel.flow(b.from.label, b.to.label, b.count)}</title>
             </path>
           ))}
           {layout.nodes.map((n) => {
@@ -115,7 +118,7 @@ export function HistorySankey({ rows }: { rows: HistoryRow[] }) {
             return (
               <g key={n.id}>
                 <rect x={n.x} y={n.y} width={NODE_W} height={n.h} fill={fillOf(n)} rx={1}>
-                  <title>{`${n.label}: ${n.count}`}</title>
+                  <title>{m.history.funnel.node(n.label, n.count)}</title>
                 </rect>
                 <text x={tx} y={ty} textAnchor={anchor} fill="var(--ink)" fontSize={17} fontWeight={700} fontFamily="var(--font-mono)">
                   {n.count}

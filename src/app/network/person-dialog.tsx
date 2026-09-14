@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
 import { postJson, errorMessage } from "@/app/lib/api";
-import { RELATION_LABEL } from "@/app/lib/labels";
 import { Button, Dialog, Field, Input, Select, useToast } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { RELATIONS } from "./network-types";
 
 const EMPTY = { name: "", company: "", role_title: "", linkedin_url: "", email: "", relation: "" };
 
 export function PersonDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => Promise<void> | void }) {
+  const m = useMessages();
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const { toast } = useToast();
@@ -31,11 +32,11 @@ export function PersonDialog({ open, onClose, onSaved }: { open: boolean; onClos
         relation: form.relation || null,
         source: "manual",
       });
-      toast({ title: `已添加 ${form.name.trim()}`, tone: "good" });
+      toast({ title: m.network.person.added(form.name.trim()), tone: "good" });
       onClose();
       await onSaved();
     } catch (e) {
-      toast({ title: "添加失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.network.person.addFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusy(false);
     }
@@ -45,43 +46,43 @@ export function PersonDialog({ open, onClose, onSaved }: { open: boolean; onClos
     <Dialog
       open={open}
       onClose={onClose}
-      title="添加联系人"
+      title={m.network.person.title}
       actions={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            取消
+            {m.common.cancel}
           </Button>
           <Button variant="primary" onClick={save} loading={busy} disabled={!form.name.trim()}>
-            添加
+            {m.common.add}
           </Button>
         </>
       }
     >
       <div className="col gap-3">
-        <Field label="姓名" htmlFor="p-name">
+        <Field label={m.network.person.name} htmlFor="p-name">
           <Input id="p-name" value={form.name} onChange={set("name")} autoFocus />
         </Field>
         <div className="form-grid">
-          <Field label="公司" htmlFor="p-company">
+          <Field label={m.network.person.company} htmlFor="p-company">
             <Input id="p-company" value={form.company} onChange={set("company")} />
           </Field>
-          <Field label="职位" htmlFor="p-role">
+          <Field label={m.network.person.role} htmlFor="p-role">
             <Input id="p-role" value={form.role_title} onChange={set("role_title")} />
           </Field>
         </div>
-        <Field label="LinkedIn 链接" htmlFor="p-linkedin">
-          <Input id="p-linkedin" value={form.linkedin_url} onChange={set("linkedin_url")} placeholder="https://www.linkedin.com/in/…" />
+        <Field label={m.network.person.linkedin} htmlFor="p-linkedin">
+          <Input id="p-linkedin" value={form.linkedin_url} onChange={set("linkedin_url")} placeholder={m.network.person.linkedinPlaceholder} />
         </Field>
         <div className="form-grid">
-          <Field label="邮箱" htmlFor="p-email">
+          <Field label={m.network.person.email} htmlFor="p-email">
             <Input id="p-email" type="email" value={form.email} onChange={set("email")} />
           </Field>
-          <Field label="关系" htmlFor="p-relation">
+          <Field label={m.network.person.relation} htmlFor="p-relation">
             <Select id="p-relation" value={form.relation} onChange={set("relation")}>
-              <option value="">未指定</option>
+              <option value="">{m.network.person.unspecified}</option>
               {RELATIONS.map((r) => (
                 <option key={r} value={r}>
-                  {RELATION_LABEL[r]}
+                  {m.labels.relation[r]}
                 </option>
               ))}
             </Select>

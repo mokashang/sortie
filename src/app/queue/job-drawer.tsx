@@ -1,6 +1,7 @@
 "use client";
 import { X } from "lucide-react";
 import { Drawer, IconButton } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { isInQueue, type JobRowData, type RowHandlers } from "./job-row";
 import { DetailBody, DetailFooter, DetailHead, useJobDetail } from "./job-detail";
 
@@ -33,6 +34,7 @@ export function JobDrawer({ row, rows, allTab, busy, onNavigate, onClose, onPin,
 
 // Wide window: the same detail pinned beside the list, so the list stays in view.
 export function JobPanel({ row, rows, allTab, busy, onNavigate, onClose, onPin, onMode, onSkip }: JobDetailProps) {
+  const m = useMessages();
   const state = useJobDetail(row?.id ?? null);
   if (!row) return null;
   const inQueue = isInQueue(row, allTab);
@@ -46,7 +48,7 @@ export function JobPanel({ row, rows, allTab, busy, onNavigate, onClose, onPin, 
             <DetailHead row={row} allTab={allTab} />
           </div>
         </div>
-        <IconButton label="关闭" icon={<X size={16} />} onClick={onClose} />
+        <IconButton label={m.ui.close} icon={<X size={16} />} onClick={onClose} />
       </div>
       <div className="drawer-body">
         <DetailBody state={state} row={row} allTab={allTab} busy={busy} onMode={onMode} />

@@ -1,10 +1,11 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { MessageSquare } from "lucide-react";
-import { directionLabel } from "@/matcher/directions";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
+import { directionName } from "@/app/lib/labels";
 import { Button, Card, Checkbox, Chip, Field, Input, LinkButton, Section, Select, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
+import { useLang, useMessages } from "@/i18n/client";
 
 interface Question {
   key: string;
@@ -32,6 +33,8 @@ type Draft = { value: string; onlyOnce: boolean };
 // form; answers are remembered as standard answers unless 「仅本次」 is ticked. Renders nothing
 // when there is nothing to answer.
 export function InfoCards({ compact = false }: { compact?: boolean }) {
+  const m = useMessages();
+  const lang = useLang();
   const [rows, setRows] = useState<InfoRow[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Record<string, Draft>>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -70,14 +73,14 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       }
       const j = await postJson<{ status?: string }>("/api/apply/answer-info", { jobId: row.jobId, answers });
       toast({
-        title: `已提交 ${row.company} 的答案`,
-        description: j.status === "prepared" ? "助手会接着填这份表单。" : "已重新入队,下一次投递会带上这些答案。",
+        title: m.apply.info.submitted(row.company),
+        description: j.status === "prepared" ? m.apply.info.submittedContinue : m.apply.info.submittedRequeued,
         tone: "good",
       });
       await refresh();
       await refreshOverview();
     } catch (e) {
-      toast({ title: "提交失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.apply.info.submitFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusyId(null);
     }
@@ -97,19 +100,19 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
               <span>{row.title}</span>
             </div>
             <div className="row mt-2">
-              <Chip>{row.direction ? directionLabel(row.direction) : "未分类"}</Chip>
+              <Chip>{directionName(row.direction, lang)}</Chip>
               {row.status === "needs_info" ? (
-                <Chip tone="warn">助手等待中 · {row.askedAt}</Chip>
+                <Chip tone="warn">{m.apply.info.waiting(row.askedAt)}</Chip>
               ) : (
                 <Chip tone="neutral" title={row.needsManualReason ?? undefined}>
-                  助手已超时 · 补完后自动重新入队
+                  {m.apply.info.timedOut}
                 </Chip>
               )}
             </div>
           </div>
           {row.applyUrl ? (
             <LinkButton href={row.applyUrl} external size="sm" variant="ghost">
-              看职位
+              {m.apply.info.viewJob}
             </LinkButton>
           ) : null}
         </div>
@@ -125,8 +128,8 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                 label={
                   <>
                     {q.label}
-                    {q.optional ? <span className="muted xs">(可选)</span> : null}
-                    <Tooltip content={`答案会以「${q.key}」存进标准答案,下次自动填`} />
+                    {q.optional ? <span className="muted xs">{m.apply.info.optionalMark}</span> : null}
+                    <Tooltip content={m.apply.info.rememberTip(q.key)} />
                   </>
                 }
                 hint={q.hint}
@@ -134,7 +137,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                 <div className="row row-nowrap">
                   {q.options && q.options.length > 0 ? (
                     <Select id={id} value={d.value} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.value })} style={{ maxWidth: 360 }}>
-                      <option value="">选择…</option>
+                      <option value="">{m.apply.info.choose}</option>
                       {q.options.map((o) => (
                         <option key={o} value={o}>
                           {o}
@@ -142,9 +145,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                       ))}
                     </Select>
                   ) : (
-                    <Input id={id} value={d.value} placeholder="你的答案" onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.value })} style={{ maxWidth: 480 }} />
+                    <Input id={id} value={d.value} placeholder={m.apply.info.answerPlaceholder} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.value })} style={{ maxWidth: 480 }} />
                   )}
-                  <Checkbox label="仅本次" checked={d.onlyOnce} onChange={(e) => setDraft(row.jobId, q.key, { onlyOnce: e.target.checked })} />
+                  <Checkbox label={m.apply.info.onlyOnce} checked={d.onlyOnce} onChange={(e) => setDraft(row.jobId, q.key, { onlyOnce: e.target.checked })} />
                 </div>
               </Field>
             );
@@ -153,9 +156,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
 
         <div className="row mt-4">
           <Button variant="primary" onClick={() => submit(row)} loading={busyId === row.jobId} disabled={missing}>
-            提交答案,继续投递
+            {m.apply.info.submitButton}
           </Button>
-          {missing ? <span className="muted small">还有必填题没填。</span> : null}
+          {missing ? <span className="muted small">{m.apply.info.missingRequired}</span> : null}
         </div>
       </Card>
     );
@@ -164,10 +167,10 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   if (compact) return <div className="col gap-3">{body}</div>;
 
   return (
-    <Section title="待补信息" count={rows.length} description="助手填到一半遇到了标准答案里没有的题,正停在表单上等你。">
+    <Section title={m.apply.info.sectionTitle} count={rows.length} description={m.apply.info.sectionDescription}>
       <div className="col gap-3">{body}</div>
       <p className="muted xs mt-3">
-        <MessageSquare size={12} aria-hidden /> 岗位特有的题勾「仅本次」,其余会存进档案的标准答案,下次不再问。
+        <MessageSquare size={12} aria-hidden /> {m.apply.info.footnote}
       </p>
     </Section>
   );

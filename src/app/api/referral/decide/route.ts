@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { referralDecide, ReferralAction } from "@/apply/referral";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
+import { langFromRequest, messagesFor } from "@/i18n/server";
 
 // POST {jobIds, action: direct|won|retry|archive, info?, personName?} — the 内推进行中 card
 // buttons. The state change always happens; the follow-up run is enqueued only when no apply run
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
       ok: true,
       startMode: result.startMode,
       ...started,
-      message: started.autoStarted ? undefined : "已有投递 run 在跑,结束后请在卡片上再点一次「开始投」",
+      message: started.autoStarted ? undefined : messagesFor(langFromRequest(req)).errors.applyRunBusy,
     });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 400 });

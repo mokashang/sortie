@@ -1,9 +1,10 @@
 "use client";
 import { ExternalLink, Mail, Sparkles } from "lucide-react";
-import { MSG_CHANNEL_LABEL, OUTREACH_STATUS_LABEL, OUTREACH_STATUS_TONE, PLAYBOOK_LABEL, RELATION_LABEL, labelOf } from "@/app/lib/labels";
+import { OUTREACH_STATUS_TONE, labelOf } from "@/app/lib/labels";
 import { localShort } from "@/app/lib/time";
 import { cx } from "@/app/lib/cx";
 import { Button, Chip, EmptyState } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import type { JobLite, OutreachRow, Person } from "./network-types";
 
 export interface ContactDetailProps {
@@ -15,11 +16,10 @@ export interface ContactDetailProps {
   busyId: number | null;
 }
 
-const OUTCOME_LABEL: Record<string, string> = { meeting: "约到了", referral_won: "拿到内推", no_response: "无回应" };
-
 export function ContactDetail({ person, outreach, jobMap, onDraft, onOutcome, busyId }: ContactDetailProps) {
+  const m = useMessages();
   if (!person) {
-    return <EmptyState compact title="选一位联系人" description="左侧点选后,这里显示资料和往来记录。" />;
+    return <EmptyState compact title={m.network.detail.pickTitle} description={m.network.detail.pickDescription} />;
   }
   const linkedJobs = Array.from(new Set(outreach.map((o) => o.jobId).filter((x): x is number => x != null)));
 
@@ -31,10 +31,10 @@ export function ContactDetail({ person, outreach, jobMap, onDraft, onOutcome, bu
             <span className="serif strong" style={{ fontSize: "var(--t-lg)" }}>
               {person.name}
             </span>
-            {person.relation ? <Chip outline>{labelOf(RELATION_LABEL, person.relation, person.relation)}</Chip> : null}
+            {person.relation ? <Chip outline>{labelOf(m.labels.relation, person.relation, person.relation)}</Chip> : null}
           </div>
-          <div className="muted small mt-1">{[person.company, person.role_title].filter(Boolean).join(" · ") || "公司 / 职位未填"}</div>
-          {person.notes ? <div className="small mt-1">助手在主页看到的:{person.notes}</div> : null}
+          <div className="muted small mt-1">{[person.company, person.role_title].filter(Boolean).join(" · ") || m.network.detail.noCompanyRole}</div>
+          {person.notes ? <div className="small mt-1">{m.network.detail.assistantNotes(person.notes)}</div> : null}
           <div className="row mt-2 small">
             {person.linkedin_url ? (
               <a href={person.linkedin_url} target="_blank" rel="noreferrer" className="row row-nowrap gap-1">
@@ -49,43 +49,42 @@ export function ContactDetail({ person, outreach, jobMap, onDraft, onOutcome, bu
           </div>
         </div>
         <Button size="sm" icon={<Sparkles size={13} />} onClick={onDraft}>
-          AI 草稿…
+          {m.network.detail.aiDraft}
         </Button>
       </div>
 
       {linkedJobs.length > 0 ? (
         <p className="muted small mt-3">
-          关联岗位:
-          {linkedJobs.map((jid) => (jobMap.has(jid) ? `${jobMap.get(jid)!.company} · ${jobMap.get(jid)!.title}` : `#${jid}`)).join(",")}
+          {m.network.detail.linkedJobs(linkedJobs.map((jid) => (jobMap.has(jid) ? `${jobMap.get(jid)!.company} · ${jobMap.get(jid)!.title}` : `#${jid}`)))}
         </p>
       ) : null}
 
-      <h4 className="mt-4">联系记录</h4>
+      <h4 className="mt-4">{m.network.detail.history}</h4>
       {outreach.length === 0 ? (
-        <p className="muted small">还没有往来。点「AI 草稿」生成第一条消息。</p>
+        <p className="muted small">{m.network.detail.noHistory}</p>
       ) : (
         <div className="col gap-3">
           {outreach.map((row) => (
             <div key={row.id} className="thread">
               <div className="row">
-                <Chip outline>{labelOf(PLAYBOOK_LABEL, row.playbook, row.playbook)}</Chip>
-                <Chip>{labelOf(MSG_CHANNEL_LABEL, row.channel, row.channel)}</Chip>
-                <Chip tone={OUTREACH_STATUS_TONE[row.status] ?? "neutral"}>{labelOf(OUTREACH_STATUS_LABEL, row.status, row.status)}</Chip>
-                {row.outcome ? <Chip tone="good">{OUTCOME_LABEL[row.outcome] ?? row.outcome}</Chip> : null}
+                <Chip outline>{labelOf(m.labels.playbook, row.playbook, row.playbook)}</Chip>
+                <Chip>{labelOf(m.labels.msgChannel, row.channel, row.channel)}</Chip>
+                <Chip tone={OUTREACH_STATUS_TONE[row.status] ?? "neutral"}>{labelOf(m.labels.outreachStatus, row.status, row.status)}</Chip>
+                {row.outcome ? <Chip tone="good">{labelOf(m.network.detail.outcomes, row.outcome, row.outcome)}</Chip> : null}
                 <span className="muted xs mono">{localShort(row.createdAt)}</span>
               </div>
               {row.threadLog.length === 0 ? (
                 row.draft ? (
                   <div className="msg-quote is-secondary mt-2">{row.draft}</div>
                 ) : (
-                  <p className="muted xs mt-2">尚无消息记录。</p>
+                  <p className="muted xs mt-2">{m.network.detail.noMessages}</p>
                 )
               ) : (
                 <div className="col gap-2 mt-2">
                   {row.threadLog.map((t, i) => (
                     <div key={i} className={cx("bubble", t.dir === "sent" ? "is-sent" : "is-received")}>
                       <div className="bubble-meta">
-                        {t.dir === "sent" ? "你" : "对方"} · {localShort(t.at)}
+                        {t.dir === "sent" ? m.network.detail.you : m.network.detail.them} · {localShort(t.at)}
                       </div>
                       <div className="bubble-text">{t.text}</div>
                     </div>
@@ -94,10 +93,10 @@ export function ContactDetail({ person, outreach, jobMap, onDraft, onOutcome, bu
               )}
               {row.status === "sent" || row.status === "replied" ? (
                 <div className="row mt-2">
-                  <span className="muted xs">结果:</span>
+                  <span className="muted xs">{m.network.detail.outcome}</span>
                   {(["meeting", "referral_won", "no_response"] as const).map((oc) => (
                     <Button key={oc} size="sm" variant="ghost" onClick={() => onOutcome(row, oc)} disabled={busyId === row.id}>
-                      {OUTCOME_LABEL[oc]}
+                      {m.network.detail.outcomes[oc]}
                     </Button>
                   ))}
                 </div>

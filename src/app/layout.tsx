@@ -4,6 +4,8 @@ import "./globals.css";
 import { Providers } from "./components/providers";
 import { AppShell } from "./components/shell/app-shell";
 import { ThemeScript } from "./components/shell/theme-script";
+import { HTML_LANG } from "@/i18n/lang";
+import { getLang, getMessages } from "@/i18n/server";
 
 // Archivo (with its width axis) carries every Latin glyph — UI text at normal width, the wordmark
 // and big figures set wide. Martian Mono only ever sets numbers, ids and timestamps. Chinese falls
@@ -23,11 +25,14 @@ const martian = Martian_Mono({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: { default: "Sortie", template: "%s · Sortie" },
-  description: "Sortie — 你的求职助手:找岗、匹配、投递、内推、追踪,一处搞定。",
-  applicationName: "Sortie",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const m = await getMessages();
+  return {
+    title: { default: "Sortie", template: "%s · Sortie" },
+    description: m.shell.appDescription,
+    applicationName: "Sortie",
+  };
+}
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -39,14 +44,17 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// The UI language comes from the sortie.lang cookie (falling back to the saved preference), so
+// the server renders every page in the chosen language and the client picks it up from context.
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const lang = await getLang();
   return (
-    <html lang="zh" className={`${archivo.variable} ${martian.variable}`} suppressHydrationWarning>
+    <html lang={HTML_LANG[lang]} className={`${archivo.variable} ${martian.variable}`} suppressHydrationWarning>
       <head>
         <ThemeScript />
       </head>
       <body>
-        <Providers>
+        <Providers lang={lang}>
           <AppShell>{children}</AppShell>
         </Providers>
       </body>

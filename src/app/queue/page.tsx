@@ -1,12 +1,17 @@
+import type { Metadata } from "next";
 import { getDb } from "@/lib/db";
 import { queueByDirection, pagedQueue, pagedAllJobs, QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { ALL_JOBS_DIRECTION, QUEUE_MODES, QUEUE_SORTS, type QueueModeKey, type QueueSortKey } from "@/app/lib/queue-const";
 import { PageHeader, Stat, StatStrip } from "@/app/components/ui";
 import { ScanMenu } from "@/app/components/scan-menu";
+import { getMessages } from "@/i18n/server";
 import { QueueClient } from "./queue-client";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "职位" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).nav.queue };
+}
 
 const PAGE_SIZE = 25;
 
@@ -19,6 +24,7 @@ export default async function QueuePage({
   searchParams: Promise<{ direction?: string; page?: string; sort?: string; mode?: string; q?: string; job?: string }>;
 }) {
   const sp = await searchParams;
+  const m = await getMessages();
   const db = getDb();
 
   const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
@@ -55,12 +61,12 @@ export default async function QueuePage({
 
   return (
     <>
-      <PageHeader title="职位" actions={<ScanMenu />}>
+      <PageHeader title={m.queue.title} actions={<ScanMenu />}>
         <StatStrip compact>
-          <Stat label="入库可见" value={visibleTotal.toLocaleString()} hint="扫描进来、并通过签证与地点硬过滤的职位" />
-          <Stat label="已打分" value={scoredTotal.toLocaleString()} hint="助手已按 12 个方向打过分的职位" />
-          <Stat label="可投" value={matchedTotal.toLocaleString()} tone="accent" hint="分数达标、未归档、未投递的职位,也就是各方向标签页里的数量" />
-          <Stat label="已隐藏" value={(visaHidden + locHidden).toLocaleString()} sub={`${visaHidden.toLocaleString()} 个签证不符 · ${locHidden.toLocaleString()} 个海外`} hint="硬过滤掉的职位不会出现在队列里" />
+          <Stat label={m.queue.stats.visible} value={visibleTotal.toLocaleString()} hint={m.queue.stats.visibleHint} />
+          <Stat label={m.queue.stats.scored} value={scoredTotal.toLocaleString()} hint={m.queue.stats.scoredHint} />
+          <Stat label={m.queue.stats.ready} value={matchedTotal.toLocaleString()} tone="accent" hint={m.queue.stats.readyHint} />
+          <Stat label={m.queue.stats.hidden} value={(visaHidden + locHidden).toLocaleString()} sub={m.queue.stats.hiddenSub(visaHidden, locHidden)} hint={m.queue.stats.hiddenHint} />
         </StatStrip>
       </PageHeader>
       <QueueClient

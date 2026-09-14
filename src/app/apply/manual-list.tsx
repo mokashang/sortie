@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
 import { ExternalLink, RotateCcw, Trash } from "lucide-react";
-import { directionLabel } from "@/matcher/directions";
 import { postJson, errorMessage } from "@/app/lib/api";
+import { directionName } from "@/app/lib/labels";
 import { Button, Checkbox, Chip, ConfirmDialog, EmptyState, Menu, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
+import { useLang, useMessages } from "@/i18n/client";
 
 export interface ManualRow {
   job_id: number;
@@ -19,6 +20,8 @@ export interface ManualRow {
 // 需人工: applications the assistant (or a rejection) parked. Retry un-parks; remove archives
 // (undoable from the toast, and from the queue's 全部入库 tab).
 export function ManualList({ rows: initial }: { rows: ManualRow[] }) {
+  const m = useMessages();
+  const lang = useLang();
   const [rows, setRows] = useState(initial);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirmIds, setConfirmIds] = useState<number[] | null>(null);
@@ -42,10 +45,10 @@ export function ManualList({ rows: initial }: { rows: ManualRow[] }) {
     try {
       await postJson("/api/apply/unpark", { jobId: row.job_id });
       setRows((prev) => prev.filter((r) => r.job_id !== row.job_id));
-      toast({ title: `${row.company} 已放回队列`, description: "下次投递时会再试一次。", tone: "good" });
+      toast({ title: m.apply.manual.retried(row.company), description: m.apply.manual.retriedDescription, tone: "good" });
       await refreshOverview();
     } catch (e) {
-      toast({ title: "重试失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.apply.manual.retryFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusy(false);
     }
@@ -60,50 +63,50 @@ export function ManualList({ rows: initial }: { rows: ManualRow[] }) {
       setSelected(new Set());
       setConfirmIds(null);
       toast({
-        title: removed.length === 1 ? `已移除 ${removed[0].company} · ${removed[0].title}` : `已移除 ${removed.length} 条`,
-        description: "已归档,不再投递。",
+        title: removed.length === 1 ? m.apply.manual.removedOne(removed[0].company, removed[0].title) : m.apply.manual.removedMany(removed.length),
+        description: m.apply.manual.removedDescription,
         action: {
-          label: "撤销",
+          label: m.common.undo,
           onClick: () => {
             Promise.all(ids.map((jobId) => postJson("/api/queue/unarchive", { jobId })))
               .then(() => {
                 setRows((prev) => [...removed, ...prev]);
-                toast({ title: "已恢复", tone: "good" });
+                toast({ title: m.apply.manual.restored, tone: "good" });
               })
-              .catch((e) => toast({ title: "撤销失败", description: errorMessage(e), tone: "danger" }));
+              .catch((e) => toast({ title: m.apply.manual.undoFailed, description: errorMessage(e), tone: "danger" }));
           },
         },
       });
       await refreshOverview();
     } catch (e) {
-      toast({ title: "移除失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.apply.manual.removeFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusy(false);
     }
   }
 
   if (rows.length === 0) {
-    return <EmptyState compact title="没有需要人工处理的申请" description="助手遇到登录墙、验证码或死链时,会把申请放到这里。" />;
+    return <EmptyState compact title={m.apply.manual.emptyTitle} description={m.apply.manual.emptyDescription} />;
   }
 
   return (
     <div>
       <div className="row mb-2">
-        <Checkbox label="全选" checked={allSelected} disabled={busy} onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.job_id)))} />
+        <Checkbox label={m.apply.manual.selectAll} checked={allSelected} disabled={busy} onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.job_id)))} />
         <Button size="sm" variant="danger" icon={<Trash size={13} />} disabled={busy || selected.size === 0} onClick={() => setConfirmIds([...selected])}>
-          移除所选({selected.size})
+          {m.apply.manual.removeSelected(selected.size)}
         </Button>
       </div>
       <div className="manual-list">
         {rows.map((r) => (
           <div key={r.job_id} className="manual-row">
-            <Checkbox label={<span className="sr-only">选择 {r.company}</span>} checked={selected.has(r.job_id)} disabled={busy} onChange={() => toggle(r.job_id)} />
+            <Checkbox label={<span className="sr-only">{m.apply.manual.selectRow(r.company)}</span>} checked={selected.has(r.job_id)} disabled={busy} onChange={() => toggle(r.job_id)} />
             <div className="grow">
               <div className="row">
                 <span className="serif strong">{r.company}</span>
                 <span className="muted">·</span>
                 <span>{r.title}</span>
-                <Chip outline>{r.direction ? directionLabel(r.direction) : "未分类"}</Chip>
+                <Chip outline>{directionName(r.direction, lang)}</Chip>
               </div>
               <div className="muted small mt-1 row">
                 <span className="truncate" style={{ maxWidth: 520 }} title={r.needs_manual_reason}>
@@ -114,12 +117,12 @@ export function ManualList({ rows: initial }: { rows: ManualRow[] }) {
               </div>
             </div>
             <Menu
-              label="操作"
+              label={m.apply.manual.actions}
               items={[
-                ...(r.apply_url ? [{ label: "打开申请页", icon: <ExternalLink size={14} />, onSelect: () => window.open(r.apply_url!, "_blank", "noopener") }] : []),
-                { label: "重试", icon: <RotateCcw size={14} />, onSelect: () => void retry(r), disabled: busy },
+                ...(r.apply_url ? [{ label: m.apply.manual.openApplyPage, icon: <ExternalLink size={14} />, onSelect: () => window.open(r.apply_url!, "_blank", "noopener") }] : []),
+                { label: m.common.retry, icon: <RotateCcw size={14} />, onSelect: () => void retry(r), disabled: busy },
                 "sep" as const,
-                { label: "移除", icon: <Trash size={14} />, danger: true, onSelect: () => setConfirmIds([r.job_id]), disabled: busy },
+                { label: m.common.remove, icon: <Trash size={14} />, danger: true, onSelect: () => setConfirmIds([r.job_id]), disabled: busy },
               ]}
             />
           </div>
@@ -133,9 +136,9 @@ export function ManualList({ rows: initial }: { rows: ManualRow[] }) {
         }}
         busy={busy}
         danger
-        title={confirmIds && confirmIds.length === 1 ? "移除这条申请?" : `移除这 ${confirmIds?.length ?? 0} 条申请?`}
-        description="会归档、不再投递。移除后可以从提示里撤销,也能在职位页「全部入库」里找回。"
-        confirmLabel="移除"
+        title={m.apply.manual.confirmRemoveTitle(confirmIds?.length ?? 0)}
+        description={m.apply.manual.confirmRemoveDescription}
+        confirmLabel={m.common.remove}
       />
     </div>
   );

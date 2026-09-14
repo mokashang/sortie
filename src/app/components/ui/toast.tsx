@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import { X } from "lucide-react";
 import { cx } from "@/app/lib/cx";
 import type { Tone } from "@/app/lib/labels";
+import { useMessages } from "@/i18n/client";
 
 export interface ToastOptions {
   title: string;
@@ -23,6 +24,7 @@ interface ToastApi {
 const ToastCtx = createContext<ToastApi | null>(null);
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const m = useMessages();
   const [items, setItems] = useState<ToastItem[]>([]);
   const seq = useRef(0);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -69,7 +71,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 {t.action.label}
               </button>
             ) : null}
-            <button type="button" className="toast-close" aria-label="关闭提示" onClick={() => dismiss(t.id)}>
+            <button type="button" className="toast-close" aria-label={m.ui.dismiss} onClick={() => dismiss(t.id)}>
               <X size={14} aria-hidden />
             </button>
           </div>

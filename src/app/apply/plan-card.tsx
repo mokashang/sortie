@@ -2,13 +2,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { FileText, Play } from "lucide-react";
-import { directionLabel } from "@/matcher/directions";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { CHANNEL_LABEL, tierLabel } from "@/app/lib/labels";
+import { directionName, tierLabel } from "@/app/lib/labels";
 import { buildPlan, clampCount, planTotals, type ApplyMode, type PlanCounts } from "@/app/lib/plan";
 import { getChannel, type Channel } from "@/app/lib/settings";
 import { Button, Card, Chip, EmptyState, Menu, SkeletonRows, Stepper, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
+import { useLang, useMessages } from "@/i18n/client";
 
 interface DirectionGroup {
   direction: string;
@@ -21,6 +21,8 @@ interface DirectionGroup {
 // 本次投递计划: per-direction steppers for 找内推 / 海投 and one 开始投递. Sends
 // { plan: [{direction, count, mode}] } to POST /api/executor/start on the channel chosen in 设置.
 export function PlanCard() {
+  const m = useMessages();
+  const lang = useLang();
   const [groups, setGroups] = useState<DirectionGroup[] | null>(null);
   const [counts, setCounts] = useState<PlanCounts>({});
   const [starting, setStarting] = useState(false);
@@ -44,10 +46,10 @@ export function PlanCard() {
         return next;
       });
     } catch (e) {
-      toast({ title: "加载方向队列失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.apply.plan.loadFailed, description: errorMessage(e), tone: "danger" });
       setGroups([]);
     }
-  }, [toast]);
+  }, [toast, m]);
 
   useEffect(() => {
     void load();
@@ -76,17 +78,14 @@ export function PlanCard() {
     try {
       await postJson("/api/executor/start", { kind: "apply", channel, options: { plan } });
       toast({
-        title: `已安排投递 ${totals.total} 份`,
-        description:
-          channel === "user_chrome"
-            ? "已排队,助手接手后在你的 Chrome 里开始;填好的申请会出现在下方「待确认」。"
-            : "后台浏览器已开始;填好的申请会出现在下方「待确认」。",
+        title: m.apply.plan.scheduled(totals.total),
+        description: channel === "user_chrome" ? m.apply.plan.scheduledUserChrome : m.apply.plan.scheduledHeadless,
         tone: "good",
       });
       setCounts((prev) => Object.fromEntries(Object.keys(prev).map((k) => [k, { referral: 0, direct: 0 }])));
       await refreshOverview();
     } catch (e) {
-      toast({ title: "没能开始投递", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.apply.plan.startFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setStarting(false);
     }
@@ -95,10 +94,10 @@ export function PlanCard() {
   async function startJdReview() {
     try {
       await postJson("/api/executor/start", { kind: "jd_review", channel: "headless", options: { limit: 40 } });
-      toast({ title: "已开始补正文", description: "后台浏览器会逐页读取没有正文的职位并核对资格。", tone: "good" });
+      toast({ title: m.apply.plan.jdStarted, description: m.apply.plan.jdStartedDescription, tone: "good" });
       await refreshOverview();
     } catch (e) {
-      toast({ title: "没能开始", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.apply.plan.jdFailed, description: errorMessage(e), tone: "danger" });
     }
   }
 
@@ -106,18 +105,18 @@ export function PlanCard() {
     <Card id="plan" className="plan-card">
       <div className="row between">
         <div className="grow">
-          <h3>本次投递计划</h3>
-          <p className="muted small">每个方向要投几份。找内推:助手先去 LinkedIn 找人;海投:助手直接填表。两者都要经你确认才会提交。</p>
+          <h3>{m.apply.plan.title}</h3>
+          <p className="muted small">{m.apply.plan.description}</p>
         </div>
         <div className="row">
           <span className="muted small">
-            将{CHANNEL_LABEL[channel]}操作 · <Link href="/settings">更改</Link>
+            {m.apply.plan.runsIn[channel]} · <Link href="/settings">{m.apply.plan.change}</Link>
           </span>
           <Menu
-            label="更多"
+            label={m.common.more}
             items={[
               {
-                label: `补正文(后台逐页读)${pendingJd != null ? ` · 待补 ${pendingJd}` : ""}`,
+                label: m.apply.plan.jdMenuItem(pendingJd),
                 icon: <FileText size={14} />,
                 onSelect: startJdReview,
                 disabled: jdBusy || pendingJd === 0,
@@ -133,7 +132,7 @@ export function PlanCard() {
         </div>
       ) : groups.length === 0 ? (
         <div className="mt-3">
-          <EmptyState compact title="队列里没有可投的职位" description="扫描并打分之后,这里会按方向列出可投的数量。" />
+          <EmptyState compact title={m.apply.plan.emptyTitle} description={m.apply.plan.emptyDescription} />
         </div>
       ) : (
         <>
@@ -141,35 +140,35 @@ export function PlanCard() {
             <table className="plan-table">
               <thead>
                 <tr>
-                  <th>方向</th>
+                  <th>{m.apply.plan.colTrack}</th>
                   <th>
-                    找内推 <Tooltip content="助手先在 LinkedIn 找人要内推;岗位进入「内推进行中」,消息要你批准后才发" />
+                    {m.apply.plan.colReferral} <Tooltip content={m.apply.plan.referralTip} />
                   </th>
                   <th>
-                    海投 <Tooltip content="助手直接填表;填好后停在「待确认」,你点确认才提交" />
+                    {m.apply.plan.colDirect} <Tooltip content={m.apply.plan.directTip} />
                   </th>
-                  <th className="num">小计</th>
+                  <th className="num">{m.apply.plan.colSubtotal}</th>
                 </tr>
               </thead>
               <tbody>
                 {groups.map((g) => {
                   const c = counts[g.direction] ?? { referral: 0, direct: 0 };
-                  const name = directionLabel(g.direction);
+                  const name = directionName(g.direction, lang);
                   return (
                     <tr key={g.direction}>
                       <td>
-                        <span className="strong">{name}</span> <Chip outline>{tierLabel(g.tier)}</Chip>
+                        <span className="strong">{name}</span> <Chip outline>{tierLabel(g.tier, lang)}</Chip>
                       </td>
                       <td>
                         <div className="row row-nowrap">
-                          <Stepper value={c.referral} max={g.referralSuggested} disabled={applyBusy || g.referralSuggested === 0} onChange={(v) => setCount(g.direction, "referral", v, g.referralSuggested)} ariaLabel={`${name} 找内推份数`} />
-                          <span className="muted xs nowrap">可取 {g.referralSuggested}</span>
+                          <Stepper value={c.referral} max={g.referralSuggested} disabled={applyBusy || g.referralSuggested === 0} onChange={(v) => setCount(g.direction, "referral", v, g.referralSuggested)} ariaLabel={m.apply.plan.referralCountAria(name)} />
+                          <span className="muted xs nowrap">{m.apply.plan.available(g.referralSuggested)}</span>
                         </div>
                       </td>
                       <td>
                         <div className="row row-nowrap">
-                          <Stepper value={c.direct} max={g.directSuggested} disabled={applyBusy || g.directSuggested === 0} onChange={(v) => setCount(g.direction, "direct", v, g.directSuggested)} ariaLabel={`${name} 海投份数`} />
-                          <span className="muted xs nowrap">可取 {g.directSuggested}</span>
+                          <Stepper value={c.direct} max={g.directSuggested} disabled={applyBusy || g.directSuggested === 0} onChange={(v) => setCount(g.direction, "direct", v, g.directSuggested)} ariaLabel={m.apply.plan.directCountAria(name)} />
+                          <span className="muted xs nowrap">{m.apply.plan.available(g.directSuggested)}</span>
                         </div>
                       </td>
                       <td className="num mono">{c.referral + c.direct}</td>
@@ -181,11 +180,11 @@ export function PlanCard() {
           </div>
           <div className="plan-foot">
             <span>
-              本次共 <strong className="mono">{totals.total}</strong> 份
-              <span className="muted">(找内推 {totals.referral} · 海投 {totals.direct})</span>
+              {m.apply.plan.totalPrefix} <strong className="mono">{totals.total}</strong> {m.apply.plan.totalUnit(totals.total)}
+              <span className="muted">{m.apply.plan.totalBreakdown(totals.referral, totals.direct)}</span>
             </span>
             <Button variant="primary" icon={<Play size={14} />} loading={starting} disabled={applyBusy || totals.total === 0} onClick={start}>
-              {applyBusy ? "投递进行中" : "开始投递"}
+              {applyBusy ? m.apply.plan.inProgress : m.apply.plan.start}
             </Button>
           </div>
         </>

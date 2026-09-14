@@ -4,6 +4,7 @@ import { getJson, postJson, putJson, errorMessage } from "@/app/lib/api";
 import { useIsMobile } from "@/app/lib/use-media";
 import { Drawer, Section, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
+import { useMessages } from "@/i18n/client";
 import { DraftsCards } from "./drafts-cards";
 import { ContactsPane } from "./contacts-pane";
 import { ContactDetail } from "./contact-detail";
@@ -12,6 +13,7 @@ import { DraftDialog } from "./draft-dialog";
 import type { JobLite, OutreachRow, Person, SendableRow } from "./network-types";
 
 export function NetworkClient() {
+  const m = useMessages();
   const [people, setPeople] = useState<Person[]>([]);
   const [jobs, setJobs] = useState<JobLite[]>([]);
   const [drafts, setDrafts] = useState<OutreachRow[]>([]);
@@ -87,7 +89,7 @@ export function NetworkClient() {
       if (selectedId != null) await refreshSelected(selectedId);
       await refreshOverview();
     } catch (e) {
-      toast({ title: "操作失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.common.failed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusyId(null);
     }
@@ -101,12 +103,14 @@ export function NetworkClient() {
         if (text !== (row.draft ?? "")) await putJson("/api/network/outreach", { outreachId: row.id, draft: text });
         await postJson("/api/network/decide", { outreachId: row.id, decision: "approve" });
       },
-      `已批准给 ${row.personName} 的消息`
+      m.network.actions.approved(row.personName)
     );
-  const reject = (row: OutreachRow) => act(row.id, () => postJson("/api/network/decide", { outreachId: row.id, decision: "reject" }).then(() => {}), `已拒绝给 ${row.personName} 的草稿`);
-  const markSent = (row: SendableRow) => act(row.id, () => postJson("/api/network/report", { outreachId: row.id, event: "sent" }).then(() => {}), `已标记发给 ${row.personName}`);
+  const reject = (row: OutreachRow) =>
+    act(row.id, () => postJson("/api/network/decide", { outreachId: row.id, decision: "reject" }).then(() => {}), m.network.actions.rejected(row.personName));
+  const markSent = (row: SendableRow) =>
+    act(row.id, () => postJson("/api/network/report", { outreachId: row.id, event: "sent" }).then(() => {}), m.network.actions.markedSent(row.personName));
   const outcome = (row: OutreachRow, oc: "meeting" | "referral_won" | "no_response") =>
-    act(row.id, () => postJson("/api/network/outcome", { outreachId: row.id, outcome: oc }).then(() => {}), "已记录结果");
+    act(row.id, () => postJson("/api/network/outcome", { outreachId: row.id, outcome: oc }).then(() => {}), m.network.actions.outcomeRecorded);
 
   const q = query.trim().toLowerCase();
   const filtered = people.filter(
@@ -120,7 +124,7 @@ export function NetworkClient() {
     <>
       <DraftsCards drafts={drafts} sendables={sendables} edited={edited} onEdit={(id, text) => setEdited((p) => ({ ...p, [id]: text }))} onApprove={approve} onReject={reject} onMarkSent={markSent} busyId={busyId} />
 
-      <Section title="联系人" count={people.length}>
+      <Section title={m.network.contacts.title} count={people.length}>
         <div className="network-grid">
           <ContactsPane
             people={filtered}

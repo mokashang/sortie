@@ -1,5 +1,8 @@
 // Pure constants for the post-submit lifecycle — shared by src/apply/history.ts (server, sqlite)
 // and the /history client component. Kept free of any db import so it can be bundled client-side.
+import type { Lang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
+
 export const POST_SUBMIT_STAGES = [
   "submitted",
   "oa",
@@ -12,16 +15,14 @@ export const POST_SUBMIT_STAGES = [
 ] as const;
 export type PostSubmitStage = (typeof POST_SUBMIT_STAGES)[number];
 
-export const STAGE_LABELS: Record<PostSubmitStage, string> = {
-  submitted: "已提交",
-  oa: "OA",
-  interview: "面试",
-  offer: "Offer",
-  offer_accepted: "已接受",
-  offer_declined: "已婉拒",
-  rejected: "被拒",
-  stale: "无回音",
-};
+// Display names per language (src/i18n/messages/stages.ts).
+export function stageLabels(lang: Lang): Record<PostSubmitStage, string> {
+  return messages[lang].stages.stage;
+}
+
+export function stageLabel(stage: PostSubmitStage, lang: Lang): string {
+  return messages[lang].stages.stage[stage];
+}
 
 export function isPostSubmitStage(s: string): s is PostSubmitStage {
   return (POST_SUBMIT_STAGES as readonly string[]).includes(s);

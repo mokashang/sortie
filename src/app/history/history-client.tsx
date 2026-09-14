@@ -1,10 +1,11 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { directionLabel } from "@/matcher/directions";
-import { POST_SUBMIT_STAGES, STAGE_LABELS, type HistoryRow, type PostSubmitStage } from "@/apply/stages";
+import { directionName } from "@/app/lib/labels";
+import { POST_SUBMIT_STAGES, stageLabels, type HistoryRow, type PostSubmitStage } from "@/apply/stages";
 import { postJson, errorMessage } from "@/app/lib/api";
 import { Chip, EmptyState, LinkButton, PromptDialog, Section, Segmented, Stat, StatStrip, Tabs, useToast } from "@/app/components/ui";
+import { useLang, useMessages } from "@/i18n/client";
 import { HistorySankey } from "./history-sankey";
 import { StageMenu, stageTone } from "./stage-menu";
 
@@ -18,6 +19,9 @@ function nowLocal(): string {
 }
 
 export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
+  const m = useMessages();
+  const lang = useLang();
+  const STAGE = stageLabels(lang);
   const [rows, setRows] = useState(initial);
   const [direction, setDirection] = useState<string>(ALL);
   const [mode, setMode] = useState<ModeFilter>("all");
@@ -44,9 +48,9 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
   };
 
   const stageCounts = useMemo(() => {
-    const m = new Map<PostSubmitStage, number>();
-    for (const r of visible) m.set(r.status, (m.get(r.status) ?? 0) + 1);
-    return m;
+    const counts = new Map<PostSubmitStage, number>();
+    for (const r of visible) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+    return counts;
   }, [visible]);
 
   // The stage ledger only earns its place once something has moved past 已提交.
@@ -67,11 +71,11 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
     try {
       await postJson("/api/apply/stage", { jobId: row.jobId, stage, note: note || undefined });
       setRows((prev) => prev.map((r) => (r.jobId === row.jobId ? { ...r, status: stage, updatedAt: nowLocal(), lastNote: note || r.lastNote } : r)));
-      toast({ title: `${row.company} → ${STAGE_LABELS[stage]}`, tone: "good" });
+      toast({ title: m.history.stage.changed(row.company, STAGE[stage]), tone: "good" });
       setPending(null);
       router.refresh();
     } catch (e) {
-      toast({ title: "更新失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.history.stage.updateFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusyId(null);
     }
@@ -81,9 +85,9 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
     return (
       <EmptyState
         art="ledger"
-        title="还没有投出去的申请"
-        description="在投递页确认提交后,申请会记到这里,之后的 OA、面试、Offer 也在这里更新。"
-        action={<LinkButton href="/apply">去投递</LinkButton>}
+        title={m.history.empty.title}
+        description={m.history.empty.description}
+        action={<LinkButton href="/apply">{m.history.empty.action}</LinkButton>}
       />
     );
   }
@@ -93,7 +97,7 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
       {stageTiles.length > 1 ? (
         <StatStrip compact>
           {stageTiles.map((s) => (
-            <Stat key={s} label={STAGE_LABELS[s]} value={stageCounts.get(s) ?? 0} tone={stageTone(s) === "warn" ? "warn" : stageTone(s) === "good" ? "good" : undefined} />
+            <Stat key={s} label={STAGE[s]} value={stageCounts.get(s) ?? 0} tone={stageTone(s) === "warn" ? "warn" : stageTone(s) === "good" ? "good" : undefined} />
           ))}
         </StatStrip>
       ) : null}
@@ -101,27 +105,27 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
       <HistorySankey rows={visible} />
 
       <Tabs
-        ariaLabel="方向"
+        ariaLabel={m.history.filters.track}
         value={direction}
         onChange={setDirection}
-        items={[{ key: ALL, label: "全部", count: rows.length }, ...tabs.map(([dir, n]) => ({ key: dir ?? "", label: dir ? directionLabel(dir) : "未分类", count: n }))]}
+        items={[{ key: ALL, label: m.common.all, count: rows.length }, ...tabs.map(([dir, n]) => ({ key: dir ?? "", label: directionName(dir, lang), count: n }))]}
       />
       <div className="row mb-4">
         <Segmented<ModeFilter>
-          ariaLabel="投递方式"
+          ariaLabel={m.history.filters.mode}
           size="sm"
           value={mode}
           onChange={setMode}
           options={[
-            { value: "all", label: "全部", count: modeCounts.all },
-            { value: "referral", label: "内推", count: modeCounts.referral },
-            { value: "direct", label: "海投", count: modeCounts.direct },
+            { value: "all", label: m.common.all, count: modeCounts.all },
+            { value: "referral", label: m.labels.mode.referral, count: modeCounts.referral },
+            { value: "direct", label: m.labels.mode.direct, count: modeCounts.direct },
           ]}
         />
       </div>
 
       {days.length === 0 ? (
-        <EmptyState compact title="这个筛选下没有申请" />
+        <EmptyState compact title={m.history.filters.noMatch} />
       ) : (
         days.map((g) => (
           <Section key={g.day} title={g.day} count={g.rows.length}>
@@ -141,9 +145,9 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
                       )}
                     </div>
                     <div className="row mt-1">
-                      <Chip outline>{r.direction ? directionLabel(r.direction) : "未分类"}</Chip>
-                      {r.applyMode === "referral" ? <Chip tone="good">内推{r.referralPersonName ? ` · ${r.referralPersonName}` : ""}</Chip> : <Chip>海投</Chip>}
-                      {r.resumeVersion ? <span className="muted xs mono">简历 {r.resumeVersion}</span> : null}
+                      <Chip outline>{directionName(r.direction, lang)}</Chip>
+                      {r.applyMode === "referral" ? <Chip tone="good">{m.history.row.referralVia(r.referralPersonName)}</Chip> : <Chip>{m.labels.mode.direct}</Chip>}
+                      {r.resumeVersion ? <span className="muted xs mono">{m.history.row.resume(r.resumeVersion)}</span> : null}
                       {r.lastNote ? (
                         <span className="muted small truncate" style={{ maxWidth: 360 }} title={r.lastNote}>
                           {r.lastNote}
@@ -153,7 +157,7 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
                   </div>
                   <div className="history-side">
                     <StageMenu value={r.status} busy={busyId === r.jobId} onChange={(stage) => setPending({ row: r, stage })} />
-                    <span className="muted xs mono nowrap" title="最后更新">
+                    <span className="muted xs mono nowrap" title={m.history.row.lastUpdated}>
                       {r.updatedAt.slice(5)}
                     </span>
                   </div>
@@ -171,11 +175,11 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
           if (pending) void changeStage(pending.row, pending.stage, note);
         }}
         busy={pending !== null && busyId === pending.row.jobId}
-        title={pending ? `${pending.row.company} → ${STAGE_LABELS[pending.stage]}` : ""}
-        description="可以顺手记一条备注,比如 OA 截止日或面试官。"
-        label="备注"
-        placeholder="例如:OA 截止 9/15 · 面试官 Alex"
-        submitLabel="更新状态"
+        title={pending ? m.history.stage.changed(pending.row.company, STAGE[pending.stage]) : ""}
+        description={m.history.stage.noteDescription}
+        label={m.history.stage.noteLabel}
+        placeholder={m.history.stage.notePlaceholder}
+        submitLabel={m.history.stage.submit}
         multiline
       />
     </div>

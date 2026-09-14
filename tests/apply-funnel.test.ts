@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildFunnel } from "@/apply/funnel";
+import { buildFunnel as buildFunnelIn } from "@/apply/funnel";
+// The chart text is language-specific; the shape assertions below hold for either language.
+const buildFunnel = (rows: Parameters<typeof buildFunnelIn>[0]) => buildFunnelIn(rows, "zh");
 import type { PostSubmitStage, PeakStage } from "@/apply/stages";
 
 function row(status: PostSubmitStage, peak: PeakStage) {

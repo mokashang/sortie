@@ -5,12 +5,13 @@ import { ListChecks, Square } from "lucide-react";
 import { LogoMark } from "./shell/logo";
 import type { RunStatusRow } from "@/executor/runner";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { RUN_STATUS_LABEL, RUN_STATUS_TONE, RUN_KIND_LABEL, CHANNEL_LABEL, labelOf } from "@/app/lib/labels";
+import { RUN_STATUS_TONE, labelOf } from "@/app/lib/labels";
 import { describeRun } from "@/app/lib/describe-run";
 import { parseLog, parseLogLine } from "@/app/lib/log-steps";
 import { localShort } from "@/app/lib/time";
 import { cx } from "@/app/lib/cx";
 import { Button, Card, Chip, ConfirmDialog, Dialog, RelativeTime, SkeletonRows, useToast } from "@/app/components/ui";
+import { useLang, useMessages } from "@/i18n/client";
 import { useOverview } from "./overview-context";
 
 export const isLive = (status: string) => status === "queued" || status === "running";
@@ -45,6 +46,8 @@ export interface AssistantCardProps {
 }
 
 export function AssistantCard({ variant = "full", filterKinds, actions }: AssistantCardProps) {
+  const m = useMessages();
+  const lang = useLang();
   const { runs, refresh } = useRuns();
   const { refresh: refreshOverview } = useOverview();
   const { toast } = useToast();
@@ -62,21 +65,21 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
     setStopping(true);
     try {
       await postJson("/api/executor/stop", { runId: stopFor.id });
-      toast({ title: `已停止任务 #${stopFor.id}`, tone: "neutral" });
+      toast({ title: m.assistant.stoppedTask(stopFor.id), tone: "neutral" });
       setStopFor(null);
       await refresh();
       await refreshOverview();
     } catch (e) {
-      toast({ title: "停止失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.assistant.stopFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setStopping(false);
     }
   }
 
   const statusChip = run ? (
-    <Chip tone={RUN_STATUS_TONE[run.status] ?? "neutral"}>{labelOf(RUN_STATUS_LABEL, run.status, run.status)}</Chip>
+    <Chip tone={RUN_STATUS_TONE[run.status] ?? "neutral"}>{labelOf(m.labels.runStatus, run.status, run.status)}</Chip>
   ) : (
-    <Chip>空闲</Chip>
+    <Chip>{m.assistant.idle}</Chip>
   );
 
   return (
@@ -86,12 +89,12 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
           <div className="assistant-name">
             <span className={cx("dot", run?.status === "running" && "is-running", run?.status === "queued" && "is-queued")} aria-hidden />
             <LogoMark size={16} />
-            <span>助手</span>
+            <span>{m.common.assistant}</span>
             {statusChip}
             {run ? (
               <span className="muted small">
-                {labelOf(RUN_KIND_LABEL, run.kind, run.kind)}
-                {describeRun(run.kind, run.options) ? ` · ${describeRun(run.kind, run.options)}` : ""}
+                {labelOf(m.labels.runKind, run.kind, run.kind)}
+                {describeRun(run.kind, run.options, lang) ? ` · ${describeRun(run.kind, run.options, lang)}` : ""}
               </span>
             ) : null}
           </div>
@@ -99,12 +102,12 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
             {actions}
             {run ? (
               <Button size="sm" variant="ghost" icon={<ListChecks size={14} />} onClick={() => setStepsFor(run)}>
-                查看步骤
+                {m.assistant.viewSteps}
               </Button>
             ) : null}
             {live ? (
               <Button size="sm" variant="danger" icon={<Square size={12} />} onClick={() => setStopFor(run)}>
-                停止
+                {m.common.stop}
               </Button>
             ) : null}
           </div>
@@ -118,17 +121,17 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
           <div className="assistant-body">
             {run.status === "queued" ? (
               <p className="small">
-                已排队 · {labelOf(CHANNEL_LABEL, run.channel, run.channel)}操作,助手接手后开始
-                {run.channel === "user_chrome" ? <span className="muted"> · 桌面应用里的会话在线时由它接手,否则 App 自动拉起一个</span> : null}
+                {m.assistant.queued(labelOf(m.labels.channel, run.channel, run.channel))}
+                {run.channel === "user_chrome" ? <span className="muted">{m.assistant.queuedChromeNote}</span> : null}
               </p>
             ) : (
               <div className="assistant-last">
-                <span className="muted small nowrap">最近一步</span>
-                <span>{lastLine?.text ?? "已开始,等待第一步…"}</span>
+                <span className="muted small nowrap">{m.assistant.lastStep}</span>
+                <span>{lastLine?.text ?? m.assistant.waitingFirstStep}</span>
               </div>
             )}
             <p className="muted xs mt-2">
-              开始于 <RelativeTime value={run.startedAt} /> · 任务 #{run.id}
+              {m.assistant.startedPrefix}<RelativeTime value={run.startedAt} /> · {m.assistant.taskRef(run.id)}
             </p>
           </div>
         ) : (
@@ -136,31 +139,32 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
             {run ? (
               <>
                 <div>
-                  上次:{labelOf(RUN_KIND_LABEL, run.kind, run.kind)} · {labelOf(RUN_STATUS_LABEL, run.status, run.status)} ·{" "}
+                  {m.assistant.lastPrefix}
+                  {labelOf(m.labels.runKind, run.kind, run.kind)} · {labelOf(m.labels.runStatus, run.status, run.status)} ·{" "}
                   <RelativeTime value={run.endedAt ?? run.startedAt} />
                 </div>
                 {run.summary ? <RunSummary text={run.summary} /> : null}
               </>
             ) : (
-              "还没有执行过任务。"
+              m.assistant.noTasksYet
             )}
           </div>
         )}
 
         {variant === "full" && relevant.length > 0 ? (
           <details className="assistant-history">
-            <summary>任务记录(最近 {relevant.length} 次)</summary>
+            <summary>{m.assistant.history(relevant.length)}</summary>
             <div className="table-scroll mt-2">
               <table>
                 <thead>
                   <tr>
                     <th>#</th>
-                    <th>类型</th>
-                    <th>内容</th>
-                    <th>状态</th>
-                    <th>开始</th>
-                    <th>结束</th>
-                    <th>结果</th>
+                    <th>{m.assistant.columns.kind}</th>
+                    <th>{m.assistant.columns.details}</th>
+                    <th>{m.assistant.columns.status}</th>
+                    <th>{m.assistant.columns.started}</th>
+                    <th>{m.assistant.columns.ended}</th>
+                    <th>{m.assistant.columns.result}</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -168,17 +172,17 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
                   {relevant.map((r) => (
                     <tr key={r.id}>
                       <td className="mono muted">{r.id}</td>
-                      <td>{labelOf(RUN_KIND_LABEL, r.kind, r.kind)}</td>
-                      <td className="muted small">{describeRun(r.kind, r.options) || labelOf(CHANNEL_LABEL, r.channel, r.channel)}</td>
+                      <td>{labelOf(m.labels.runKind, r.kind, r.kind)}</td>
+                      <td className="muted small">{describeRun(r.kind, r.options, lang) || labelOf(m.labels.channel, r.channel, r.channel)}</td>
                       <td>
-                        <Chip tone={RUN_STATUS_TONE[r.status] ?? "neutral"}>{labelOf(RUN_STATUS_LABEL, r.status, r.status)}</Chip>
+                        <Chip tone={RUN_STATUS_TONE[r.status] ?? "neutral"}>{labelOf(m.labels.runStatus, r.status, r.status)}</Chip>
                       </td>
                       <td className="mono muted small nowrap">{localShort(r.startedAt)}</td>
                       <td className="mono muted small nowrap">{localShort(r.endedAt)}</td>
                       <td className="muted small" style={{ maxWidth: 320 }}>{r.summary ?? ""}</td>
                       <td>
                         <Button size="sm" variant="ghost" onClick={() => setStepsFor(r)}>
-                          步骤
+                          {m.assistant.steps}
                         </Button>
                       </td>
                     </tr>
@@ -197,9 +201,9 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
         onConfirm={stop}
         busy={stopping}
         danger
-        title="停止这个任务?"
-        description="助手会在当前步骤停下;已经填好、还没提交的申请会留在待确认里。"
-        confirmLabel="停止"
+        title={m.assistant.stopDialog.title}
+        description={m.assistant.stopDialog.description}
+        confirmLabel={m.common.stop}
       />
     </>
   );
@@ -207,6 +211,7 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
 
 // A run summary can be a paragraph (jd_review lists every job it read); show two lines, expand on demand.
 function RunSummary({ text }: { text: string }) {
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   const long = text.length > 140;
   return (
@@ -214,7 +219,7 @@ function RunSummary({ text }: { text: string }) {
       <div className={cx("assistant-summary", long && !open && "is-clamped")}>{text}</div>
       {long ? (
         <button type="button" className="link-btn" onClick={() => setOpen((o) => !o)}>
-          {open ? "收起" : "展开全文"}
+          {open ? m.assistant.collapse : m.assistant.expand}
         </button>
       ) : null}
     </div>
@@ -222,6 +227,8 @@ function RunSummary({ text }: { text: string }) {
 }
 
 export function RunStepsDialog({ run, open, onClose }: { run: RunStatusRow; open: boolean; onClose: () => void }) {
+  const m = useMessages();
+  const lang = useLang();
   const [lines, setLines] = useState<string[] | null>(null);
   const live = isLive(run.status);
   const bottom = useRef<HTMLDivElement>(null);
@@ -261,11 +268,11 @@ export function RunStepsDialog({ run, open, onClose }: { run: RunStatusRow; open
       open={open}
       onClose={onClose}
       size="lg"
-      title={`任务 #${run.id} · ${labelOf(RUN_KIND_LABEL, run.kind, run.kind)}`}
+      title={m.assistant.stepsTitle(run.id, labelOf(m.labels.runKind, run.kind, run.kind))}
       description={
         <>
-          <Chip tone={RUN_STATUS_TONE[run.status] ?? "neutral"}>{labelOf(RUN_STATUS_LABEL, run.status, run.status)}</Chip>{" "}
-          {describeRun(run.kind, run.options)}
+          <Chip tone={RUN_STATUS_TONE[run.status] ?? "neutral"}>{labelOf(m.labels.runStatus, run.status, run.status)}</Chip>{" "}
+          {describeRun(run.kind, run.options, lang)}
           {run.summary ? ` · ${run.summary}` : ""}
         </>
       }
@@ -273,7 +280,7 @@ export function RunStepsDialog({ run, open, onClose }: { run: RunStatusRow; open
       {lines === null ? (
         <SkeletonRows rows={4} />
       ) : steps.length === 0 ? (
-        <p className="muted">还没有记录。</p>
+        <p className="muted">{m.assistant.noLogYet}</p>
       ) : (
         <ol className="timeline" aria-live={live ? "polite" : undefined}>
           {steps.map((s, i) => (
@@ -292,10 +299,12 @@ export function RunStepsDialog({ run, open, onClose }: { run: RunStatusRow; open
 
 // Sidebar footer: one line on what the assistant is doing, linking to the 投递 page.
 export function AssistantPill() {
+  const m = useMessages();
   const { data } = useOverview();
   const run = data?.assistant ?? null;
   const live = !!run && isLive(run.status);
-  const text = live && run ? `助手 · ${labelOf(RUN_KIND_LABEL, run.kind, run.kind)} · ${labelOf(RUN_STATUS_LABEL, run.status, run.status)}` : "助手空闲";
+  const text =
+    live && run ? m.assistant.pillLive(labelOf(m.labels.runKind, run.kind, run.kind), labelOf(m.labels.runStatus, run.status, run.status)) : m.assistant.pillIdle;
   return (
     <Link href="/apply" className={cx("assistant-pill", live && "is-live")} title={text}>
       <span className={cx("dot", run?.status === "running" && "is-running", run?.status === "queued" && "is-queued")} aria-hidden />

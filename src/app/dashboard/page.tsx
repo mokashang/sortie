@@ -1,11 +1,16 @@
+import type { Metadata } from "next";
 import { getDb } from "@/lib/db";
 import { funnel, byDirection, networkingFunnel, crossStats, weekly } from "@/network/stats";
-import { directionLabel } from "@/matcher/directions";
-import { tierLabel } from "@/app/lib/labels";
+import { directionName, tierLabel } from "@/app/lib/labels";
 import { PageHeader, Section, Stat, StatStrip } from "@/app/components/ui";
+import { getLang, getMessages } from "@/i18n/server";
+import type { Messages } from "@/i18n/messages";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "统计" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).nav.dashboard };
+}
 
 type BarColor = "default" | "good" | "warn" | "muted";
 
@@ -26,13 +31,17 @@ function rate(num: number, den: number): string {
   return den > 0 ? `${Math.round((num / den) * 100)}%` : "—";
 }
 
-function delta(now: number, before: number): string {
+function delta(now: number, before: number, m: Messages): string {
   const d = now - before;
-  return d === 0 ? "与上周持平" : d > 0 ? `比上周多 ${d}` : `比上周少 ${-d}`;
+  const t = m.dashboard.stats;
+  return d === 0 ? t.sameAsLastWeek : d > 0 ? t.moreThanLastWeek(d) : t.fewerThanLastWeek(-d);
 }
 
 // 统计: the funnels and comparisons. The "what needs me" list moved to 今日.
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const m = await getMessages();
+  const lang = await getLang();
+  const t = m.dashboard;
   const db = getDb();
   const f = funnel(db);
   const byDir = byDirection(db);
@@ -44,46 +53,46 @@ export default function DashboardPage() {
 
   return (
     <>
-      <PageHeader title="统计" />
+      <PageHeader title={m.nav.dashboard} />
 
       <StatStrip>
-        <Stat label="已投递" value={f.submitted.toLocaleString()} sub={`${wk.thisWeek.submittedApplications} 份在最近 7 天`} />
-        <Stat label="面试" value={f.interview} tone="good" sub={rate(f.interview, f.submitted) + " 的投递进入面试"} />
-        <Stat label="Offer" value={f.offer} tone="warn" />
-        <Stat label="本周新增联系" value={wk.thisWeek.newOutreach} sub={delta(wk.thisWeek.newOutreach, wk.lastWeek.newOutreach)} />
+        <Stat label={t.stats.submitted} value={f.submitted.toLocaleString()} sub={t.stats.inLast7Days(wk.thisWeek.submittedApplications)} />
+        <Stat label={t.stats.interviews} value={f.interview} tone="good" sub={t.stats.interviewRate(rate(f.interview, f.submitted))} />
+        <Stat label={t.stats.offers} value={f.offer} tone="warn" />
+        <Stat label={t.stats.newContactsThisWeek} value={wk.thisWeek.newOutreach} sub={delta(wk.thisWeek.newOutreach, wk.lastWeek.newOutreach, m)} />
       </StatStrip>
 
-      <Section title="申请漏斗">
-        <Bar label="发现" value={f.discovered} max={funnelMax} />
-        <Bar label="已匹配" value={f.matched} max={funnelMax} />
-        <Bar label="已投递" value={f.submitted} max={funnelMax} color="good" />
-        <Bar label="OA" value={f.oa} max={funnelMax} color="good" />
-        <Bar label="面试" value={f.interview} max={funnelMax} color="good" />
-        <Bar label="Offer" value={f.offer} max={funnelMax} color="warn" />
-        <Bar label="被拒" value={f.rejected} max={funnelMax} />
-        <Bar label="已归档" value={f.archived} max={funnelMax} color="muted" />
+      <Section title={t.funnel.title}>
+        <Bar label={t.funnel.discovered} value={f.discovered} max={funnelMax} />
+        <Bar label={t.funnel.matched} value={f.matched} max={funnelMax} />
+        <Bar label={t.funnel.submitted} value={f.submitted} max={funnelMax} color="good" />
+        <Bar label={t.funnel.oa} value={f.oa} max={funnelMax} color="good" />
+        <Bar label={t.funnel.interview} value={f.interview} max={funnelMax} color="good" />
+        <Bar label={t.funnel.offer} value={f.offer} max={funnelMax} color="warn" />
+        <Bar label={t.funnel.rejected} value={f.rejected} max={funnelMax} />
+        <Bar label={t.funnel.archived} value={f.archived} max={funnelMax} color="muted" />
       </Section>
 
-      <Section title="分方向" description="每个方向队列里的职位数,以及已投递、进入面试的数量。">
+      <Section title={t.byTrack.title} description={t.byTrack.description}>
         {byDir.length === 0 ? (
-          <p className="muted">暂无数据。</p>
+          <p className="muted">{m.common.noData}</p>
         ) : (
           <div className="table-scroll">
             <table>
               <thead>
                 <tr>
-                  <th>方向</th>
-                  <th>梯队</th>
-                  <th className="num">总数</th>
-                  <th className="num">投递</th>
-                  <th className="num">面试</th>
+                  <th>{t.byTrack.track}</th>
+                  <th>{t.byTrack.tier}</th>
+                  <th className="num">{t.byTrack.total}</th>
+                  <th className="num">{t.byTrack.submitted}</th>
+                  <th className="num">{t.byTrack.interviews}</th>
                 </tr>
               </thead>
               <tbody>
                 {byDir.map((r, i) => (
                   <tr key={i}>
-                    <td>{r.direction ? directionLabel(r.direction) : "未分类"}</td>
-                    <td className="muted small">{tierLabel(r.tier)}</td>
+                    <td>{directionName(r.direction, lang)}</td>
+                    <td className="muted small">{tierLabel(r.tier, lang)}</td>
                     <td className="num">{r.total.toLocaleString()}</td>
                     <td className="num">{r.submitted}</td>
                     <td className="num">{r.interviews}</td>
@@ -95,35 +104,35 @@ export default function DashboardPage() {
         )}
       </Section>
 
-      <Section title="人脉漏斗">
-        <Bar label="草稿" value={nf.drafts} max={nfMax} />
-        <Bar label="待发送" value={nf.pending} max={nfMax} />
-        <Bar label="已发送" value={nf.sent} max={nfMax} color="good" />
-        <Bar label="已回复" value={nf.replied} max={nfMax} color="good" />
-        <Bar label="约到聊" value={nf.meetings} max={nfMax} color="warn" />
-        <Bar label="拿到内推" value={nf.referrals} max={nfMax} color="warn" />
+      <Section title={t.networking.title}>
+        <Bar label={t.networking.drafts} value={nf.drafts} max={nfMax} />
+        <Bar label={t.networking.pending} value={nf.pending} max={nfMax} />
+        <Bar label={t.networking.sent} value={nf.sent} max={nfMax} color="good" />
+        <Bar label={t.networking.replied} value={nf.replied} max={nfMax} color="good" />
+        <Bar label={t.networking.meetings} value={nf.meetings} max={nfMax} color="warn" />
+        <Bar label={t.networking.referrals} value={nf.referrals} max={nfMax} color="warn" />
       </Section>
 
-      <Section title="内推 vs 海投" description="有内推的申请和海投的申请,各自进入面试的比例。">
+      <Section title={t.referralVsDirect.title} description={t.referralVsDirect.description}>
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
                 <th></th>
-                <th className="num">投递</th>
-                <th className="num">面试</th>
-                <th className="num">面试转化率</th>
+                <th className="num">{t.referralVsDirect.submitted}</th>
+                <th className="num">{t.referralVsDirect.interviews}</th>
+                <th className="num">{t.referralVsDirect.interviewRate}</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>有内推</td>
+                <td>{t.referralVsDirect.withReferral}</td>
                 <td className="num">{cross.withReferral.submitted}</td>
                 <td className="num">{cross.withReferral.interviews}</td>
                 <td className="num">{rate(cross.withReferral.interviews, cross.withReferral.submitted)}</td>
               </tr>
               <tr>
-                <td>海投</td>
+                <td>{t.referralVsDirect.direct}</td>
                 <td className="num">{cross.without.submitted}</td>
                 <td className="num">{cross.without.interviews}</td>
                 <td className="num">{rate(cross.without.interviews, cross.without.submitted)}</td>
@@ -133,24 +142,24 @@ export default function DashboardPage() {
         </div>
       </Section>
 
-      <Section title="最近 7 天 vs 之前 7 天">
+      <Section title={t.weekly.title}>
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
                 <th></th>
-                <th className="num">已投递</th>
-                <th className="num">新增联系</th>
+                <th className="num">{t.weekly.submitted}</th>
+                <th className="num">{t.weekly.newContacts}</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>最近 7 天</td>
+                <td>{t.weekly.thisWeek}</td>
                 <td className="num">{wk.thisWeek.submittedApplications}</td>
                 <td className="num">{wk.thisWeek.newOutreach}</td>
               </tr>
               <tr>
-                <td>之前 7 天</td>
+                <td>{t.weekly.lastWeek}</td>
                 <td className="num">{wk.lastWeek.submittedApplications}</td>
                 <td className="num">{wk.lastWeek.newOutreach}</td>
               </tr>

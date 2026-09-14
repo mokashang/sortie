@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { startExecutor, ExecutorKind, ExecutorChannel } from "@/executor/runner";
+import { startExecutor, ExecutorKind, ExecutorChannel, ExecutorStartError } from "@/executor/runner";
+import { langFromRequest, messagesFor } from "@/i18n/server";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
 const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
@@ -19,6 +20,10 @@ const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 // App UI is expected to pin jd_review to headless too (a later task), but the route enforces it
 // either way so an omitted/misrouted `channel` can never queue a jd_review run onto a channel
 // with no attended-session protocol to service it.
+//
+// A channel/mode mismatch (referrals or scanning on the headless channel) comes back as an
+// ExecutorStartError with a code; the message shown in the App's toast is picked in the UI
+// language of the request.
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -36,6 +41,7 @@ export async function POST(req: Request) {
     const result = startExecutor(getDb(), kind as ExecutorKind, body.options ?? {}, {}, channel as ExecutorChannel);
     return NextResponse.json(result);
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 400 });
+    const error = e instanceof ExecutorStartError ? messagesFor(langFromRequest(req)).errors[e.code] : String(e);
+    return NextResponse.json({ error }, { status: 400 });
   }
 }

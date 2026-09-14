@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { IconButton } from "./button";
+import { useMessages } from "@/i18n/client";
 
 export interface DrawerProps {
   open: boolean;
@@ -19,6 +20,7 @@ const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:n
 // Right-side sheet (full-screen on phones). Traps focus, closes on Esc/backdrop, restores focus.
 export function Drawer({ open, onClose, title, subtitle, headExtra, children, footer, width = 560 }: DrawerProps) {
   const ref = useRef<HTMLElement>(null);
+  const m = useMessages();
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -76,7 +78,7 @@ export function Drawer({ open, onClose, title, subtitle, headExtra, children, fo
             {subtitle ? <div className="drawer-subtitle">{subtitle}</div> : null}
             {headExtra ? <div className="mt-2">{headExtra}</div> : null}
           </div>
-          <IconButton label="关闭" icon={<X size={16} />} onClick={onClose} />
+          <IconButton label={m.ui.close} icon={<X size={16} />} onClick={onClose} />
         </div>
         <div className="drawer-body" tabIndex={-1}>
           {children}

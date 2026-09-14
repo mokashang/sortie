@@ -2,6 +2,7 @@
 import { forwardRef, useEffect, useRef } from "react";
 import { Minus, Plus } from "lucide-react";
 import { cx } from "@/app/lib/cx";
+import { useMessages } from "@/i18n/client";
 
 export interface FieldProps {
   label?: React.ReactNode;
@@ -81,10 +82,11 @@ export interface StepperProps {
 }
 
 export function Stepper({ value, min = 0, max, onChange, disabled, ariaLabel }: StepperProps) {
+  const m = useMessages();
   const clamp = (n: number) => Math.max(min, Math.min(max, Number.isFinite(n) ? Math.floor(n) : min));
   return (
     <div className={cx("stepper", value === 0 && "is-zero", disabled && "is-disabled")}>
-      <button type="button" aria-label={`${ariaLabel} 减一`} disabled={disabled || value <= min} onClick={() => onChange(clamp(value - 1))}>
+      <button type="button" aria-label={m.ui.stepperMinus(ariaLabel)} disabled={disabled || value <= min} onClick={() => onChange(clamp(value - 1))}>
         <Minus size={13} aria-hidden />
       </button>
       <input
@@ -98,7 +100,7 @@ export function Stepper({ value, min = 0, max, onChange, disabled, ariaLabel }: 
         onChange={(e) => onChange(clamp(Number(e.target.value)))}
         onFocus={(e) => e.currentTarget.select()}
       />
-      <button type="button" aria-label={`${ariaLabel} 加一`} disabled={disabled || value >= max} onClick={() => onChange(clamp(value + 1))}>
+      <button type="button" aria-label={m.ui.stepperPlus(ariaLabel)} disabled={disabled || value >= max} onClick={() => onChange(clamp(value + 1))}>
         <Plus size={13} aria-hidden />
       </button>
     </div>

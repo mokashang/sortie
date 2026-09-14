@@ -1,3 +1,5 @@
+import type { Lang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
 import { DB, logEvent } from "@/lib/db";
 import { InfoQuestion } from "@/apply/queue";
 
@@ -150,10 +152,8 @@ export function answerInfo(
 
 // The notification the App pushes when the executor reports needs_info — one line the user can
 // act on from the lock screen: which company, how many questions, where to go.
-export function needsInfoNotification(company: string, title: string, questions: InfoQuestion[]): { title: string; body: string } {
+export function needsInfoNotification(company: string, title: string, questions: InfoQuestion[], lang: Lang): { title: string; body: string } {
   const labels = questions.map((q) => q.label).join(" / ");
-  return {
-    title: `Sortie · ${company} 需要你补 ${questions.length} 项信息`,
-    body: `${title}:${labels.slice(0, 160)} — 打开 App 投递页「待补信息」填写,执行器会接着投。`,
-  };
+  const t = messages[lang].notify.needsInfo;
+  return { title: t.title(company, questions.length), body: t.body(title, labels.slice(0, 160)) };
 }

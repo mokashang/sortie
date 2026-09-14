@@ -1,18 +1,24 @@
+import type { Metadata } from "next";
 import { getDb } from "@/lib/db";
 import { applicationHistory } from "@/apply/history";
 import { PageHeader } from "@/app/components/ui";
+import { getMessages } from "@/i18n/server";
 import { HistoryClient } from "./history-client";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "历史" };
+
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: (await getMessages()).nav.history };
+}
 
 // 历史: every application that was actually submitted, grouped by direction and by day, with a
 // per-row status you update by hand as OA / interview / offer news comes in.
-export default function HistoryPage() {
+export default async function HistoryPage() {
+  const m = await getMessages();
   const rows = applicationHistory(getDb());
   return (
     <>
-      <PageHeader title="历史" kicker={`已提交 ${rows.length} 份`} />
+      <PageHeader title={m.nav.history} kicker={m.history.submittedCount(rows.length)} />
       <HistoryClient rows={rows} />
     </>
   );

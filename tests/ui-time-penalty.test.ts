@@ -16,10 +16,18 @@ describe("ui time penalty", () => {
     expect(timePenalty(10_000, true)).toBe(TIME_PENALTY_RULE.bigCapPoints);
   });
   it("notes explain the three cases in plain words", () => {
-    expect(timePenaltyNote(3, false)).toBe("发布 14 天内,排序不扣分");
-    expect(timePenaltyNote(36, false)).toBe("发布 36 天,排序时扣 4 分(14 天内不扣,之后每 5 天扣 1 分,封顶 10)");
-    expect(timePenaltyNote(36, true)).toBe("发布 36 天,排序时扣 2 分(14 天内不扣,之后知名公司减半,每 10 天扣 1 分,封顶 5)");
-    expect(timePenaltyNote(null, false)).toBe("来源没给发布日期,排序时按 30 天算,扣 3 分(每 5 天扣 1 分,封顶 10)");
-    expect(timePenaltyNote(null, true)).toBe("来源没给发布日期,排序时按 30 天算,扣 1 分(知名公司减半,每 10 天扣 1 分,封顶 5)");
+    expect(timePenaltyNote(3, false, "zh")).toBe("发布 14 天内,排序不扣分");
+    expect(timePenaltyNote(36, false, "zh")).toBe("发布 36 天,排序时扣 4 分(14 天内不扣,之后每 5 天扣 1 分,封顶 10)");
+    expect(timePenaltyNote(36, true, "zh")).toBe("发布 36 天,排序时扣 2 分(14 天内不扣,之后知名公司减半,每 10 天扣 1 分,封顶 5)");
+    expect(timePenaltyNote(null, false, "zh")).toBe("来源没给发布日期,排序时按 30 天算,扣 3 分(每 5 天扣 1 分,封顶 10)");
+    expect(timePenaltyNote(null, true, "zh")).toBe("来源没给发布日期,排序时按 30 天算,扣 1 分(知名公司减半,每 10 天扣 1 分,封顶 5)");
+  });
+  it("notes in English", () => {
+    expect(timePenaltyNote(3, false, "en")).toBe("Posted within 14 days, no ranking penalty");
+    expect(timePenaltyNote(36, false, "en")).toBe("Posted 36 days ago, −4 for ranking (none within 14 days, then 1 point per 5 days, capped at 10)");
+    expect(timePenaltyNote(36, true, "en")).toBe(
+      "Posted 36 days ago, −2 for ranking (none within 14 days, then halved for well-known companies: 1 point per 10 days, capped at 5)"
+    );
+    expect(timePenaltyNote(null, false, "en")).toBe("The source gave no posting date, so ranking assumes 30 days: −3 (1 point per 5 days, capped at 10)");
   });
 });

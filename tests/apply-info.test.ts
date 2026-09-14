@@ -147,7 +147,7 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
   });
 
   it("needsInfoNotification names the company, count and where to go", () => {
-    const n = needsInfoNotification("Palantir", "FDSE New Grad", QUESTIONS);
+    const n = needsInfoNotification("Palantir", "FDSE New Grad", QUESTIONS, "zh");
     expect(n.title).toContain("Palantir");
     expect(n.title).toContain("2 项");
     expect(n.body).toContain("High School Name");

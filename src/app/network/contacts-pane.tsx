@@ -1,8 +1,9 @@
 "use client";
 import { Search, UserPlus } from "lucide-react";
-import { RELATION_LABEL, labelOf } from "@/app/lib/labels";
+import { labelOf } from "@/app/lib/labels";
 import { cx } from "@/app/lib/cx";
 import { Button, Chip, EmptyState, Input, Select } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { RELATIONS, type Person } from "./network-types";
 
 export interface ContactsPaneProps {
@@ -18,31 +19,32 @@ export interface ContactsPaneProps {
 }
 
 export function ContactsPane({ people, total, selectedId, onSelect, onAdd, query, setQuery, relation, setRelation }: ContactsPaneProps) {
+  const m = useMessages();
   return (
     <div className="contacts-pane">
       <div className="row mb-2">
         <div className="input-icon grow">
           <Search size={14} aria-hidden />
-          <Input small placeholder="搜姓名或公司" aria-label="搜索联系人" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <Input small placeholder={m.network.contacts.searchPlaceholder} aria-label={m.network.contacts.searchLabel} value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <Select small aria-label="关系" value={relation} onChange={(e) => setRelation(e.target.value)} style={{ width: "auto" }}>
-          <option value="">全部关系</option>
+        <Select small aria-label={m.network.contacts.relationFilter} value={relation} onChange={(e) => setRelation(e.target.value)} style={{ width: "auto" }}>
+          <option value="">{m.network.contacts.allRelations}</option>
           {RELATIONS.map((r) => (
             <option key={r} value={r}>
-              {RELATION_LABEL[r]}
+              {m.labels.relation[r]}
             </option>
           ))}
         </Select>
         <Button size="sm" icon={<UserPlus size={13} />} onClick={onAdd}>
-          添加
+          {m.common.add}
         </Button>
       </div>
       {total === 0 ? (
-        <EmptyState compact art="people" title="还没有联系人" description="手动添加,或让助手去队列头部的公司找人。" />
+        <EmptyState compact art="people" title={m.network.contacts.empty} description={m.network.contacts.emptyDescription} />
       ) : people.length === 0 ? (
-        <EmptyState compact title="没有匹配的联系人" />
+        <EmptyState compact title={m.network.contacts.noMatch} />
       ) : (
-        <div className="contact-list" role="listbox" aria-label="联系人">
+        <div className="contact-list" role="listbox" aria-label={m.network.contacts.title}>
           {people.map((p) => (
             <button
               key={p.id}
@@ -54,7 +56,7 @@ export function ContactsPane({ people, total, selectedId, onSelect, onAdd, query
             >
               <div className="row between row-nowrap">
                 <span className="serif strong truncate">{p.name}</span>
-                {p.relation ? <Chip outline>{labelOf(RELATION_LABEL, p.relation, p.relation)}</Chip> : null}
+                {p.relation ? <Chip outline>{labelOf(m.labels.relation, p.relation, p.relation)}</Chip> : null}
               </div>
               <div className="muted small truncate">
                 {[p.company, p.role_title].filter(Boolean).join(" · ") || "—"}

@@ -9,6 +9,9 @@
 //     每 10 天扣 1 分,封顶 5——30 天只扣 1,60 天扣 4;
 //   - 来源没给发布日期的按 30 天算(小公司扣 3,知名公司扣 1)。
 // 惩罚只影响排序,不改 matches.score;页面仍显示原始分,详情抽屉里另给「排序用综合分」和扣分说明。
+import type { Lang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
+
 export const TIME_PENALTY_RULE = {
   graceDays: 14,
   stepDays: 5,
@@ -29,13 +32,12 @@ export function timePenalty(ageDays: number | null, bigCompany: boolean): number
 }
 
 // 详情抽屉 / 行内提示用的一句话说明。
-export function timePenaltyNote(ageDays: number | null, bigCompany: boolean): string {
+export function timePenaltyNote(ageDays: number | null, bigCompany: boolean, lang: Lang): string {
   const R = TIME_PENALTY_RULE;
+  const t = messages[lang].rank.penalty;
   const p = timePenalty(ageDays, bigCompany);
-  const rule = bigCompany
-    ? `知名公司减半,每 ${R.bigStepDays} 天扣 1 分,封顶 ${R.bigCapPoints}`
-    : `每 ${R.stepDays} 天扣 1 分,封顶 ${R.capPoints}`;
-  if (ageDays == null) return `来源没给发布日期,排序时按 ${R.unknownAgeDays} 天算,扣 ${p} 分(${rule})`;
-  if (p === 0) return `发布 ${R.graceDays} 天内,排序不扣分`;
-  return `发布 ${ageDays} 天,排序时扣 ${p} 分(${R.graceDays} 天内不扣,之后${rule})`;
+  const rule = bigCompany ? t.ruleBig(R.bigStepDays, R.bigCapPoints) : t.rule(R.stepDays, R.capPoints);
+  if (ageDays == null) return t.unknownAge(R.unknownAgeDays, p, rule);
+  if (p === 0) return t.withinGrace(R.graceDays);
+  return t.aged(ageDays, p, R.graceDays, rule);
 }

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Tabs } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { ExperiencesTab } from "./experiences-tab";
 import { ResumesTab } from "./resumes-tab";
 import { AnswersTab } from "./answers-tab";
@@ -9,6 +10,7 @@ import type { Exp, ResumeRow } from "./profile-types";
 export type ProfileTab = "experiences" | "resumes" | "answers";
 
 export function ProfileTabs({ tab: initialTab, experiences, resumes, answers }: { tab: ProfileTab; experiences: Exp[]; resumes: ResumeRow[]; answers: Record<string, string> }) {
+  const m = useMessages();
   const [tab, setTab] = useState<ProfileTab>(initialTab);
   function select(key: string) {
     const t = key as ProfileTab;
@@ -18,13 +20,13 @@ export function ProfileTabs({ tab: initialTab, experiences, resumes, answers }: 
   return (
     <>
       <Tabs
-        ariaLabel="档案"
+        ariaLabel={m.profile.title}
         value={tab}
         onChange={select}
         items={[
-          { key: "experiences", label: "经历", count: experiences.length },
-          { key: "resumes", label: "简历", count: resumes.length },
-          { key: "answers", label: "标准答案", count: Object.keys(answers).length },
+          { key: "experiences", label: m.profile.tabs.experiences, count: experiences.length },
+          { key: "resumes", label: m.profile.tabs.resumes, count: resumes.length },
+          { key: "answers", label: m.profile.tabs.answers, count: Object.keys(answers).length },
         ]}
       />
       {tab === "experiences" ? <ExperiencesTab initial={experiences} /> : tab === "resumes" ? <ResumesTab resumes={resumes} hasExperiences={experiences.length > 0} /> : <AnswersTab initial={answers} />}

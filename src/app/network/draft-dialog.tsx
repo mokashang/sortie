@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { postJson, errorMessage } from "@/app/lib/api";
-import { MSG_CHANNEL_LABEL, PLAYBOOK_LABEL } from "@/app/lib/labels";
 import { Button, Dialog, Field, Select, useToast } from "@/app/components/ui";
+import { useMessages } from "@/i18n/client";
 import { CHANNELS, NETWORK_PLAYBOOKS, type Person } from "./network-types";
 
 export interface DraftDialogProps {
@@ -15,6 +15,7 @@ export interface DraftDialogProps {
 
 // AI 草稿: pick the contact, the playbook and the channel; the App (Claude) writes the first draft.
 export function DraftDialog({ open, onClose, people, defaultPersonId, onCreated }: DraftDialogProps) {
+  const m = useMessages();
   const [personId, setPersonId] = useState<string>("");
   const [playbook, setPlaybook] = useState<string>("coffee_chat");
   const [channel, setChannel] = useState<string>("linkedin");
@@ -30,11 +31,11 @@ export function DraftDialog({ open, onClose, people, defaultPersonId, onCreated 
     setBusy(true);
     try {
       await postJson("/api/network/draft", { personId: Number(personId), playbook, channel });
-      toast({ title: "草稿已生成", description: "在「待批准草稿」里查看、修改并批准。", tone: "good" });
+      toast({ title: m.network.draft.created, description: m.network.draft.createdDescription, tone: "good" });
       onClose();
       await onCreated();
     } catch (e) {
-      toast({ title: "生成失败", description: errorMessage(e), tone: "danger" });
+      toast({ title: m.network.draft.failed, description: errorMessage(e), tone: "danger" });
     } finally {
       setBusy(false);
     }
@@ -44,23 +45,23 @@ export function DraftDialog({ open, onClose, people, defaultPersonId, onCreated 
     <Dialog
       open={open}
       onClose={onClose}
-      title="AI 草稿"
-      description="按剧本给这位联系人写第一条消息;生成后你可以改,批准了才会发。"
+      title={m.network.draft.title}
+      description={m.network.draft.description}
       actions={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>
-            取消
+            {m.common.cancel}
           </Button>
           <Button variant="primary" onClick={generate} loading={busy} disabled={!personId}>
-            {busy ? "生成中,约 30 秒…" : "生成草稿"}
+            {busy ? m.network.draft.generating : m.network.draft.generate}
           </Button>
         </>
       }
     >
       <div className="col gap-3">
-        <Field label="联系人" htmlFor="d-person">
+        <Field label={m.network.draft.person} htmlFor="d-person">
           <Select id="d-person" value={personId} onChange={(e) => setPersonId(e.target.value)}>
-            <option value="">选择联系人…</option>
+            <option value="">{m.network.draft.pickPerson}</option>
             {people.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -69,20 +70,20 @@ export function DraftDialog({ open, onClose, people, defaultPersonId, onCreated 
             ))}
           </Select>
         </Field>
-        <Field label="剧本" htmlFor="d-playbook">
+        <Field label={m.network.draft.playbook} htmlFor="d-playbook">
           <Select id="d-playbook" value={playbook} onChange={(e) => setPlaybook(e.target.value)}>
             {NETWORK_PLAYBOOKS.map((pb) => (
               <option key={pb} value={pb}>
-                {PLAYBOOK_LABEL[pb]}
+                {m.labels.playbook[pb]}
               </option>
             ))}
           </Select>
         </Field>
-        <Field label="渠道" htmlFor="d-channel">
+        <Field label={m.network.draft.channel} htmlFor="d-channel">
           <Select id="d-channel" value={channel} onChange={(e) => setChannel(e.target.value)}>
             {CHANNELS.map((c) => (
               <option key={c} value={c}>
-                {MSG_CHANNEL_LABEL[c]}
+                {m.labels.msgChannel[c]}
               </option>
             ))}
           </Select>

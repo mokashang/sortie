@@ -1,11 +1,16 @@
 "use client";
 import { ToastProvider } from "@/app/components/ui/toast";
+import { LangProvider } from "@/i18n/client";
+import type { Lang } from "@/i18n/lang";
 import { OverviewProvider } from "./overview-context";
 
-export function Providers({ children }: { children: React.ReactNode }) {
+// LangProvider sits outermost: the toast stack and everything below read their copy from it.
+export function Providers({ lang, children }: { lang: Lang; children: React.ReactNode }) {
   return (
-    <ToastProvider>
-      <OverviewProvider>{children}</OverviewProvider>
-    </ToastProvider>
+    <LangProvider initial={lang}>
+      <ToastProvider>
+        <OverviewProvider>{children}</OverviewProvider>
+      </ToastProvider>
+    </LangProvider>
   );
 }

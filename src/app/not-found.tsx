@@ -1,14 +1,16 @@
 import { EmptyState, LinkButton } from "@/app/components/ui";
+import { getMessages } from "@/i18n/server";
 
-export default function NotFound() {
+export default async function NotFound() {
+  const m = await getMessages();
   return (
     <EmptyState
       art="compass"
-      title="页面不存在"
-      description="这个地址没有对应的页面。"
+      title={m.ui.notFoundTitle}
+      description={m.ui.notFoundDescription}
       action={
         <LinkButton href="/" variant="primary">
-          回到今日
+          {m.ui.backHome}
         </LinkButton>
       }
     />
