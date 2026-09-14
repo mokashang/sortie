@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { DB } from "@/lib/db";
+import { dataDir } from "@/lib/paths";
 import { importProfileYaml, profileYamlPath } from "@/lib/profile";
 
 // Accounts + tenancy helpers (spec 2026-09-13 accounts §2–§3). Better Auth owns the "user" /
@@ -189,9 +190,7 @@ export function purgeUserData(db: DB, userId: string): Record<string, number> {
 
 // Per-user directories under data/ (resume PDFs, the headless browser profile). The owner keeps
 // the pre-accounts locations so nothing they already set up moves.
-export function dataDir(): string {
-  return process.env.DATA_DIR || path.join(process.cwd(), "data");
-}
+export { dataDir };
 export function userDataDir(userId: string): string {
   return path.join(dataDir(), "users", userId);
 }

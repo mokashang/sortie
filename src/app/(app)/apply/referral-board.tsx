@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Handshake, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
 import { getJson, postJson, putJson, errorMessage } from "@/app/lib/api";
 import { OUTREACH_STATUS_LABEL, labelOf } from "@/app/lib/labels";
@@ -150,7 +150,7 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
   const visible = onlyAttention ? cards.filter(needsAttention) : cards;
   if (visible.length === 0) {
     if (onlyAttention) return null;
-    return <EmptyState compact icon={<Handshake size={24} />} title="没有进行中的内推" description="在上方计划里给「找内推」填份数并开始投递,助手找到人后会在这里出现。" />;
+    return <EmptyState compact art="people" title="没有进行中的内推" description="在上方计划里给「找内推」填份数并开始投递,助手找到人后会在这里出现。" />;
   }
 
   return (

@@ -5,6 +5,7 @@ import { openDb } from "@/lib/db";
 import { createExperience } from "@/resume/experiences";
 import { generateResume, isSafeVersionName } from "@/resume/generate";
 import { LlmBackend } from "@/llm/types";
+import { resolveResumePath } from "@/lib/paths";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
@@ -598,5 +599,26 @@ describe("isSafeVersionName", () => {
   it("accepts plain version names", () => {
     expect(isSafeVersionName("ai_infra_v1")).toBe(true);
     expect(isSafeVersionName("swe_backend_2027")).toBe(true);
+  });
+});
+
+describe("generateResume stored paths", () => {
+  it("stores tex_path/pdf_path relative to the data dir when outDir lies inside it, absolute otherwise", async () => {
+    const db = openDb(":memory:");
+    seed(db);
+    const exps = db.prepare("SELECT id, kind FROM experiences ORDER BY id").all() as { id: number; kind: string }[];
+    const selection = { include: [{ id: exps.find((e) => e.kind === "work")!.id, bullets: ["Shipped a backend service"] }] };
+    const dataRoot = path.join(os.tmpdir(), "sortie-resumes-data");
+    const common = { userId: U, backend: fakeBackend(selection), contact, direction: "ai_infra", compile: onePageCompile, extractText: noText, dataDir: dataRoot };
+
+    const inside = await generateResume(db, { ...common, versionName: "inside_v1", outDir: path.join(dataRoot, "resumes") });
+    const outside = await generateResume(db, { ...common, versionName: "outside_v1", outDir: TMP_OUT });
+
+    const stored = (id: number) => db.prepare("SELECT tex_path, pdf_path FROM resumes WHERE id=?").get(id) as { tex_path: string; pdf_path: string };
+    expect(stored(inside.resumeId)).toEqual({ tex_path: "resumes/inside_v1.tex", pdf_path: "resumes/inside_v1.pdf" });
+    expect(stored(outside.resumeId)).toEqual({ tex_path: path.join(TMP_OUT, "outside_v1.tex"), pdf_path: path.join(TMP_OUT, "outside_v1.pdf") });
+    // The result itself still hands the caller absolute paths, and a reader gets the same file back.
+    expect(inside.pdfPath).toBe(path.join(dataRoot, "resumes", "inside_v1.pdf"));
+    expect(resolveResumePath(stored(inside.resumeId).pdf_path, { dataDir: dataRoot })).toBe(inside.pdfPath);
   });
 });

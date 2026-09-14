@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readJsonBody } from "@/lib/request-body";
 import { getDb } from "@/lib/db";
 import { reportFill, reportSubmitted, ReportFillInput } from "@/apply/queue";
 import { reportNoContact } from "@/apply/referral";
@@ -10,7 +11,7 @@ import { withUser, failResponse } from "@/lib/actor";
 // body.status === 'submitted' is routed to reportSubmitted (the red-line gate) instead of
 // reportFill, since 'submitted' isn't one of reportFill's accepted statuses.
 export const POST = withUser(async (req, { userId }) => {
-  const body = await req.json();
+  const body = await readJsonBody(req);
   try {
     const db = getDb();
     // Referral mode: nobody reachable at this company — jobs stay referral_seeking with the

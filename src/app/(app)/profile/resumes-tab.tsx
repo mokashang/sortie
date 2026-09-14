@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink, Eye, FileText, Sparkles } from "lucide-react";
+import { ExternalLink, Eye, Sparkles } from "lucide-react";
 import { DIRECTIONS, directionLabel } from "@/matcher/directions";
 import { postJson, errorMessage } from "@/app/lib/api";
 import { localShort } from "@/app/lib/time";
@@ -46,7 +46,7 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
         </div>
       ) : null}
       {resumes.length === 0 ? (
-        <EmptyState icon={<FileText size={26} />} title="还没有生成过简历" description="选一个方向,助手从你的经历里挑选、排版,编译出一页 PDF。每个方向一版,投递时按岗位自动选。" action={genButton} />
+        <EmptyState art="paper" title="还没有生成过简历" description="选一个方向,助手从你的经历里挑选、排版,编译出一页 PDF。每个方向一版,投递时按岗位自动选。" action={genButton} />
       ) : (
         <>
           <div className="row between mb-2">

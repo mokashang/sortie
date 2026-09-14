@@ -1,28 +1,24 @@
 import type { Metadata, Viewport } from "next";
-import { Newsreader, IBM_Plex_Sans, JetBrains_Mono } from "next/font/google";
+import { Archivo, Martian_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./components/providers";
 import { ThemeScript } from "./components/shell/theme-script";
 
-const newsreader = Newsreader({
+// Archivo (with its width axis) carries every Latin glyph — UI text at normal width, the wordmark
+// and big figures set wide. Martian Mono only ever sets numbers, ids and timestamps. Chinese falls
+// through to the platform's CJK face (PingFang / YaHei / Noto), which is what real Chinese
+// products do too.
+const archivo = Archivo({
   subsets: ["latin"],
-  weight: ["400", "600", "700"],
-  style: ["normal", "italic"],
-  variable: "--font-newsreader",
+  axes: ["wdth"],
+  variable: "--font-archivo",
   display: "swap",
 });
 
-const plexSans = IBM_Plex_Sans({
+const martian = Martian_Mono({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-plex-sans",
-  display: "swap",
-});
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "600"],
-  variable: "--font-jetbrains-mono",
+  axes: ["wdth"],
+  variable: "--font-martian",
   display: "swap",
 });
 
@@ -35,9 +31,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f6f3ec" },
-    { media: "(prefers-color-scheme: dark)", color: "#171410" },
+    { media: "(prefers-color-scheme: light)", color: "#f3f2ef" },
+    { media: "(prefers-color-scheme: dark)", color: "#0f0f10" },
   ],
 };
 
@@ -45,7 +42,7 @@ export const viewport: Viewport = {
 // overview polling) lives in (app)/layout.tsx; the sign-in pages in (auth)/layout.tsx.
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh" className={`${newsreader.variable} ${plexSans.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
+    <html lang="zh" className={`${archivo.variable} ${martian.variable}`} suppressHydrationWarning>
       <head>
         <ThemeScript />
       </head>

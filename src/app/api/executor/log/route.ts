@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readJsonBody } from "@/lib/request-body";
 import { getDb } from "@/lib/db";
 import { appendRunLog, runLogLines } from "@/executor/runner";
 import { withUser, failResponse } from "@/lib/actor";
@@ -7,9 +8,10 @@ import { withUser, failResponse } from "@/lib/actor";
 // "filled 6 fields", ...) back to the App. Appended as a timestamped line to the run's log file,
 // the same file the headless channel's stdout is redirected to, so the App's status poll's
 // logTail works identically for both channels.
+// Body via readJsonBody rather than req.json(): inline curl bodies from the session arrive GBK-encoded on Windows (see src/lib/request-body.ts).
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     appendRunLog(getDb(), userId, Number(body.runId), String(body.line ?? ""));
     return NextResponse.json({ ok: true });
   } catch (e) {

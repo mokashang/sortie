@@ -13,11 +13,11 @@ const PAGE_SIZE = 25;
 
 // 职位: the ranked apply queue, one tab per direction (tier ASC, count DESC, 未分类 last) plus a
 // trailing 全部入库 tab that is the raw scanner output. State lives in the URL so a reload or a
-// shared link lands on the same view.
+// shared link lands on the same view; ?job=<id> opens that row's detail on arrival.
 export default async function QueuePage({
   searchParams,
 }: {
-  searchParams: Promise<{ direction?: string; page?: string; sort?: string; mode?: string; q?: string }>;
+  searchParams: Promise<{ direction?: string; page?: string; sort?: string; mode?: string; q?: string; job?: string }>;
 }) {
   const user = await requireUser("/queue");
   const sp = await searchParams;
@@ -49,6 +49,8 @@ export default async function QueuePage({
   const sort: QueueSortKey = (QUEUE_SORTS as readonly string[]).includes(sp.sort ?? "") ? (sp.sort as QueueSortKey) : defaultSort;
   const mode: QueueModeKey = (QUEUE_MODES as readonly string[]).includes(sp.mode ?? "") ? (sp.mode as QueueModeKey) : "all";
   const q = sp.q?.trim() ?? "";
+  const jobId = Number(sp.job);
+  const initialJobId = Number.isInteger(jobId) && jobId > 0 ? jobId : null;
 
   const result = isAllTab
     ? pagedAllJobs(db, user.id, { page, pageSize: PAGE_SIZE, sort, q: q || undefined })
@@ -56,7 +58,7 @@ export default async function QueuePage({
 
   return (
     <>
-      <PageHeader title="职位" subtitle="按方向分组的可投队列,排在前面的最值得投;点任意一行看详情。" actions={<ScanMenu />}>
+      <PageHeader title="职位" actions={<ScanMenu />}>
         <StatStrip compact>
           <Stat label="入库可见" value={visibleTotal.toLocaleString()} hint="扫描进来、并通过签证与地点硬过滤的职位" />
           <Stat label="已打分" value={scoredTotal.toLocaleString()} hint="助手已按 12 个方向为你打过分的职位" />
@@ -79,6 +81,7 @@ export default async function QueuePage({
         initialMode={mode}
         initialQuery={q}
         initialResult={result}
+        initialJobId={initialJobId}
         pageSize={PAGE_SIZE}
       />
     </>

@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import path from "path";
+import { resumesDir } from "@/lib/paths";
 import { getDb } from "@/lib/db";
 import { loadProfile } from "@/lib/profile";
 import { getBackend } from "@/llm/registry";
 import { generateResume, isSafeVersionName } from "@/resume/generate";
 import { makeTectonicCompiler } from "@/resume/compile";
 import { isKnownDirection } from "@/matcher/directions";
-import { dataDir, ownerId, userDataDir } from "@/lib/users";
+import { ownerId, userDataDir } from "@/lib/users";
 import { withUser, failResponse } from "@/lib/actor";
 
 export const POST = withUser(async (req, { userId }) => {
@@ -18,8 +19,9 @@ export const POST = withUser(async (req, { userId }) => {
   try {
     const p = loadProfile(db, userId);
     // The owner's PDFs stay in data/resumes (where the pre-accounts versions live); every other
-    // account writes under its own data/users/<id>/resumes.
-    const outDir = ownerId(db) === userId ? path.join(dataDir(), "resumes") : path.join(userDataDir(userId), "resumes");
+    // account writes under its own data/users/<id>/resumes. Both lie inside the data dir, so the
+    // row stores a relative path (see toStoredResumePath) and survives a move to another machine.
+    const outDir = ownerId(db) === userId ? resumesDir() : path.join(userDataDir(userId), "resumes");
     const res = await generateResume(db, {
       userId,
       backend: getBackend(),

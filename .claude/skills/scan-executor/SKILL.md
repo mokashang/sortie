@@ -38,6 +38,11 @@ On another computer use a personal token from the App (设置 → 账号 → 助
 token in the prompt — use that one. A 401 means the token is missing/revoked: stop and tell the user.
 Never write the token into run logs or into any web page.
 
+**On Windows, never put non-ASCII text inline in `-d '...'`.** curl.exe receives an inline body
+through the ANSI code page (GBK), so Chinese in a `jdText`, a log `line` or a `summary` reaches
+the App garbled. Write the JSON to a temp file first (`cat > /tmp/sortie-body.json <<'EOF' ... EOF`)
+and send it with `--data-binary @/tmp/sortie-body.json`. Pure-ASCII bodies may stay inline.
+
 ## 1. Preflight
 
 1. App reachable: `curl -s -H "$AUTH" http://127.0.0.1:3000/api/executor/status` → 200. If not, tell the user
@@ -101,12 +106,15 @@ is the detail page URL, JD from the page text.
 
 Every 10 postings (and at the end of each site):
 ```
-curl -s -H "$AUTH" -X POST http://127.0.0.1:3000/api/scan/ingest -H 'content-type: application/json' -d '{
+cat > /tmp/sortie-ingest.json <<'EOF'
+{
   "runId": <id>,
   "jobs": [{"company":"PayPal","title":"Software Engineer - Recent Graduate","location":"Chicago, IL",
             "jdText":"<page text>","applyUrl":"https://www.linkedin.com/jobs/view/4463654152/",
             "source":"linkedin","postedAt":"2026-09-04"}]
-}'
+}
+EOF
+curl -s -X POST http://127.0.0.1:3000/api/scan/ingest -H 'content-type: application/json' --data-binary @/tmp/sortie-ingest.json
 ```
 `source` ∈ `linkedin | handshake | tesla`; `applyUrl` must be http(s); ≤200 jobs per call. The
 response tells you `inserted / duplicates`. Log both.

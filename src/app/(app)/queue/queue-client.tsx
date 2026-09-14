@@ -1,15 +1,15 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Inbox, Search, SearchX, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, SearchX, Sparkles } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
 import { ALL_JOBS_DIRECTION, type QueueModeKey, type QueueSortKey } from "@/app/lib/queue-const";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { tierLabel } from "@/app/lib/labels";
+import { useMediaQuery } from "@/app/lib/use-media";
 import { cx } from "@/app/lib/cx";
-import { Button, Chip, EmptyState, Field, Input, Segmented, Select, SkeletonRows, Tabs, useToast } from "@/app/components/ui";
+import { Button, EmptyState, Field, Input, Segmented, Select, SkeletonRows, Tabs, useToast } from "@/app/components/ui";
 import { ScanMenu } from "@/app/components/scan-menu";
 import { JobRow, type JobRowData, type RowMode } from "./job-row";
-import { JobDrawer } from "./job-drawer";
+import { JobDrawer, JobPanel } from "./job-drawer";
 
 export interface TabInfo {
   direction: string;
@@ -35,6 +35,13 @@ interface Params {
 
 const defaultSortFor = (direction: string): QueueSortKey => (direction === ALL_JOBS_DIRECTION ? "fresh" : "composite");
 
+const isTypingTarget = (el: EventTarget | null) => {
+  const t = el as HTMLElement | null;
+  if (!t) return false;
+  const tag = t.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable;
+};
+
 export interface QueueClientProps {
   tabs: TabInfo[];
   allJobsCount: number;
@@ -44,6 +51,8 @@ export interface QueueClientProps {
   initialMode: QueueModeKey;
   initialQuery: string;
   initialResult: PagedResult;
+  // ?job=<id> opens that row's detail on arrival (links from the home page and the palette).
+  initialJobId: number | null;
   pageSize: number;
 }
 
@@ -60,13 +69,20 @@ export function QueueClient(props: QueueClientProps) {
   const [queryInput, setQueryInput] = useState(props.initialQuery);
   const [result, setResult] = useState<PagedResult>(props.initialResult);
   const [loading, setLoading] = useState(false);
-  const [activeId, setActiveId] = useState<number | null>(null);
+  const [activeId, setActiveId] = useState<number | null>(
+    props.initialJobId != null && props.initialResult.rows.some((r) => r.id === props.initialJobId) ? props.initialJobId : null
+  );
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
   const [fitInfo, setFitInfo] = useState<{ unclassified: number; running: boolean } | null>(null);
+  const wide = useMediaQuery("(min-width: 1200px)");
   const { toast } = useToast();
   const seq = useRef(0);
   const paramsRef = useRef(params);
   paramsRef.current = params;
+  const rowsRef = useRef(result.rows);
+  rowsRef.current = result.rows;
+  const activeRef = useRef(activeId);
+  activeRef.current = activeId;
 
   const isAllTab = params.direction === ALL_JOBS_DIRECTION;
   const currentTab = tabs.find((t) => t.direction === params.direction);
@@ -111,6 +127,27 @@ export function QueueClient(props: QueueClientProps) {
     void fetchFitInfo();
   }, [fetchFitInfo]);
 
+  // j / k walk the list, Esc closes the detail — only while nothing is being typed and no dialog is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return;
+      if (document.querySelector("dialog[open], .cmdk, .drawer")) return;
+      const rows = rowsRef.current;
+      if (rows.length === 0) return;
+      if (e.key === "j" || e.key === "k") {
+        e.preventDefault();
+        const i = rows.findIndex((r) => r.id === activeRef.current);
+        const next = e.key === "j" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1);
+        setActiveId(rows[next].id);
+        document.querySelectorAll<HTMLElement>(".job-row")[next]?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Escape" && activeRef.current != null) {
+        setActiveId(null);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   function syncUrl(p: Params) {
     const sp = new URLSearchParams({ direction: p.direction, page: String(p.page), sort: p.sort });
     if (p.mode !== "all") sp.set("mode", p.mode);
@@ -129,6 +166,7 @@ export function QueueClient(props: QueueClientProps) {
     if (direction === params.direction) return;
     // Each side has its own natural default sort; only swap when the user is still on the previous default.
     const wasDefault = params.sort === defaultSortFor(params.direction);
+    setActiveId(null);
     apply({ direction, page: 1, sort: wasDefault ? defaultSortFor(direction) : params.sort });
   }
 
@@ -237,6 +275,15 @@ export function QueueClient(props: QueueClientProps) {
 
   const activeRow = result.rows.find((r) => r.id === activeId) ?? null;
   const rowHandlers = { onPin: togglePin, onMode: setRowMode, onSkip: skipRow };
+  const detailProps = {
+    row: activeRow,
+    rows: result.rows,
+    allTab: isAllTab,
+    busy: activeRow ? busyIds.has(activeRow.id) : false,
+    onNavigate: setActiveId,
+    onClose: () => setActiveId(null),
+    ...rowHandlers,
+  };
 
   return (
     <div>
@@ -249,7 +296,12 @@ export function QueueClient(props: QueueClientProps) {
             key: t.direction,
             label: (
               <>
-                {directionLabel(t.direction)} <Chip outline>{tierLabel(t.tier)}</Chip>
+                {directionLabel(t.direction)}
+                {t.tier != null ? (
+                  <span className="tab-tier" title={`梯队 ${t.tier}`}>
+                    T{t.tier}
+                  </span>
+                ) : null}
               </>
             ),
             count: t.matched,
@@ -258,93 +310,91 @@ export function QueueClient(props: QueueClientProps) {
         ]}
       />
 
-      <div className="job-toolbar">
-        <div className="job-search input-icon">
-          <Search size={14} aria-hidden />
-          <Input
-            aria-label="搜公司或职位名"
-            placeholder="搜公司或职位名"
-            value={queryInput}
-            small
-            onChange={(e) => setQueryInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") apply({ query: queryInput, page: 1 });
-              if (e.key === "Escape") setQueryInput("");
-            }}
-          />
+      <div className={cx("queue-split", wide && activeRow && "has-panel")}>
+        <div className="queue-main">
+          <div className="job-toolbar">
+            <div className="job-search input-icon">
+              <Search size={14} aria-hidden />
+              <Input
+                aria-label="搜公司或职位名"
+                placeholder="搜公司或职位名"
+                value={queryInput}
+                small
+                onChange={(e) => setQueryInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") apply({ query: queryInput, page: 1 });
+                  if (e.key === "Escape") setQueryInput("");
+                }}
+              />
+            </div>
+            {!isAllTab ? (
+              <Segmented<QueueModeKey>
+                size="sm"
+                ariaLabel="投递方式"
+                value={params.mode}
+                onChange={(mode) => apply({ mode, page: 1 })}
+                options={[
+                  { value: "all", label: "全部", count: currentTab?.matched },
+                  { value: "referral", label: "内推", count: currentTab?.referralSuggested },
+                  { value: "direct", label: "海投", count: currentTab?.directSuggested },
+                ]}
+              />
+            ) : null}
+            <Field inline label="排序" htmlFor="queue-sort">
+              <Select id="queue-sort" small value={params.sort} onChange={(e) => apply({ sort: e.target.value as QueueSortKey, page: 1 })} style={{ width: "auto" }}>
+                {!isAllTab ? <option value="composite">综合(分数 × 新鲜度)</option> : null}
+                <option value="score">分数</option>
+                <option value="fresh">{isAllTab ? "入库时间" : "发布时间"}</option>
+                <option value="company">公司名</option>
+              </Select>
+            </Field>
+            <span className="grow" />
+            {!isAllTab && fitInfo && (fitInfo.unclassified > 0 || fitInfo.running) ? (
+              <Button size="sm" variant="ghost" icon={<Sparkles size={14} />} loading={fitInfo.running} onClick={runFit}>
+                补判内推建议 · 未判 {fitInfo.unclassified}
+              </Button>
+            ) : null}
+          </div>
+
+          {result.rows.length === 0 ? (
+            loading ? (
+              <SkeletonRows rows={8} />
+            ) : params.query.trim() ? (
+              <EmptyState icon={<SearchX size={24} />} title={`没有匹配「${params.query.trim()}」的职位`} description="换个关键词,或清空搜索。" action={<Button onClick={() => setQueryInput("")}>清空搜索</Button>} />
+            ) : isAllTab ? (
+              <EmptyState art="radar" title="还没有入库的职位" description="先扫描一次,信息源里的职位会进到这里。" action={<ScanMenu variant="primary" />} />
+            ) : (
+              <EmptyState art="radar" title="这个方向暂时没有可投的职位" description="队列会随扫描和打分自动补充;也可以看看别的方向。" />
+            )
+          ) : (
+            <div className={cx("job-list", loading && "is-loading")} aria-busy={loading}>
+              {result.rows.map((r) => (
+                <JobRow key={r.id} row={r} allTab={isAllTab} active={r.id === activeId} busy={busyIds.has(r.id)} onOpen={setActiveId} {...rowHandlers} />
+              ))}
+            </div>
+          )}
+
+          {result.pages > 1 ? (
+            <div className="pagination">
+              <Button variant="ghost" size="sm" icon={<ChevronLeft size={14} />} disabled={loading || params.page <= 1} onClick={() => goToPage(params.page - 1)}>
+                上一页
+              </Button>
+              <span>
+                第 <span className="mono">{params.page}</span> / <span className="mono">{result.pages}</span> 页 · 共 <span className="mono">{result.total}</span> 条
+              </span>
+              <Button variant="ghost" size="sm" disabled={loading || params.page >= result.pages} onClick={() => goToPage(params.page + 1)}>
+                下一页 <ChevronRight size={14} aria-hidden />
+              </Button>
+            </div>
+          ) : result.total > 0 ? (
+            <p className="pagination">共 {result.total} 条</p>
+          ) : null}
         </div>
-        {!isAllTab ? (
-          <Segmented<QueueModeKey>
-            size="sm"
-            ariaLabel="投递方式"
-            value={params.mode}
-            onChange={(mode) => apply({ mode, page: 1 })}
-            options={[
-              { value: "all", label: "全部", count: currentTab?.matched },
-              { value: "referral", label: "内推", count: currentTab?.referralSuggested },
-              { value: "direct", label: "海投", count: currentTab?.directSuggested },
-            ]}
-          />
-        ) : null}
-        <Field inline label="排序" htmlFor="queue-sort">
-          <Select id="queue-sort" small value={params.sort} onChange={(e) => apply({ sort: e.target.value as QueueSortKey, page: 1 })} style={{ width: "auto" }}>
-            {!isAllTab ? <option value="composite">综合(分数 × 新鲜度)</option> : null}
-            <option value="score">分数</option>
-            <option value="fresh">{isAllTab ? "入库时间" : "发布时间"}</option>
-            <option value="company">公司名</option>
-          </Select>
-        </Field>
-        <span className="grow" />
-        {!isAllTab && fitInfo && (fitInfo.unclassified > 0 || fitInfo.running) ? (
-          <Button size="sm" variant="ghost" icon={<Sparkles size={14} />} loading={fitInfo.running} onClick={runFit}>
-            补判内推建议 · 未判 {fitInfo.unclassified}
-          </Button>
-        ) : null}
+
+        {wide ? <JobPanel {...detailProps} /> : null}
       </div>
 
-      {result.rows.length === 0 ? (
-        loading ? (
-          <SkeletonRows rows={8} />
-        ) : params.query.trim() ? (
-          <EmptyState icon={<SearchX size={24} />} title={`没有匹配「${params.query.trim()}」的职位`} description="换个关键词,或清空搜索。" action={<Button onClick={() => setQueryInput("")}>清空搜索</Button>} />
-        ) : isAllTab ? (
-          <EmptyState icon={<Inbox size={24} />} title="还没有入库的职位" description="先扫描一次,信息源里的职位会进到这里。" action={<ScanMenu variant="primary" />} />
-        ) : (
-          <EmptyState icon={<Inbox size={24} />} title="这个方向暂时没有可投的职位" description="队列会随扫描和打分自动补充;也可以看看别的方向。" />
-        )
-      ) : (
-        <div className={cx("job-list", loading && "is-loading")} aria-busy={loading}>
-          {result.rows.map((r) => (
-            <JobRow key={r.id} row={r} allTab={isAllTab} active={r.id === activeId} busy={busyIds.has(r.id)} onOpen={setActiveId} {...rowHandlers} />
-          ))}
-        </div>
-      )}
-
-      {result.pages > 1 ? (
-        <div className="pagination">
-          <Button variant="ghost" size="sm" icon={<ChevronLeft size={14} />} disabled={loading || params.page <= 1} onClick={() => goToPage(params.page - 1)}>
-            上一页
-          </Button>
-          <span>
-            第 <span className="mono">{params.page}</span> / <span className="mono">{result.pages}</span> 页 · 共 <span className="mono">{result.total}</span> 条
-          </span>
-          <Button variant="ghost" size="sm" disabled={loading || params.page >= result.pages} onClick={() => goToPage(params.page + 1)}>
-            下一页 <ChevronRight size={14} aria-hidden />
-          </Button>
-        </div>
-      ) : result.total > 0 ? (
-        <p className="pagination">共 {result.total} 条</p>
-      ) : null}
-
-      <JobDrawer
-        row={activeRow}
-        rows={result.rows}
-        allTab={isAllTab}
-        busy={activeRow ? busyIds.has(activeRow.id) : false}
-        onNavigate={setActiveId}
-        onClose={() => setActiveId(null)}
-        {...rowHandlers}
-      />
+      {!wide ? <JobDrawer {...detailProps} /> : null}
     </div>
   );
 }
