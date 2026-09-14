@@ -98,11 +98,19 @@ export interface AnswerInfoResult {
 // Every required text / file / action item must be answered — a half-answered form would just
 // bounce back. login / manual items are not answers and are ignored here (they're resolved by
 // resolveLogin / unpark / archiveManual).
+export interface AnswerInfoOpts {
+  // false = no apply run is on the form any more (it failed, was stopped or reaped), so a
+  // 'needs_info' row must not be handed back to a dead executor: it is re-queued like a paused
+  // row instead. Default true (the executor is still polling and continues on 'prepared').
+  executorWaiting?: boolean;
+}
+
 export function answerInfo(
   db: DB,
   jobId: number,
   answers: Record<string, InfoAnswer>,
-  persist: (remembered: Record<string, string>) => void
+  persist: (remembered: Record<string, string>) => void,
+  opts: AnswerInfoOpts = {}
 ): AnswerInfoResult {
   const row = db
     .prepare("SELECT status, pending_questions, info_answers, needs_manual_reason FROM applications WHERE job_id = ?")
@@ -160,7 +168,7 @@ export function answerInfo(
 
   if (Object.keys(remembered).length > 0) persist(remembered);
 
-  const nextStatus = row.status === "needs_info" ? "prepared" : "matched";
+  const nextStatus = row.status === "needs_info" && opts.executorWaiting !== false ? "prepared" : "matched";
   db.prepare(
     "UPDATE applications SET status = ?, info_answers = ?, pending_questions = NULL, needs_manual_reason = NULL WHERE job_id = ?"
   ).run(nextStatus, JSON.stringify(merged), jobId);

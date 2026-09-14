@@ -5,6 +5,7 @@ import { answerInfo, InfoAnswer } from "@/apply/info";
 import { infoKind, InfoQuestion } from "@/apply/queue";
 import { isDocumentPath } from "@/lib/documents";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
+import { currentApplyRunId } from "@/apply/run-outcome";
 
 // User -> App from a 待处理 card's form: {jobId, answers: {key: {value, remember?}}}.
 // Remembered text answers are merged into profile.yaml's standard_answers (so the next
@@ -41,9 +42,18 @@ export async function POST(req: Request) {
       }
     }
 
-    const result = answerInfo(db, jobId, answers, (remembered) => {
-      saveStandardAnswers({ ...loadProfile().standard_answers, ...remembered });
-    });
+    // Only a running apply run can be on the form; if none is, the row that asked is re-queued
+    // (and auto-started below) rather than handed to an executor that is no longer there.
+    const executorWaiting = currentApplyRunId(db) !== null;
+    const result = answerInfo(
+      db,
+      jobId,
+      answers,
+      (remembered) => {
+        saveStandardAnswers({ ...loadProfile().standard_answers, ...remembered });
+      },
+      { executorWaiting }
+    );
     const started = result.status === "matched" ? maybeAutoStartApply(db, { jobIds: [jobId], mode: "direct" }) : { autoStarted: false };
     return NextResponse.json({ ok: true, ...result, ...started });
   } catch (e) {
