@@ -115,6 +115,8 @@ describe("give-first wording", () => {
     expect(req.system).toMatch(/easy out/i);
     expect(req.system).toMatch(/applying regardless|applying either way/i);
     expect(req.system).toMatch(/never imply they owe you/i);
+    expect(req.system).toMatch(/genuine appreciation/i);
+    expect(req.system).toMatch(/specific, earned praise/i);
     expect(req.system).toMatch(/never flatter/i);
     expect(req.system).toMatch(/hope this finds you well/i);
     expect(req.system).toMatch(/one short question about their own experience/i);
