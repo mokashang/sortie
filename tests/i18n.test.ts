@@ -73,7 +73,17 @@ describe("i18n messages", () => {
 // Every word the user can see must come from the message tree, so a hard-coded Chinese string
 // anywhere in the UI layer (or the few server files whose text reaches the screen) is a bug: it
 // would stay Chinese in the English version. Comments are allowed to be in any language.
-const SCAN_ROOTS = ["src/app", "src/apply/stages.ts", "src/apply/funnel.ts", "src/apply/info.ts", "src/executor/runner.ts"];
+const SCAN_ROOTS = [
+  "src/app",
+  "src/middleware.ts",
+  "src/apply/stages.ts",
+  "src/apply/funnel.ts",
+  "src/apply/info.ts",
+  "src/executor/runner.ts",
+  "src/lib/actor.ts",
+  "src/lib/auth.ts",
+  "src/lib/mailer.ts",
+];
 const SCAN_ALLOW = new Set([
   "src/app/lib/queue-const.ts", // 未分类 is a routing sentinel (?direction=), shown through labels.unclassified
   "src/app/lib/log-steps.ts", // keyword regexes classify the assistant's Chinese log lines

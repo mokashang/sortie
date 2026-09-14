@@ -8,6 +8,7 @@ import { dashboard } from "./dashboard";
 import { errors } from "./errors";
 import { history } from "./history";
 import { labels } from "./labels";
+import { mail } from "./mail";
 import { nav } from "./nav";
 import { network } from "./network";
 import { notify } from "./notify";
@@ -35,6 +36,7 @@ function tree(l: Lang) {
     shell: shell[l],
     ui: ui[l],
     labels: labels[l],
+    mail: mail[l],
     time: time[l],
     rank: rank[l],
     runs: runs[l],

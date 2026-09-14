@@ -5,6 +5,9 @@ import { betterAuth } from "better-auth";
 import { getDb } from "@/lib/db";
 import { onUserCreated, purgeUserData } from "@/lib/users";
 import { mailerConfigured, sendMail, verificationMail, resetPasswordMail, changeEmailMail, deleteAccountMail } from "@/lib/mailer";
+import { langFromCookieHeader, type Lang } from "@/i18n/lang";
+import { messages } from "@/i18n/messages";
+import { serverLang } from "@/lib/prefs";
 
 // Better Auth configuration (spec 2026-09-13 accounts §1). One instance per process, created
 // lazily on first use so importing this module never opens the database (Next evaluates route
@@ -17,6 +20,12 @@ import { mailerConfigured, sendMail, verificationMail, resetPasswordMail, change
 // - the first sign-up becomes the box's owner and claims the pre-accounts data (users.ts)
 
 export const SESSION_TTL_S = 30 * 24 * 60 * 60;
+
+// The language an account mail is written in: the sortie.lang cookie of the request that asked
+// for it (sign-up, reset, email change, deletion), else the saved preference.
+function mailLang(request?: Request): Lang {
+  return langFromCookieHeader(request?.headers.get("cookie")) ?? serverLang();
+}
 
 function dataDir(): string {
   return process.env.DATA_DIR || path.join(process.cwd(), "data");
@@ -101,15 +110,15 @@ export function buildAuth() {
       disableSignUp: signupDisabled(env),
       requireEmailVerification: mailerConfigured(env),
       revokeSessionsOnPasswordReset: true,
-      sendResetPassword: async ({ user, url }) => {
-        await sendMail(resetPasswordMail(user.email, user.name, url));
+      sendResetPassword: async ({ user, url }, request) => {
+        await sendMail(resetPasswordMail(user.email, user.name, url, mailLang(request)));
       },
     },
     emailVerification: {
       sendOnSignUp: true,
       autoSignInAfterVerification: true,
-      sendVerificationEmail: async ({ user, url }) => {
-        await sendMail(verificationMail(user.email, user.name, url));
+      sendVerificationEmail: async ({ user, url }, request) => {
+        await sendMail(verificationMail(user.email, user.name, url, mailLang(request)));
       },
     },
     socialProviders: google,
@@ -127,13 +136,13 @@ export function buildAuth() {
       },
       validateUserInfo: async ({ source }) => {
         if (source.action === "create-user" && signupDisabled(env)) {
-          return { error: "signup_disabled", errorDescription: "这个 Sortie 实例已关闭注册" };
+          return { error: "signup_disabled", errorDescription: messages[serverLang()].errors.signupDisabled };
         }
       },
       changeEmail: {
         enabled: true,
-        sendChangeEmailConfirmation: async ({ user, newEmail, url }) => {
-          await sendMail(changeEmailMail(user.email, user.name, newEmail, url));
+        sendChangeEmailConfirmation: async ({ user, newEmail, url }, request) => {
+          await sendMail(changeEmailMail(user.email, user.name, newEmail, url, mailLang(request)));
         },
       },
       deleteUser: {
@@ -142,8 +151,8 @@ export function buildAuth() {
         // straight away (the UI still asks for the password / a fresh session first).
         ...(mailerConfigured(env)
           ? {
-              sendDeleteAccountVerification: async ({ user, url }: { user: { email: string; name: string }; url: string }) => {
-                await sendMail(deleteAccountMail(user.email, user.name, url));
+              sendDeleteAccountVerification: async ({ user, url }: { user: { email: string; name: string }; url: string }, request?: Request) => {
+                await sendMail(deleteAccountMail(user.email, user.name, url, mailLang(request)));
               },
             }
           : {}),
