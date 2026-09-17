@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { dispatchAttended, attendedStatus } from "@/executor/attended";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
+import { reclaimStrandedPrepared } from "@/apply/followup";
 import { ownerId } from "@/lib/users";
 import { withInternal } from "@/lib/actor";
 
@@ -23,10 +24,15 @@ export const POST = withInternal(async () => {
   try {
     const db = getDb();
     const owner = ownerId(db);
+    // Jobs taken by a run that is over and never reported (src/apply/followup.ts): back to the
+    // queue, and the ones the user answered questions for become a targeted run.
+    const reclaimed = owner ? reclaimStrandedPrepared(db, owner) : undefined;
+    if (reclaimed && reclaimed.reclaimed.length > 0)
+      console.log(`[attended] reclaimed ${reclaimed.reclaimed.length} stranded prepared row(s); requeued ${reclaimed.requeued.join(",") || "none"}`);
     const stranded = owner ? requeueStrandedApprovals(db, owner) : undefined;
     if (stranded?.autoStarted) console.log(`[attended] queued resume run #${stranded.runId}: approved applications nobody was acting on`);
     const r = dispatchAttended(db);
-    return NextResponse.json({ ok: true, ...r, stranded });
+    return NextResponse.json({ ok: true, ...r, stranded, reclaimed });
   } catch (e) {
     const msg = String(e);
     const now = Date.now();

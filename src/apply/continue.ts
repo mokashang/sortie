@@ -100,8 +100,13 @@ function chainOf(options: { chain?: ChainInfo }, runId: number): ChainInfo {
   );
 }
 
-function insertPausedRun(db: DB, userId: string, channel: ExecutorChannel, options: StartOptions, unconfirmed: number): number {
-  const summary = `等待确认:${unconfirmed} 份填好的申请还没确认,降到 ${BACKLOG_RESUME_AT} 份以下自动继续`;
+function insertPausedRun(db: DB, userId: string, channel: ExecutorChannel, options: StartOptions, unconfirmed: number, live = false): number {
+  const summary =
+    unconfirmed >= BACKLOG_PAUSE_AT
+      ? `等待确认:${unconfirmed} 份填好的申请还没确认,降到 ${BACKLOG_RESUME_AT} 份以下自动继续`
+      : live
+        ? "等排在前面的任务做完再继续"
+        : `等待确认:${unconfirmed} 份填好的申请还没确认,降到 ${BACKLOG_RESUME_AT} 份以下自动继续`;
   const r = db
     .prepare("INSERT INTO executor_runs (user_id, kind, status, channel, pid, options, summary) VALUES (?, 'apply', 'paused', ?, NULL, ?, ?)")
     .run(userId, channel, JSON.stringify(options), summary);
@@ -152,7 +157,7 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
     const unconfirmed = unconfirmedCount(db, userId);
     const live = (deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun)(db, userId, "apply");
     if (unconfirmed >= BACKLOG_PAUSE_AT || live) {
-      return { action: "paused", runId: insertPausedRun(db, userId, channel, next, unconfirmed), unconfirmed };
+      return { action: "paused", runId: insertPausedRun(db, userId, channel, next, unconfirmed, live), unconfirmed };
     }
     const started = (deps.startExecutor ?? startExecutor)(db, userId, "apply", next, deps.logDir ? { logDir: deps.logDir } : {}, channel);
     return { action: "queued", runId: started.id, channel };

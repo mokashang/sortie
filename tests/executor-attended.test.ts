@@ -54,6 +54,10 @@ describe("attended dispatcher — decide()", () => {
     expect(decide(input({ queuedRunId: 9, spawn: child() }))).toMatchObject({ action: "notify", pid: 1, runId: 9 });
     // ... but only once per NOTICE_RETRY_MS window.
     expect(decide(input({ queuedRunId: 9, spawn: child({ queuedNoticeDue: false }) })).action).toBe("none");
+    // ... and not while the child is still on a run of its own: a follow-up queued behind the
+    // current run (src/apply/followup.ts) waits for the child's own claim-next after it finishes.
+    expect(decide(input({ queuedRunId: 9, runningRunId: 8, spawn: child() })).action).toBe("none");
+    expect(decide(input({ queuedRunId: 9, runningRunId: null, spawn: child() })).action).toBe("notify");
   });
   it("keeps a child alive without any age limit while it has work, and reaps it only after idling", () => {
     expect(decide(input({ spawn: child({ idleForMs: null }) })).action).toBe("none");

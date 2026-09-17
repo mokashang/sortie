@@ -4,6 +4,7 @@ import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, Sta
 import { resumePausedChainIfReady } from "@/apply/continue";
 import { isAttendedSessionReachable, notifyAttendedSession } from "@/executor/attended";
 import { approvedNotice, rejectedNotice } from "@/executor/attended-session";
+import { queueTargetedRun } from "@/apply/followup";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
 // named export on route.ts) because Next's typed-routes checker only tolerates the recognized
@@ -52,6 +53,12 @@ export interface DecideAutoStartResult {
 // the referral board's 直接投/有内推/换人 buttons ({jobIds, mode}). Never throws: a failure here
 // must never break the caller's own state change, which already succeeded.
 export function maybeAutoStartApply(db: DB, userId: string, options: StartOptions, deps: DecideAutoStartDeps = {}): DecideAutoStartResult {
+  // A run scoped to specific jobs (a resolved 待处理 card, the referral board's buttons) must
+  // happen even while another run is on: it is merged into a queued targeted run or queued behind
+  // the running one — see src/apply/followup.ts. Only the bare resume run stands down for a live run.
+  if (Array.isArray(options.jobIds) && options.jobIds.length > 0) {
+    return queueTargetedRun(db, userId, options.jobIds, options.mode === "referral" ? "referral" : "direct", deps);
+  }
   const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
   const getLastChannel = deps.lastRunChannel ?? lastRunChannel;
   const start = deps.startExecutor ?? startExecutor;

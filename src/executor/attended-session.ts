@@ -83,6 +83,12 @@ export function rejectedNotice(jobId: number, company: string): string {
 export function queuedRunNotice(runId: number, kind: string): string {
   return `${NOTICE_PREFIX} run ${runId} queued (${ascii(kind)}): claim it with GET /api/executor/claim-next?channel=user_chrome and carry on as usual.`;
 }
+// The user answered a 待处理 card for a job this session asked about and is still working on: the
+// answers are on the App, the tab is the session's own.
+export function answeredNotice(jobId: number, company: string): string {
+  const who = ascii(company);
+  return `${NOTICE_PREFIX} answered job ${jobId}${who ? ` (${who})` : ""}: the user answered your questions. GET /api/apply/pending?jobId=${jobId} returns them in infoAnswers; go back to the tab you kept open for it, fill them in, read the form back and POST /api/apply/report {jobId, status:'awaiting_confirm', filledFields}. If that tab is gone, POST /api/apply/next {"jobIds":[${jobId}],"mode":"direct"} and fill it afresh. Then stop and wait for the next line.`;
+}
 export function stoppedRunNotice(runId: number): string {
   return `${NOTICE_PREFIX} run ${runId} stopped by the user: stop working on it now (do not submit anything for it), leave its tabs as they are, and wait for the next line.`;
 }

@@ -30,8 +30,12 @@ call `POST /api/executor/log` as you go and `POST /api/executor/finish` when don
 user wants every interaction in the App. A required question with no answer-pack value is a
 `needs_info` report (`{jobId, status:'needs_info', questions:[{key,label,hint?,kind?,...}]}`, kinds
 in §5): the App notifies the user, they act on /apply's 待处理 card, and for text / file / action
-items you keep the tab open and poll `GET /api/apply/pending?jobId=` until status is back to
-`prepared` with `infoAnswers`, then continue the fill. See CLAUDE.md §3.4 for the timeout rule.
+items you keep the tab open. A session the dispatcher spawned (the App types `[Sortie] …` lines
+into your terminal) does NOT poll: move on to the next job, and when `[Sortie] answered job <id>`
+arrives, `GET /api/apply/pending?jobId=` has the answers in `infoAnswers` — fill them into that
+tab and report awaiting_confirm. A desktop-App session (no terminal) polls
+`GET /api/apply/pending?jobId=` until status is back to `prepared` with `infoAnswers`, then
+continues the fill. See CLAUDE.md §3.4 for the timeout rule (desktop sessions only).
 
 **The authoritative, up-to-date attended-session protocol is CLAUDE.md §3** (count = number of
 fills reported awaiting_confirm, not attempts; `archive:true` for hard ineligibility found on the
@@ -367,7 +371,12 @@ Never power through any of these. Fill everything you safely can first, then rep
 | A login wall or "create a candidate account" (Workday, SuccessFactors, iCIMS, Apple Jobs...) — you never type passwords or create accounts | `login`: `{ kind: "login", host: <hostname of task.applyUrl>, url: <sign-in / registration page>, label: "在求职 Chrome 里登录 …", hint }` | close the tab, next task (the App pauses every job on that host; 「我登好了」 re-queues them) |
 | Only a human can do it: a video answer, an assessment that must be taken live, a form that never renders in this browser | `manual`: `{ kind: "manual", key, label, hint, url? }` | close the tab, next task |
 
-Polling (text / file / action): every 5 s `GET /api/apply/pending?jobId=` until `status` is
+Waiting (text / file / action) — spawned session (the App types into your terminal): do not
+poll; keep the tab, take the next task, and act on `[Sortie] answered job <id>` when it comes
+(answers in `GET /api/apply/pending?jobId=` → `infoAnswers`). If your run has already finished
+by then, the App queues a targeted run for the job instead and tells you `[Sortie] run <id>
+queued` — claim it and fill the job afresh (the answers are in its answer pack).
+Desktop-App session (no terminal): every 5 s `GET /api/apply/pending?jobId=` until `status` is
 `prepared` — `infoAnswers` holds the answers, continue the fill; `archived` / `matched` means the
 user skipped it or handed it back — close the tab, next task. Log a heartbeat line at least every
 5 minutes while waiting. After 30 minutes with no answer report

@@ -5,7 +5,9 @@ import { answerInfo, InfoAnswer } from "@/apply/info";
 import { infoKind, InfoQuestion } from "@/apply/queue";
 import { isDocumentPath, userDocumentsDir } from "@/lib/documents";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
-import { currentApplyRunId } from "@/apply/run-outcome";
+import { askingRunAlive } from "@/apply/followup";
+import { notifyAttendedSession } from "@/executor/attended";
+import { answeredNotice } from "@/executor/attended-session";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 
@@ -45,10 +47,10 @@ export const POST = withUser(async (req, { userId }) => {
       }
     }
 
-    // Only a running apply run of this account can be on the form; if none is, the row that
-    // asked is re-queued (and auto-started below) rather than handed to an executor that is no
-    // longer there.
-    const executorWaiting = currentApplyRunId(db, userId) !== null;
+    // Only the run that took this job can still be on its form. If that run is over (or the row
+    // was never taken), the answer becomes a targeted run below rather than a 'prepared' row
+    // handed to nobody — whatever other run of the account happens to be alive.
+    const executorWaiting = askingRunAlive(db, userId, jobId);
     const result = answerInfo(
       db,
       userId,
@@ -60,7 +62,20 @@ export const POST = withUser(async (req, { userId }) => {
       },
       { executorWaiting }
     );
-    const started = result.status === "matched" ? maybeAutoStartApply(db, userId, { jobIds: [jobId], mode: "direct" }) : { autoStarted: false };
+    if (result.status === "prepared") {
+      // The session that asked is alive: a long-lived attended session (attended.ts) is told in
+      // its terminal and fills the answers into the tab it kept; a desktop session sees the
+      // 'prepared' status on its next poll (protocol §3.4). False here just means no terminal.
+      const company = (db.prepare("SELECT company FROM jobs WHERE id = ?").get(jobId) as { company: string | null } | undefined)?.company ?? "";
+      let notified = false;
+      try {
+        notified = notifyAttendedSession(db, answeredNotice(jobId, company));
+      } catch {
+        notified = false;
+      }
+      return NextResponse.json({ ok: true, ...result, autoStarted: false, notified });
+    }
+    const started = maybeAutoStartApply(db, userId, { jobIds: [jobId], mode: "direct" });
     return NextResponse.json({ ok: true, ...result, ...started });
   } catch (e) {
     return failResponse(e);

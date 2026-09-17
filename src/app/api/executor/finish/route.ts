@@ -5,6 +5,7 @@ import { finishRun } from "@/executor/runner";
 import { tryAcquireMatching, releaseMatching } from "@/matcher/inflight";
 import { maybeContinueApplyRun, resumePausedChainIfReady, ContinueResult } from "@/apply/continue";
 import { requeueStrandedApprovals, DecideAutoStartResult } from "@/apply/decide-auto-start";
+import { reclaimStrandedPrepared, ReclaimResult } from "@/apply/followup";
 import { withUser, failResponse } from "@/lib/actor";
 
 // POST {runId, status: 'done'|'failed'|'stopped', summary?} — the attended session calls this
@@ -34,7 +35,11 @@ export const POST = withUser(async (req, { userId }) => {
     // it — run #71 finished ten seconds after the click, 2026-09-14 — queue a resume run now;
     // see requeueStrandedApprovals for the bounds.
     let stranded: DecideAutoStartResult | undefined;
+    // Jobs this run took and never reported go back to the queue first (answered ones become a
+    // targeted run, src/apply/followup.ts), so the chain / resume bookkeeping below sees them.
+    let reclaimed: ReclaimResult | undefined;
     if (run?.kind === "apply") {
+      reclaimed = reclaimStrandedPrepared(db, userId);
       continuation = maybeContinueApplyRun(db, runId);
       if (continuation.action === "none") continuation = resumePausedChainIfReady(db, userId);
       if (continuation.action === "none") stranded = requeueStrandedApprovals(db, userId);
@@ -66,7 +71,7 @@ export const POST = withUser(async (req, { userId }) => {
       })();
     }
 
-    return NextResponse.json({ ok: true, continuation, stranded });
+    return NextResponse.json({ ok: true, continuation, stranded, reclaimed });
   } catch (e) {
     return failResponse(e);
   }

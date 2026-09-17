@@ -80,6 +80,11 @@ export type SpawnFn = (
 export interface RunnerDeps {
   spawn?: SpawnFn;
   logDir?: string;
+  // user_chrome only: insert the run as 'queued' even while another run of the kind is running
+  // or queued for the account, instead of refusing. The attended session works its queue in id
+  // order, so this is how a 待处理 card the user just resolved becomes work behind the current run
+  // (src/apply/followup.ts) rather than being dropped on the floor.
+  queueBehind?: boolean;
 }
 
 // launchd's PATH for the prod server process includes /opt/homebrew/bin but not ~/.local/bin,
@@ -285,9 +290,12 @@ export function startExecutor(
   if (channel === "headless" && kind === "scan") {
     throw new ExecutorStartError("scan_needs_attended", "scan runs need the attended session (user_chrome): LinkedIn/Handshake/Tesla need the user's logged-in Chrome");
   }
-  const existing = db
-    .prepare("SELECT id, pid, status FROM executor_runs WHERE user_id=? AND kind=? AND channel=? AND status IN ('running','queued')")
-    .all(userId, kind, channel) as { id: number; pid: number | null; status: string }[];
+  const existing =
+    channel === "user_chrome" && deps.queueBehind
+      ? []
+      : (db
+          .prepare("SELECT id, pid, status FROM executor_runs WHERE user_id=? AND kind=? AND channel=? AND status IN ('running','queued')")
+          .all(userId, kind, channel) as { id: number; pid: number | null; status: string }[]);
   for (const row of existing) {
     // user_chrome rows have no pid to check liveness on — any 'running' or 'queued' row of the
     // channel always blocks (only reapStaleRuns's mtime-staleness check can clear one out, and
