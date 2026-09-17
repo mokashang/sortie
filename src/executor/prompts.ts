@@ -1,5 +1,5 @@
 import type { ChainInfo } from "@/app/lib/run-outcome";
-// Prompt builders for headless `claude -p` executor sessions.
+// Prompt builders for headless AI agent sessions (Claude CLI or Codex CLI).
 //
 // These sessions have exactly ONE MCP server available: `playwright` (the official Playwright
 // MCP, @playwright/mcp) driving a DEDICATED, persistent Chrome profile at data/browser-profile —
@@ -14,9 +14,8 @@ import type { ChainInfo } from "@/app/lib/run-outcome";
 // there is no sub-agent to delegate a natural-language task to and poll: this session drives the
 // browser itself, one tool call at a time. These prompts translate the two skills' protocols —
 // the App API shapes, the red lines, the stop conditions, all UNCHANGED — onto that tool surface.
-// Read .claude/skills/apply-executor/SKILL.md and .claude/skills/network-executor/SKILL.md for
-// the source protocol these are adapted from (those skills target claude-in-chrome + the user's
-// own live browser for interactive sessions; this file targets the headless Playwright profile).
+// The attended skills under .claude/skills and .agents/skills are the source protocol these are
+// adapted from; this file targets the headless Playwright profile.
 
 const APP_BASE = "http://127.0.0.1:3000";
 
@@ -29,7 +28,7 @@ export function curlCmd(token?: string): string {
 
 const LOGIN_WALL_REASON = "login required in browser profile — 请在设置里打开浏览器档案登录一次";
 
-const COMMON_PREAMBLE = `你是 Sortie 执行器的一次性无人值守会话(headless \`claude -p\`)。App(Next.js,${APP_BASE})是"大脑":选任务、建数据、是用户审批的唯一入口。你是"手":用 Bash+curl 和 App 的 API 对话,用 Playwright MCP 直接操作一个专属的、持久化的 Chrome 浏览器档案(登录状态跨次会话保留——用户已经手动登录过 LinkedIn/Workday 等站点)。
+const COMMON_PREAMBLE = `你是 Sortie 助手的一次性无人值守 AI 会话。App(Next.js,${APP_BASE})是"大脑":选任务、建数据、是用户审批的唯一入口。你是"手":用 shell 里的 curl 和 App 的 API 对话,用 Playwright MCP 直接操作一个专属的、持久化的 Chrome 浏览器档案(登录状态跨次会话保留——用户已经手动登录过 LinkedIn/Workday 等站点)。
 
 You have exactly ONE MCP server: \`playwright\` (mcp__playwright__browser_navigate / browser_snapshot / browser_click / browser_type / browser_select_option / browser_fill_form / browser_file_upload / browser_take_screenshot / browser_wait_for / browser_tabs, plus a few more under the same mcp__playwright__* prefix). There is no sub-agent and no natural-language delegation — you call these tools yourself, directly: \`browser_navigate\` to a URL, \`browser_snapshot\` to read the current accessibility tree (every interactive element comes back tagged with a \`ref\`), then \`browser_click\`/\`browser_type\`/\`browser_select_option\`/\`browser_fill_form\` addressing elements **by \`ref\`**. After any fill, take a fresh \`browser_snapshot\` and read back the field's **actual** current value — never assume a click/type landed the way you intended. \`browser_file_upload\` handles the resume PDF. This browser is a DEDICATED persistent profile, not the user's daily-driver Chrome — if a page you land on is a login/sign-in wall instead of the page you expected, do not attempt to log in yourself (no credentials to type, and guessing is not an option): treat it as a login-wall condition (see each task section below for exactly how to report it) and move on.
 

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Bell, Database, ExternalLink, Globe, Languages, Monitor, Moon, Sun } from "lucide-react";
+import { Bell, Bot, Database, ExternalLink, Globe, Languages, Monitor, Moon, Sun } from "lucide-react";
 import { postJson, errorMessage } from "@/app/lib/api";
 import { getChannel, getTheme, setChannel, setTheme, type Channel, type Theme } from "@/app/lib/settings";
 import { relativeTime } from "@/app/lib/time";
@@ -11,6 +11,7 @@ import { LANGS, LANG_NAME, type Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
 import type { AuthPublicConfig } from "@/lib/auth";
 import { AccountCard, type AccountInfo } from "./account-card";
+import type { AiProvider, AiProviderStatus } from "@/ai/config";
 
 export interface LastTick {
   at: string;
@@ -19,13 +20,27 @@ export interface LastTick {
   errors: number;
 }
 
-export function SettingsClient({ ntfyConfigured, lastTick, account, auth }: { ntfyConfigured: boolean; lastTick: LastTick | null; account: AccountInfo; auth: AuthPublicConfig }) {
+export function SettingsClient({
+  ntfyConfigured,
+  lastTick,
+  account,
+  auth,
+  ai,
+}: {
+  ntfyConfigured: boolean;
+  lastTick: LastTick | null;
+  account: AccountInfo;
+  auth: AuthPublicConfig;
+  ai: { provider: AiProvider; providers: AiProviderStatus[] };
+}) {
   const m = useMessages();
   const lang = useLang();
   const setLang = useSetLang();
   const [channel, setChannelState] = useState<Channel>("user_chrome");
   const [theme, setThemeState] = useState<Theme>("system");
   const [opening, setOpening] = useState(false);
+  const [aiProvider, setAiProvider] = useState<AiProvider>(ai.provider);
+  const [savingAi, setSavingAi] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -64,6 +79,23 @@ export function SettingsClient({ ntfyConfigured, lastTick, account, auth }: { nt
     }
   }
 
+  async function chooseAiProvider(value: string) {
+    const next = value as AiProvider;
+    if (next === aiProvider || savingAi) return;
+    const previous = aiProvider;
+    setAiProvider(next);
+    setSavingAi(true);
+    try {
+      await postJson("/api/settings", { provider: next });
+      toast({ title: m.settings.ai.switched(m.settings.ai.providers[next].title), tone: "good" });
+    } catch (e) {
+      setAiProvider(previous);
+      toast({ title: m.settings.ai.switchFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setSavingAi(false);
+    }
+  }
+
   return (
     <>
       <Section id="account" title={m.settings.account.title} description={m.settings.account.description}>
@@ -99,6 +131,42 @@ export function SettingsClient({ ntfyConfigured, lastTick, account, auth }: { nt
               <span className="muted xs">{m.settings.channel.openProfileHint}</span>
             </div>
           </RadioCard>
+        </div>
+      </Section>
+
+      <Section title={m.settings.ai.title} description={m.settings.ai.description}>
+        <div className="col gap-3" style={{ maxWidth: 640 }} aria-busy={savingAi}>
+          {(["codex", "gpt", "claude"] as AiProvider[]).map((provider) => {
+            const status = ai.providers.find((item) => item.provider === provider);
+            const copy = m.settings.ai.providers[provider];
+            return (
+              <RadioCard
+                key={provider}
+                name="ai-provider"
+                value={provider}
+                checked={aiProvider === provider}
+                onChange={(value) => void chooseAiProvider(value)}
+                title={
+                  <span className="row gap-1">
+                    <Bot size={15} aria-hidden /> {copy.title}
+                    {provider === "codex" ? <Chip tone="good">{m.settings.ai.recommended}</Chip> : null}
+                    {!status?.configured ? <Chip tone="warn">{m.settings.ai.notConfigured}</Chip> : null}
+                  </span>
+                }
+                description={
+                  <>
+                    {copy.description}
+                    {!status?.configured && status?.reason ? (
+                      <>
+                        <br />
+                        <code>{status.reason}</code>
+                      </>
+                    ) : null}
+                  </>
+                }
+              />
+            );
+          })}
         </div>
       </Section>
 

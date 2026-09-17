@@ -18,6 +18,16 @@
 
 日常使用也可以用生产模式:`npm run build && npm start`(同样监听 127.0.0.1:3000,行为与 `dev` 一致,但没有热更新开销,适合常驻后台跑扫描)。
 
+## AI 提供方（2026-09-15）
+
+设置页的「AI 提供方」统一控制全部模型工作，不只控制职位打分：匹配、资格判断、去重、内推建议、简历生成、消息起草、回复阶段判断，以及投递/人脉/JD 补正文/Chrome 扫描等浏览器代理任务都会一起切换。
+
+- **Codex（推荐）**：复用本机 `codex login` 保存的 ChatGPT/Codex 登录。纯文本任务用隔离的 `codex exec`，浏览器任务用 Codex CLI 加现有 Chrome 工具或内联 Playwright MCP。`codex login status` 只说明本地有登录；首次启用前还应执行一次最小 `codex exec`，确认该账号/工作区确实开放了 Codex CLI。
+- **GPT API**：纯文本任务直接调用 OpenAI Responses API；浏览器任务仍由 Codex 充当工具运行器，但只给该子进程注入 `CODEX_API_KEY`，模型请求和费用走 `OPENAI_API_KEY`。至少设置 `OPENAI_API_KEY` 和 `OPENAI_MODEL`（或同时设置 `OPENAI_FAST_MODEL`、`OPENAI_SMART_MODEL`）。
+- **Claude（兼容）**：原有 Claude CLI 路径保留，便于现有机器平滑迁移和回退。
+
+新配置见 `.env.example`，完整设计与覆盖矩阵见 `docs/superpowers/specs/2026-09-15-ai-provider-design.md`。老安装在主账号主动切换前仍默认 Claude；下文历史章节里出现的固定 `Claude`/`claude -p` 描述，应按这里的当前提供方理解。
+
 ## Windows 常开机部署
 生产环境跑在一台常开的 Windows 11 机器上,Mac/手机经 Tailscale 用浏览器访问(设计 `docs/superpowers/specs/2026-09-06-windows-server-migration-design.md`,操作手册 `ops/windows/README.md`)。要点:pm2 + 任务计划「用户登录时」常驻(不是 Windows 服务,服务碰不到 Chrome);部署用 `powershell -ExecutionPolicy Bypass -File ops\windows\deploy.ps1`;通知只走 ntfy(`NTFY_TOPIC` 必填);值守会话由 node-pty 代替 expect 拉起(`src/executor/attended-win.ts`,`ATTENDED_SPAWN_MODE=console` 兜底);每天 04:00 自动备份到 `data/backups/`(`npm run backup`)。
 

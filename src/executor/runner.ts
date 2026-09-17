@@ -14,7 +14,7 @@ import {
 import { createRunToken, revokeRunTokens, pruneExpiredTokens } from "@/lib/api-tokens";
 import { ownerId } from "@/lib/users";
 
-// The process manager for headless `claude -p` executor sessions launched from the App's UI.
+// The process manager for headless AI agent sessions launched from the App's UI.
 // See docs on the API routes (src/app/api/executor/*) and README's 投递执行/人脉 sections for the
 // end-to-end picture: the user clicks a button in the App, this module spawns a detached
 // `claude -p` process wired to prompts.ts's prompt for the requested kind, and the App polls
@@ -74,7 +74,7 @@ export interface SpawnedChild {
 export type SpawnFn = (
   bin: string,
   args: string[],
-  opts: { cwd: string; detached: boolean; stdio: [string, number, number]; windowsHide: boolean }
+  opts: { cwd: string; detached: boolean; stdio: [string, number, number]; windowsHide: boolean; env?: Record<string, string | undefined> }
 ) => SpawnedChild;
 
 export interface RunnerDeps {
@@ -82,16 +82,16 @@ export interface RunnerDeps {
   logDir?: string;
 }
 
-const ALLOWED_TOOLS = "Bash(curl:*),mcp__playwright__*";
-
 // launchd's PATH for the prod server process includes /opt/homebrew/bin but not ~/.local/bin,
 // where the `claude` CLI actually lives on this machine — so a bare 'claude' spawn fails under
 // launchd even though it works fine from an interactive shell. Resolve explicitly: an env
 // override always wins, then the known install path, then fall back to bare 'claude' and let
 // PATH resolution have a shot (e.g. in dev, where the interactive shell's PATH is inherited).
 import { resolveClaudeBin } from "@/lib/claude-bin";
-import { browserProfileDir, playwrightMcpConfig } from "@/executor/mcp-config";
+import { browserProfileDir, playwrightMcpServer } from "@/executor/mcp-config";
 import { killTree } from "@/lib/proc-kill";
+import { getAiProvider } from "@/ai/config";
+import { buildHeadlessAgentLaunch } from "@/ai/runtime";
 export { resolveClaudeBin };
 
 function isAlive(pid: number | null | undefined): boolean {
@@ -315,33 +315,24 @@ export function startExecutor(
   const logFd = fs.openSync(logPath, "a");
 
   const spawnFn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
-  const bin = resolveClaudeBin();
   // The owner keeps the pre-accounts data/browser-profile; every other account gets its own.
   const profileDir = browserProfileDir(process.cwd(), ownerId(db) === userId ? null : userId);
-  const args = [
-    "-p",
-    "--output-format",
-    "text",
-    "--no-session-persistence",
-    "--model",
-    "claude-sonnet-5",
-    "--allowedTools",
-    ALLOWED_TOOLS,
-    // Exactly one MCP server (playwright on the account's browser profile), registered inline;
-    // every other MCP config on the machine is ignored — see src/executor/mcp-config.ts.
-    "--mcp-config",
-    playwrightMcpConfig(profileDir),
-    "--strict-mcp-config",
-  ];
+  const launch = buildHeadlessAgentLaunch({
+    provider: getAiProvider(db),
+    prompt,
+    cwd: process.cwd(),
+    playwright: playwrightMcpServer(profileDir),
+  });
 
   // windowsHide: the server itself has no console (pm2 starts it hidden), so without this flag
   // Windows would open a new, blank console window for every detached `claude -p` child — which
   // the user saw as stray "claude" command windows popping up (2026-09-11). No-op elsewhere.
-  const child = spawnFn(bin, args, {
+  const child = spawnFn(launch.bin, launch.args, {
     cwd: process.cwd(),
     detached: true,
     stdio: ["pipe", logFd, logFd],
     windowsHide: true,
+    env: launch.env,
   });
 
   child.stdin?.write(prompt);

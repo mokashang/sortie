@@ -124,7 +124,7 @@ export const settings = defineMessages({
       userChrome: "在我的 Chrome 里操作",
       recommended: "推荐",
       userChromeDescription:
-        "用你已经登录好的 Chrome,你随时能看着它做。任务先排队:桌面应用里的 Claude 会话在线时由它接手,否则 App 自动拉起一个命令行会话(需要 claude 已登录)。",
+        "用你已经登录好的 Chrome,你随时能看着它做。任务先排队:桌面应用里的助手在线时由它接手,否则 App 自动拉起当前选择的命令行助手。",
       headless: "后台浏览器(无人值守)",
       headlessDescription: "用一个独立、持久的浏览器档案在后台操作,不占用你的 Chrome;第一次使用前要在里面登录一次。不支持找内推。",
       openProfile: "打开后台浏览器,登录一次",
@@ -134,6 +134,28 @@ export const settings = defineMessages({
       openedTitle: "已打开后台浏览器",
       openedDescription: "在弹出的窗口里登录一次 LinkedIn、Workday 等站点,登录状态会保留给之后的后台任务。",
       openFailed: "打开失败",
+    },
+    ai: {
+      title: "AI 提供方",
+      description: "这一项同时控制职位判断、去重、简历生成、消息起草,以及需要浏览器的投递、找人和扫描任务。切换只影响之后开始的工作。",
+      recommended: "推荐",
+      notConfigured: "未配置",
+      switched: (name: string) => `之后的 AI 工作将使用 ${name}`,
+      switchFailed: "切换失败",
+      providers: {
+        codex: {
+          title: "Codex",
+          description: "使用本机 Codex 登录。纯文本判断和浏览器任务都由 Codex 执行,不需要 OpenAI API key。",
+        },
+        gpt: {
+          title: "GPT API",
+          description: "纯文本判断直接走 OpenAI Responses API;浏览器任务由 Codex 作为工具运行器、使用同一个 API key 和 GPT 模型执行。",
+        },
+        claude: {
+          title: "Claude（兼容）",
+          description: "保留原有 Claude CLI 流程,供现有部署平滑迁移或随时回退。",
+        },
+      },
     },
     language: {
       title: "语言",
@@ -296,7 +318,7 @@ export const settings = defineMessages({
       userChrome: "In my Chrome",
       recommended: "Recommended",
       userChromeDescription:
-        "Uses the Chrome you are already signed in to, so you can watch it work. Tasks queue first: a Claude session in the desktop app picks them up when it is online; otherwise the app starts a command-line session (claude must be logged in).",
+        "Uses the Chrome you are already signed in to, so you can watch it work. Tasks queue first: a live desktop assistant picks them up; otherwise the app starts the selected command-line assistant.",
       headless: "Background browser (unattended)",
       headlessDescription:
         "Works in a separate, persistent browser profile in the background without touching your Chrome; sign in there once before first use. Cannot find referrals.",
@@ -307,6 +329,30 @@ export const settings = defineMessages({
       openedTitle: "Background browser opened",
       openedDescription: "Sign in to LinkedIn, Workday and the like in the window that opened; the sessions are kept for later background tasks.",
       openFailed: "Could not open it",
+    },
+    ai: {
+      title: "AI provider",
+      description:
+        "Controls job decisions, deduplication, resume generation, message drafting, and browser tasks such as applying, networking and scanning. A change affects work started afterward.",
+      recommended: "Recommended",
+      notConfigured: "Not configured",
+      switched: (name: string) => `Future AI work will use ${name}`,
+      switchFailed: "Could not switch provider",
+      providers: {
+        codex: {
+          title: "Codex",
+          description: "Uses the saved Codex login on this machine for both prompt-only decisions and browser tasks. No OpenAI API key required.",
+        },
+        gpt: {
+          title: "GPT API",
+          description:
+            "Prompt-only decisions call the OpenAI Responses API directly; browser tasks use Codex as the tool runner with the same API key and GPT model.",
+        },
+        claude: {
+          title: "Claude (compatibility)",
+          description: "Keeps the original Claude CLI path available for a gradual migration or quick rollback.",
+        },
+      },
     },
     language: {
       title: "Language",
