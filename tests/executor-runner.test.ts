@@ -483,6 +483,17 @@ describe("executor/runner", () => {
     });
 
     describe("reapStaleRuns for user_chrome", () => {
+      it("leaves a quiet user_chrome run alone while the dispatcher's spawned session is alive (it waits at its prompt)", () => {
+        const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
+        claimNextRun(db, U, "user_chrome");
+
+        const now = Date.now();
+        reapStaleRuns(db, { now: () => now, mtime: () => now - 3 * 60 * 60_000, attendedAlive: () => true });
+        expect((db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string }).status).toBe("running");
+
+        reapStaleRuns(db, { now: () => now, mtime: () => now - 3 * 60 * 60_000, attendedAlive: () => false });
+        expect((db.prepare("SELECT status FROM executor_runs WHERE id=?").get(queued.id) as { status: string }).status).toBe("failed");
+      });
       it("leaves a fresh user_chrome running run alone", () => {
         const queued = startExecutor(db, U, "apply", {}, { logDir: tmpLogDir }, "user_chrome");
         claimNextRun(db, U, "user_chrome");

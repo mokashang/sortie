@@ -6,11 +6,14 @@ import type { DB } from "@/lib/db";
 //              machine; never expires unless revoked.
 //   run      — minted by the server for one executor run (headless `claude -p`, or the CLI
 //              attended session the dispatcher spawns) and handed over in the prompt; bound to
-//              that run + user, expires after RUN_TOKEN_TTL_MS, revoked when the run finishes.
+//              that run + user; an attended session keeps it for its whole life (revoked when the
+//              dispatcher reaps the session), a headless run token dies when its run finishes.
 // The plaintext is shown exactly once; the table stores sha256(token) and a display prefix.
 
 export const TOKEN_PREFIX = "sortie_";
-export const RUN_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+// Long: an attended session keeps its token for its whole life (revoked when the dispatcher reaps it);
+// the expiry is only a safety net for a token nobody revoked.
+export const RUN_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type TokenKind = "personal" | "run";
 

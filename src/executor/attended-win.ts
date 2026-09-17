@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import { registerAttendedHandle, unregisterAttendedHandle } from "@/executor/attended-session";
 
 // Windows launchers for the attended `claude --chrome` session (spec: docs/superpowers/specs/
 // 2026-09-06-windows-server-migration-design.md §3). macOS keeps the expect path in attended.ts;
@@ -102,6 +103,8 @@ export function spawnAttendedPty(
     Object.entries(deps.env ?? opts.env ?? process.env).filter((kv): kv is [string, string] => typeof kv[1] === "string")
   );
   const proc = pty.spawn(opts.claudeBin, opts.args, { name: "xterm-256color", cols: 200, rows: 50, cwd: opts.cwd, env });
+  // The App types into this terminal later (approvals, queued runs) — see attended-session.ts.
+  registerAttendedHandle({ pid: proc.pid, write: (data) => proc.write(data) });
   const fd = fs.openSync(opts.logPath, "a");
   const answerer = new PromptAnswerer();
   const now = deps.now ?? Date.now;
@@ -114,6 +117,7 @@ export function spawnAttendedPty(
     if (answerer.feed(data, now())) proc.write("\r");
   });
   proc.onExit(({ exitCode }) => {
+    unregisterAttendedHandle(proc.pid);
     try {
       fs.writeSync(fd, `\n[attended] claude exited with code ${exitCode}\n`);
       fs.closeSync(fd);

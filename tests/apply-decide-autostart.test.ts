@@ -262,3 +262,71 @@ describe("requeueStrandedApprovals", () => {
     expect(result).toEqual({ autoStarted: false });
   });
 });
+
+// 2026-09-17: the session that filled a form stays alive at its prompt with the tab open, and
+// the App types approvals/rejections straight into its terminal. Queueing a run is now only the
+// fallback for when no such session is reachable.
+describe("decideAndMaybeAutoStart with a live attended session", () => {
+  it("approve tells the session and queues nothing", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    const typed: string[] = [];
+    const startExecutor = vi.fn(() => ({ id: 1, pid: null, logPath: "" }));
+
+    const result = decideAndMaybeAutoStart(db, U, jobId, "approve", undefined, {
+      hasLiveOrQueuedRun: () => false,
+      lastRunChannel: () => "user_chrome" as const,
+      startExecutor,
+      notifyAttended: (line) => {
+        typed.push(line);
+        return true;
+      },
+    });
+
+    expect(result).toEqual({ autoStarted: false, notified: true });
+    expect(typed[0]).toContain("[Sortie] approved job " + jobId + " (Acme)");
+    expect(startExecutor).not.toHaveBeenCalled();
+    const row = db.prepare("SELECT confirm_decision FROM applications WHERE job_id=?").get(jobId) as { confirm_decision: string };
+    expect(row.confirm_decision).toBe("approved");
+  });
+
+  it("reject tells the session to close the tab", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    const typed: string[] = [];
+    const result = decideAndMaybeAutoStart(db, U, jobId, "reject", "wrong degree", {
+      hasLiveOrQueuedRun: () => false,
+      notifyAttended: (line) => {
+        typed.push(line);
+        return true;
+      },
+    });
+    expect(result).toEqual({ autoStarted: false, notified: true });
+    expect(typed[0]).toContain(`rejected job ${jobId}`);
+  });
+
+  it("falls back to queueing a resume run when no session can be reached", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    const startExecutor = vi.fn(() => ({ id: 42, pid: null, logPath: "/tmp/run-42.log" }));
+    const result = decideAndMaybeAutoStart(db, U, jobId, "approve", undefined, {
+      hasLiveOrQueuedRun: () => false,
+      lastRunChannel: () => null,
+      startExecutor,
+      notifyAttended: () => false,
+    });
+    expect(result).toEqual({ autoStarted: true, runId: 42, channel: "user_chrome" });
+  });
+
+  it("requeueStrandedApprovals stands down while a reachable session holds the tabs", () => {
+    const db = openDb(":memory:");
+    const jobId = seedAwaitingConfirm(db);
+    approve(db, jobId);
+    seedApplyRun(db, "done", { jobIds: [jobId], mode: "direct" });
+    const startExecutor = vi.fn(() => ({ id: 99, pid: null, logPath: "" }));
+    expect(
+      requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: () => "user_chrome" as const, startExecutor, attendedReachable: () => true })
+    ).toEqual({ autoStarted: false });
+    expect(startExecutor).not.toHaveBeenCalled();
+  });
+});

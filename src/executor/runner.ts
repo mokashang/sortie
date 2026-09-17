@@ -147,6 +147,22 @@ export interface ReapDeps {
   now?: () => number;
   mtime?: (filePath: string) => number | null;
   killTree?: (pid: number) => void;
+  // Whether the dispatcher-spawned attended session is alive (tests fake it). While it is, a
+  // quiet user_chrome run is a session waiting at its prompt for the user, not a lost one.
+  attendedAlive?: () => boolean;
+}
+
+// The dispatcher-spawned attended session (src/executor/attended.ts keeps its record under the
+// profile key attended_spawn; read directly here to avoid a runner <-> attended import cycle).
+export function attendedChildAlive(db: DB): boolean {
+  const row = db.prepare("SELECT value FROM profile WHERE key = ?").get("attended_spawn") as { value: string } | undefined;
+  if (!row) return false;
+  try {
+    const rec = JSON.parse(row.value) as { pid?: number };
+    return typeof rec.pid === "number" && isAlive(rec.pid);
+  } catch {
+    return false;
+  }
 }
 
 // Machine-wide (every account's runs): a dead process is dead whoever owns it.
@@ -175,6 +191,9 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
   };
   for (const row of rows) {
     if (row.channel === "user_chrome") {
+      // A live spawned session sits silently at its prompt between the App's messages
+      // (attended.ts, 2026-09-17): no log activity is normal, so only an unattended row can go stale.
+      if ((deps.attendedAlive ?? (() => attendedChildAlive(db)))()) continue;
       const mt = row.log_path ? mtime(row.log_path) : null;
       if (mt != null && now() - mt > STALE_USER_CHROME_MS) fail(row.id, "session gone");
       continue;
@@ -401,7 +420,9 @@ export function stopExecutor(db: DB, userId: string, runId: number): void {
   }
 
   db.prepare("UPDATE executor_runs SET status='stopped', ended_at=datetime('now') WHERE id=?").run(runId);
-  revokeRunTokens(db, runId);
+  // The attended session keeps its token (it is told about the stop and lives on for its other
+  // tabs); a headless token dies with its process.
+  if (row.channel !== "user_chrome") revokeRunTokens(db, runId);
   settleRunOutcome(db, runId);
 }
 
@@ -472,7 +493,7 @@ export function appendRunLog(db: DB, userId: string, runId: number, line: string
 // (already done/failed/stopped) is a no-op-that-throws so a duplicate finish call surfaces rather
 // than silently overwriting a terminal status.
 export function finishRun(db: DB, userId: string, runId: number, status: "done" | "failed" | "stopped", summary?: string): void {
-  const row = ownedRun<{ status: string }>(db, userId, runId, "status", "finishRun");
+  const row = ownedRun<{ status: string; channel: string }>(db, userId, runId, "status, channel", "finishRun");
   if (row.status !== "running" && row.status !== "queued") {
     throw new Error(`finishRun: run #${runId} is not running/queued (status='${row.status}')`);
   }
@@ -481,7 +502,10 @@ export function finishRun(db: DB, userId: string, runId: number, status: "done" 
     summary ?? null,
     runId
   );
-  revokeRunTokens(db, runId);
+  // An attended session outlives its runs (it submits approvals in its own tabs later, and
+  // claims further queued runs with the same token), so its token is revoked when the dispatcher
+  // reaps the session, not here. Headless tokens die with the run.
+  if (row.channel !== "user_chrome") revokeRunTokens(db, runId);
   settleRunOutcome(db, runId);
 }
 

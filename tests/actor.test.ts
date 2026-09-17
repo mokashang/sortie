@@ -68,7 +68,8 @@ describe("api tokens", () => {
 
     const rt = createRunToken(db, "u1", 42, new Date("2026-09-13T00:00:00Z"));
     expect(verifyToken(db, rt, new Date("2026-09-13T12:00:00Z"))).toMatchObject({ kind: "run", runId: 42, userId: "u1" });
-    expect(verifyToken(db, rt, new Date("2026-09-15T00:00:00Z"))).toBeNull(); // expired
+    expect(verifyToken(db, rt, new Date("2026-09-19T00:00:00Z"))).not.toBeNull(); // 6 days: still good (RUN_TOKEN_TTL_MS is 7 days)
+    expect(verifyToken(db, rt, new Date("2026-09-21T00:00:00Z"))).toBeNull(); // expired
     expect(listPersonalTokens(db, "u1")).toEqual([]); // run tokens are never listed
     expect(revokeRunTokens(db, 42)).toBe(1);
   });

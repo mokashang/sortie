@@ -16,7 +16,10 @@ import {
   attendedStatus,
   attendedSpawnModeFromEnv,
   HEARTBEAT_STALE_MS,
-  REAP_GRACE_MS,
+  IDLE_REAP_MS,
+  NOTICE_RETRY_MS,
+  notifyAttendedSession,
+  isAttendedSessionReachable,
 } from "@/executor/attended";
 import type { WindowsSpawnOptions } from "@/executor/attended-win";
 import { startExecutor, finishRun, claimNextRun } from "@/executor/runner";
@@ -25,27 +28,46 @@ import { seedOwner } from "./helpers";
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
 
+const child = (over: Partial<NonNullable<Parameters<typeof decide>[0]["spawn"]>> = {}) => ({
+  pid: 1,
+  runId: 7,
+  alive: true,
+  reachable: true,
+  idleForMs: null,
+  queuedNoticeDue: true,
+  ...over,
+});
+const input = (over: Partial<Parameters<typeof decide>[0]> = {}) => ({ queuedRunId: null, heartbeatAgeMs: null, approvalsWaiting: false, spawn: null, ...over });
+
 describe("attended dispatcher — decide()", () => {
   it("does nothing when nothing is queued", () => {
-    expect(decide({ queuedRunId: null, heartbeatAgeMs: null, spawn: null }).action).toBe("none");
+    expect(decide(input()).action).toBe("none");
   });
   it("spawns for a queued run when there was never a heartbeat or it is stale", () => {
-    expect(decide({ queuedRunId: 7, heartbeatAgeMs: null, spawn: null })).toMatchObject({ action: "spawn", runId: 7 });
-    expect(decide({ queuedRunId: 7, heartbeatAgeMs: HEARTBEAT_STALE_MS + 1, spawn: null }).action).toBe("spawn");
+    expect(decide(input({ queuedRunId: 7 }))).toMatchObject({ action: "spawn", runId: 7 });
+    expect(decide(input({ queuedRunId: 7, heartbeatAgeMs: HEARTBEAT_STALE_MS + 1 })).action).toBe("spawn");
   });
   it("defers to a live attended session (fresh heartbeat)", () => {
-    expect(decide({ queuedRunId: 7, heartbeatAgeMs: 5_000, spawn: null }).action).toBe("none");
+    expect(decide(input({ queuedRunId: 7, heartbeatAgeMs: 5_000 })).action).toBe("none");
   });
-  it("never spawns a second child while one is alive and its run is still going", () => {
-    expect(
-      decide({ queuedRunId: 9, heartbeatAgeMs: null, spawn: { pid: 1, runId: 7, ageMs: 1000, alive: true, runTerminalForMs: null } }).action
-    ).toBe("none");
+  it("tells a live, reachable child about a queued run instead of spawning a second one", () => {
+    expect(decide(input({ queuedRunId: 9, spawn: child() }))).toMatchObject({ action: "notify", pid: 1, runId: 9 });
+    // ... but only once per NOTICE_RETRY_MS window.
+    expect(decide(input({ queuedRunId: 9, spawn: child({ queuedNoticeDue: false }) })).action).toBe("none");
   });
-  it("reaps a dead child, a child whose run finished > grace ago, or an over-age child", () => {
-    expect(decide({ queuedRunId: null, heartbeatAgeMs: null, spawn: { pid: 1, runId: 7, ageMs: 1000, alive: false, runTerminalForMs: null } })).toMatchObject({ action: "reap", pid: 1 });
-    expect(decide({ queuedRunId: null, heartbeatAgeMs: null, spawn: { pid: 1, runId: 7, ageMs: 1000, alive: true, runTerminalForMs: REAP_GRACE_MS } }).action).toBe("reap");
-    expect(decide({ queuedRunId: null, heartbeatAgeMs: null, spawn: { pid: 1, runId: 7, ageMs: 1000, alive: true, runTerminalForMs: 5_000 } }).action).toBe("none");
-    expect(decide({ queuedRunId: null, heartbeatAgeMs: null, spawn: { pid: 1, runId: 7, ageMs: 4 * 3600_000, alive: true, runTerminalForMs: null } }).action).toBe("reap");
+  it("keeps a child alive without any age limit while it has work, and reaps it only after idling", () => {
+    expect(decide(input({ spawn: child({ idleForMs: null }) })).action).toBe("none");
+    expect(decide(input({ spawn: child({ idleForMs: IDLE_REAP_MS - 1 }) })).action).toBe("none");
+    expect(decide(input({ spawn: child({ idleForMs: IDLE_REAP_MS }) }))).toMatchObject({ action: "reap", pid: 1 });
+  });
+  it("reaps a dead child", () => {
+    expect(decide(input({ spawn: child({ alive: false }) }))).toMatchObject({ action: "reap", pid: 1 });
+  });
+  it("reaps an unreachable child (server restarted) only when there is work it cannot be told about", () => {
+    expect(decide(input({ spawn: child({ reachable: false }) })).action).toBe("none");
+    expect(decide(input({ queuedRunId: 9, spawn: child({ reachable: false }) })).action).toBe("reap");
+    expect(decide(input({ approvalsWaiting: true, spawn: child({ reachable: false }) })).action).toBe("reap");
+    expect(decide(input({ spawn: child({ reachable: false, idleForMs: IDLE_REAP_MS }) })).action).toBe("reap");
   });
 });
 
@@ -59,19 +81,23 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(heartbeatAgeMs(db, U, new Date("2026-09-06T10:00:12Z"))).toBe(12_000);
   });
 
-  it("spawns an expect-wrapped claude --chrome for a queued run, records it, then reaps after the run finishes", () => {
+  it("spawns an expect-wrapped claude --chrome for a queued run, keeps it while it has work, tells it about later runs, and reaps it once idle", () => {
     const db = openDb(":memory:");
     seedOwner(db, U);
     const logDir = tmp();
     const run = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 1 }] }, { logDir }, "user_chrome");
     const spawned: { scriptPath: string; logPath: string }[] = [];
     const killed: number[] = [];
-    // finishRun stamps ended_at with sqlite's real datetime('now'), so the fake clock must start
-    // at real wall-clock time for the "finished N seconds ago" arithmetic to be meaningful.
+    const typed: { pid: number; line: string }[] = [];
     let clock = new Date();
     const deps = {
       now: () => clock,
       isAlive: () => true,
+      reachable: () => true,
+      write: (pid: number, line: string) => {
+        typed.push({ pid, line });
+        return true;
+      },
       spawnExpect: (scriptPath: string, logPath: string) => {
         spawned.push({ scriptPath, logPath });
         return { pid: 4242 };
@@ -94,21 +120,121 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(script).toContain(`run #${run.id}`);
     expect(script).toContain("Enter to confirm");
     expect(currentSpawn(db)).toMatchObject({ pid: 4242, runId: run.id });
-    expect(attendedStatus(db, U, deps).spawn).toMatchObject({ pid: 4242, alive: true });
+    expect(attendedStatus(db, U, deps).spawn).toMatchObject({ pid: 4242, alive: true, reachable: true });
+    expect(isAttendedSessionReachable(db, deps)).toBe(true);
 
-    // Second tick while the child works: nothing happens even though the run is still queued.
+    // Second tick right after the spawn: the run it was started for is still queued, but it was
+    // handed over in the prompt, so no reminder yet.
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    expect(typed).toHaveLength(0);
 
-    // The child claims and finishes the run; after the grace period the dispatcher reaps it.
+    // The child claims and finishes the run, then a second run is queued: the live child is told
+    // about it (no second spawn), once, and again after NOTICE_RETRY_MS if it has not claimed it.
     expect(claimNextRun(db, U, "user_chrome")?.id).toBe(run.id);
     finishRun(db, U, run.id, "done", "ok");
-    clock = new Date(clock.getTime() + 5_000);
+    const run2 = startExecutor(db, U, "apply", { resume: true }, { logDir }, "user_chrome");
+    const r2 = dispatchAttended(db, deps);
+    expect(r2.decision).toMatchObject({ action: "notify", pid: 4242, runId: run2.id });
+    expect(r2.notified).toBe(true);
+    expect(typed).toEqual([{ pid: 4242, line: expect.stringContaining(`run ${run2.id} queued (apply)`) }]);
+    clock = new Date(clock.getTime() + 10_000);
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
-    clock = new Date(clock.getTime() + REAP_GRACE_MS + 1000);
+    clock = new Date(clock.getTime() + NOTICE_RETRY_MS);
+    expect(dispatchAttended(db, deps).decision.action).toBe("notify");
+    expect(typed).toHaveLength(2);
+    expect(spawned).toHaveLength(1);
+
+    // It claims and finishes that too. With nothing running, queued, or awaiting the user the
+    // session is idle; it is kept for IDLE_REAP_MS and then reaped — never for being old.
+    expect(claimNextRun(db, U, "user_chrome")?.id).toBe(run2.id);
+    finishRun(db, U, run2.id, "done", "ok");
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    expect(currentSpawn(db)?.idleSince).toBe(clock.toISOString());
+    clock = new Date(clock.getTime() + IDLE_REAP_MS - 1000);
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    clock = new Date(clock.getTime() + 2000);
     const r3 = dispatchAttended(db, deps);
     expect(r3.decision.action).toBe("reap");
     expect(killed).toEqual([4242]);
     expect(currentSpawn(db)).toBeNull();
+  });
+
+  it("a filled application waiting on the user keeps the session alive indefinitely; approvals are typed into it", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    const jobId = db
+      .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at) VALUES (?,?,?,?,?,?,?)")
+      .run("fp-1", "Acme", "SWE", "https://acme.example/apply", "greenhouse", "manual", "2026-01-01 00:00:00").lastInsertRowid as number;
+    db.prepare("INSERT INTO applications (job_id, status) VALUES (?, 'awaiting_confirm')").run(jobId);
+    const typed: string[] = [];
+    let clock = new Date();
+    const deps = {
+      now: () => clock,
+      isAlive: () => true,
+      reachable: () => true,
+      write: (_pid: number, line: string) => {
+        typed.push(line);
+        return true;
+      },
+      spawnExpect: () => ({ pid: 7 }),
+      kill: () => {
+        throw new Error("must not reap while a form waits on the user");
+      },
+      claudeBin: "/fake/claude",
+      logDir,
+      cwd: "/fake",
+      platform: "darwin" as const,
+    };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    finishRun(db, U, run.id, "done", "filled one");
+
+    // Days pass; the tab for the filled form is still open in that session.
+    clock = new Date(clock.getTime() + 3 * 24 * 3600_000);
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    expect(currentSpawn(db)?.idleSince ?? null).toBeNull();
+
+    // The App types the approval straight into the session.
+    expect(notifyAttendedSession(db, "[Sortie] approved job 1", deps)).toBe(true);
+    expect(typed).toEqual(["[Sortie] approved job 1"]);
+  });
+
+  it("reaps an unreachable child (this process restarted) as soon as there is work to tell it about", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    const killed: number[] = [];
+    const deps = { isAlive: () => true, reachable: () => false, spawnExpect: () => ({ pid: 5 }), kill: (pid: number) => { killed.push(pid); }, claudeBin: "/fake/claude", logDir, cwd: "/fake", platform: "darwin" as const };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    // Nothing queued, nothing approved: the unreachable child is left alone (it may be filling).
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    finishRun(db, U, run.id, "done", "ok");
+    startExecutor(db, U, "apply", { resume: true }, { logDir }, "user_chrome");
+    // A queued run it cannot hear about: reap, and the next tick spawns a fresh session for it.
+    expect(dispatchAttended(db, deps).decision.action).toBe("reap");
+    expect(killed).toEqual([5]);
+    expect(notifyAttendedSession(db, "x", deps)).toBe(false);
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+  });
+
+  it("closes out the running run of a child that died, so nothing waits 20 minutes for a stale log", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    let alive = true;
+    const deps = { isAlive: () => alive, reachable: () => true, spawnExpect: () => ({ pid: 1 }), kill: () => {}, claudeBin: "/fake/claude", logDir, cwd: "/fake", platform: "darwin" as const };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    alive = false;
+    expect(dispatchAttended(db, deps).decision.action).toBe("reap");
+    const row = db.prepare("SELECT status, summary FROM executor_runs WHERE id=?").get(run.id) as { status: string; summary: string };
+    expect(row.status).toBe("failed");
+    expect(row.summary).toMatch(/attended session ended/);
   });
 
   it("does not spawn while a desktop session heartbeats", () => {

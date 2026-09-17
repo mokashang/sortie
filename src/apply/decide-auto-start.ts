@@ -2,6 +2,8 @@ import { DB } from "@/lib/db";
 import { decide } from "@/apply/queue";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
 import { resumePausedChainIfReady } from "@/apply/continue";
+import { isAttendedSessionReachable, notifyAttendedSession } from "@/executor/attended";
+import { approvedNotice, rejectedNotice } from "@/executor/attended-session";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
 // named export on route.ts) because Next's typed-routes checker only tolerates the recognized
@@ -16,12 +18,18 @@ export interface DecideAutoStartDeps {
   startExecutor?: typeof startExecutor;
   // Log dir for a resumed 接力 segment (tests point it at a temp dir).
   logDir?: string;
+  // The long-lived attended session (src/executor/attended.ts): whether this process can type
+  // into it, and the typing itself. Tests fake both.
+  attendedReachable?: () => boolean;
+  notifyAttended?: (line: string) => boolean;
 }
 
 export interface DecideAutoStartResult {
   autoStarted: boolean;
   runId?: number;
   channel?: ExecutorChannel;
+  // The live attended session was told directly (no run queued): it submits in its own tab.
+  notified?: boolean;
 }
 
 // User -> App from the in-app confirmation queue: approve or reject a filled application.
@@ -73,6 +81,17 @@ export function decideAndMaybeAutoStart(
   // starts with the resume phase, so it submits the approvals itself.
   const resumed = resumePausedChainIfReady(db, userId, deps);
   if (resumed.action === "queued") return { autoStarted: true, runId: resumed.runId, channel: resumed.channel };
+  // The session that filled the form is still alive at its prompt with the tab open: tell it
+  // (the App types into its terminal) and it submits — or closes the tab — right there. Only
+  // when there is no reachable session does an approval queue a resume run for a fresh one,
+  // which cannot see the old tab and has to refill (2026-09-17).
+  const company = (db.prepare("SELECT company FROM jobs WHERE id = ?").get(jobId) as { company: string | null } | undefined)?.company ?? "";
+  const line = decision === "approve" ? approvedNotice(jobId, company) : rejectedNotice(jobId, company);
+  try {
+    if ((deps.notifyAttended ?? ((l: string) => notifyAttendedSession(db, l)))(line)) return { autoStarted: false, notified: true };
+  } catch {
+    // fall through to the queue-a-run path
+  }
   if (decision !== "approve") return { autoStarted: false };
   return maybeAutoStartApply(db, userId, { resume: true }, deps);
 }
@@ -118,6 +137,9 @@ export function requeueStrandedApprovals(db: DB, userId: string, deps: DecideAut
   const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
   try {
     if (checkLiveOrQueued(db, userId, "apply")) return { autoStarted: false };
+    // A reachable attended session was told about each approval as it happened and still holds
+    // the tabs; queueing a run would only make a second session refill the same forms.
+    if ((deps.attendedReachable ?? (() => isAttendedSessionReachable(db)))()) return { autoStarted: false };
     const last = lastApplyRun(db, userId);
     if (last && (last.status === "stopped" || isBareResumeRun(last.options))) return { autoStarted: false };
     const stranded = db
