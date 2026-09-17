@@ -89,6 +89,7 @@ export interface WindowsSpawnOptions {
   args: string[];
   cwd: string;
   logPath: string;
+  env?: Record<string, string | undefined>;
 }
 
 export function spawnAttendedPty(
@@ -98,7 +99,7 @@ export function spawnAttendedPty(
   const pty = deps.pty ?? loadNodePty();
   // node-pty wants a string→string map; drop undefined entries from process.env.
   const env = Object.fromEntries(
-    Object.entries(deps.env ?? process.env).filter((kv): kv is [string, string] => typeof kv[1] === "string")
+    Object.entries(deps.env ?? opts.env ?? process.env).filter((kv): kv is [string, string] => typeof kv[1] === "string")
   );
   const proc = pty.spawn(opts.claudeBin, opts.args, { name: "xterm-256color", cols: 200, rows: 50, cwd: opts.cwd, env });
   const fd = fs.openSync(opts.logPath, "a");
@@ -126,13 +127,13 @@ export function spawnAttendedPty(
 export type ConsoleSpawnFn = (
   bin: string,
   args: string[],
-  opts: { cwd: string; detached: true; stdio: "ignore"; windowsHide: false }
+  opts: { cwd: string; detached: true; stdio: "ignore"; windowsHide: false; env?: Record<string, string | undefined> }
 ) => { pid?: number; unref(): void };
 
 export function spawnAttendedConsole(opts: WindowsSpawnOptions, deps: { spawn?: ConsoleSpawnFn } = {}): { pid: number } {
   const spawnFn = deps.spawn ?? (nodeSpawn as unknown as ConsoleSpawnFn);
   // detached on Windows = the child gets its own console window, which is the TTY the TUI needs.
-  const child = spawnFn(opts.claudeBin, opts.args, { cwd: opts.cwd, detached: true, stdio: "ignore", windowsHide: false });
+  const child = spawnFn(opts.claudeBin, opts.args, { cwd: opts.cwd, detached: true, stdio: "ignore", windowsHide: false, env: opts.env });
   child.unref();
   fs.writeFileSync(opts.logPath, "[attended] console mode: no transcript is captured; follow the run log in the App.\n");
   return { pid: child.pid ?? -1 };

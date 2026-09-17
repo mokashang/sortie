@@ -19,7 +19,7 @@ winget install --id oschwartz10612.Poppler -e     # 可选:pdftotext,简历自�
 ```
 - tectonic:`winget install --id TectonicTypesetting.Tectonic -e`;winget 里找不到就从 GitHub Releases 下载 `tectonic.exe` 放进 PATH 目录(如 `C:\tools`),或 `scoop install tectonic`。
 - **新开一个终端**(让 PATH 生效),然后:`npm i -g pm2`、`git config --global core.autocrlf false`、`tzutil /s "Pacific Standard Time"`。
-- Claude Code 原生安装:`irm https://claude.ai/install.ps1 | iex`,新终端里 `claude --version` 能出版本;装到 `%USERPROFILE%\.local\bin\claude.exe`。
+- 安装 Codex CLI（Codex / GPT API 两种模式都需要）并运行 `codex login`;新终端里 `codex --version`、`codex login status` 都应成功。若保留 Claude 回退,再安装 Claude Code:`irm https://claude.ai/install.ps1 | iex`。
 - Chrome Remote Desktop:在 Windows 的 Chrome 打开 remotedesktop.google.com/access → 设置远程访问 → 装被控端、设 PIN。Mac 上用同一 Google 账号在浏览器里连。
 - Claude 桌面 App(可选,开发用)照常安装。
 - 可选:OpenSSH 服务端(设置 → 系统 → 可选功能 → 添加「OpenSSH 服务器」,然后 `Set-Service sshd -StartupType Automatic; Start-Service sshd`),Mac 终端经 Tailscale `ssh <用户>@<Tailscale IP>` 做纯命令行的事。
@@ -35,10 +35,15 @@ copy .env.example .env
 copy profile\profile.example.yaml profile\profile.yaml
 ```
 - `npm ci` 输出里确认 `better-sqlite3` 与 `node-pty` 用了预编译包;若 `node-pty` 编译失败(没有 VS Build Tools),不用管——在 `.env` 里设 `ATTENDED_SPAWN_MODE=console`。
-- `.env` 至少填:`NTFY_TOPIC=<长随机串>`;**演练期先加** `SCAN_TICK_DISABLED=1` 和 `ATTENDED_DISPATCH_DISABLED=1`(避免和 Mac 同时扫描、同时烧 `claude -p` 配额)。Mac 生产的 `.env` 从 2026-09-09 起还有 `JD_REVIEW_RELAY_DISABLED=1`(迁移前不让 Mac 再跑补正文);**Windows 的 `.env` 不要抄这一条**,否则补正文永远不自动接力。
+- `.env` 至少填:`NTFY_TOPIC=<长随机串>`。用 GPT API 时再填 `OPENAI_API_KEY` 和 `OPENAI_MODEL`;密钥不会写数据库或返回前端。**演练期先加** `SCAN_TICK_DISABLED=1` 和 `ATTENDED_DISPATCH_DISABLED=1`(避免和 Mac 同时扫描、同时消耗 AI 额度)。Mac 生产的 `.env` 从 2026-09-09 起还有 `JD_REVIEW_RELAY_DISABLED=1`(迁移前不让 Mac 再跑补正文);**Windows 的 `.env` 不要抄这一条**,否则补正文永远不自动接力。
 - iPhone 装 ntfy app 订阅这个 topic;Mac 浏览器打开 ntfy.sh/app 订阅同名 topic 并允许通知。
 
-## 3. Claude 与 Chrome 一次性准备
+## 3. AI 助手与 Chrome 一次性准备
+0. Codex 模式先运行 `codex login`，再用下面命令做真实权限探针（`codex login status` 显示已登录仍可能被工作区策略拒绝）：
+   ```powershell
+   "Reply with exactly OK and nothing else." | codex exec --ephemeral --sandbox read-only --ignore-user-config --ignore-rules --skip-git-repo-check -
+   ```
+   应只返回 `OK`；若出现 `codex_workspace_access_denied`，换用有 Codex CLI 权限的 ChatGPT 账号重新登录，或请工作区管理员开放。GPT API 模式确认 `.env` 已配置 key/model。设置页选择提供方后，选择会同时作用于打分、起草和浏览器任务。以下 Claude 步骤只在使用兼容模式时需要。
 1. Chrome 里新建「求职」档案,手动登录 LinkedIn / Workday / Handshake / Google;装 Claude in Chrome 扩展并登录 Claude 账号。`chrome://version` 看 Profile Path 最后一段(如 `Profile 2`),写进 `ops\windows\start-chrome.cmd` 的 `PROFILE=`。
 2. 终端:`claude` → `/login`(浏览器 OAuth,选 Pro/Max 账号)。
 3. 在 `C:\sortie` 里跑一次 `claude --chrome`:点掉首次介绍框、目录信任框;`/chrome` 应显示 Status: Enabled、Extension: Installed;`/exit`。这样调度器自动拉起的会话不会卡在首次提示上。

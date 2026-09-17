@@ -31,12 +31,18 @@ export function describeRunnerError(err: RunnerErrorLike | null): string | undef
 
 const defaultRunner: Runner = (bin, args, input) =>
   new Promise((resolve) => {
+    const env = { ...process.env };
+    // A machine may have GPT mode configured while Claude is selected. The Claude subprocess
+    // never needs OpenAI credentials, so do not let untrusted prompt text reach them through a
+    // model-invoked shell command.
+    delete env.OPENAI_API_KEY;
+    delete env.CODEX_API_KEY;
     const child = execFile(
       bin,
       args,
       // windowsHide: a console-less parent (pm2-managed server) would otherwise get a blank
       // console window per call on Windows — hundreds per hour during a matching pass.
-      { maxBuffer: 32 * 1024 * 1024, timeout: 180_000, windowsHide: true },
+      { maxBuffer: 32 * 1024 * 1024, timeout: 180_000, windowsHide: true, env },
       (err, stdout, stderr) => {
         const mapped = describeRunnerError(err as RunnerErrorLike | null);
         resolve({

@@ -13,6 +13,10 @@ describe("llm registry", () => {
     registerBackend(fake);
     expect(getBackend("fake").name).toBe("fake");
   });
+  it("registers both OpenAI choices", () => {
+    expect(getBackend("codex").name).toBe("codex");
+    expect(getBackend("openai").name).toBe("openai");
+  });
   it("throws for an unknown backend name", () => {
     expect(() => getBackend("nope")).toThrow(/unknown llm backend/i);
   });

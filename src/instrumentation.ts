@@ -55,7 +55,7 @@ export async function register() {
     // Referral-conversation monitor: the route itself only acts at 09:xx / 18:xx local.
     fetch(`http://127.0.0.1:${port}/api/referral/tick`, { method: "POST", headers }).catch((e) => console.error("[referral tick]", e));
   }, 60_000);
-  // Attended-session dispatcher: spawns a terminal `claude --chrome` for queued user_chrome runs
+  // Attended-session dispatcher: spawns the selected CLI agent for queued user_chrome runs
   // when no desktop session is heartbeating (see src/executor/attended.ts). Cheap when idle.
   if (!process.env.ATTENDED_DISPATCH_DISABLED) {
     setInterval(() => {

@@ -53,7 +53,7 @@ export const legal = defineMessages({
           h: "3. 谁还能看到",
           body: [
             [
-              "Anthropic 的 Claude 模型负责阅读、打分和起草。为此,你档案中相关的部分——经历、标准答案和岗位描述——会发送给 Anthropic;助手填写申请表时也会读取你的联系方式和答案包。Anthropic 对这些数据的处理受其自身条款约束。",
+              "你在设置里选择的 AI 提供方负责阅读、打分、起草和浏览器操作。选择 Codex 或 GPT API 时,相关数据会发送给 OpenAI;选择 Claude 时会发送给 Anthropic。内容包括档案中的相关经历、标准答案、岗位描述,以及填写申请表所需的联系方式和答案包。各提供方按其自身条款处理这些数据。",
               "雇主和招聘网站只有在你在 Sortie 里确认提交之后才会收到你的信息;没有你的确认,助手绝不提交。发给联系人的消息也只在你批准文字之后才会发出。",
               "Google,当你选择用 Google 登录时。",
               "基础设施:服务器位于运营者的 Tailscale 私有网络之后;如果运营者配置了邮件发送,验证邮件、重置密码邮件会经由该邮件服务商送达。",
@@ -208,7 +208,7 @@ export const legal = defineMessages({
           h: "3. Who else sees it",
           body: [
             [
-              "Anthropic's Claude models do the reading, scoring and drafting. For that, the relevant parts of your profile (your experiences, standard answers and the job posting) are sent to Anthropic; when the assistant fills an application form it also reads your contact details and answer pack. Anthropic's handling of that data is governed by its own terms.",
+              "The AI provider selected in Settings handles reading, scoring, drafting and browser work. With Codex or GPT API, the relevant data is sent to OpenAI; with Claude, it is sent to Anthropic. This includes relevant profile experience, standard answers, job postings, and the contact details and answer pack needed to fill an application. Each provider handles that data under its own terms.",
               "Employers and job boards receive your information only after you confirm a submission in Sortie; the assistant never submits without that confirmation. Messages to people you contact go out only after you approve the text.",
               "Google, when you choose to sign in with Google.",
               "Infrastructure: the server sits behind the operator's private Tailscale network; if the operator configures email sending, verification and password-reset mail is delivered through that mail provider.",
