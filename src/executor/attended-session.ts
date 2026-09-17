@@ -74,11 +74,11 @@ const ascii = (s: string) => s.replace(/[^\x20-\x7e]/g, "").replace(/\s+/g, " ")
 
 export function approvedNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, then POST /api/apply/report {jobId, status:'submitted'} and close the tab. Then stop and wait for the next line.`;
+  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, then POST /api/apply/report {jobId, status:'submitted'}. Do NOT close the tab (closing one tab destroys the whole tab group and every other filled form with it) - leave the confirmation page open or navigate that tab to about:blank. Then stop and wait for the next line.`;
 }
 export function rejectedNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} rejected job ${jobId}${who ? ` (${who})` : ""}: close the tab you filled for it; do not submit. The App keeps the reason for the next fill. Then stop and wait for the next line.`;
+  return `${NOTICE_PREFIX} rejected job ${jobId}${who ? ` (${who})` : ""}: do not submit it. Do NOT close its tab (that destroys the whole tab group) - navigate that tab to about:blank instead. The App keeps the reason for the next fill. Then stop and wait for the next line.`;
 }
 export function queuedRunNotice(runId: number, kind: string): string {
   return `${NOTICE_PREFIX} run ${runId} queued (${ascii(kind)}): claim it with GET /api/executor/claim-next?channel=user_chrome and carry on as usual.`;
