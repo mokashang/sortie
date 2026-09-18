@@ -3,7 +3,7 @@ import path from "path";
 import { DB } from "@/lib/db";
 import type { ChainInfo, ModeCounts } from "@/app/lib/run-outcome";
 import { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT } from "@/app/lib/run-outcome";
-import { rowResult, plannedCounts, ClaimedRow } from "@/apply/run-outcome";
+import { rowResult, plannedCounts, recordChainEnd, ClaimedRow, ChainEnd } from "@/apply/run-outcome";
 import { startExecutor, hasLiveOrQueuedRun, ExecutorChannel, StartOptions } from "@/executor/runner";
 
 export { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT };
@@ -140,11 +140,26 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
     if (plan.length === 0) return { action: "none", reason: "no plan to continue" };
 
     const chain = chainOf(options, runId);
-    const { remaining, own } = remainingPlan(db, runId, plan);
+    const { remaining, dropped, own } = remainingPlan(db, runId, plan);
     const zeroRuns = own.direct + own.referral === 0 ? chain.zeroRuns + 1 : 0;
-    if (remaining.length === 0) return { action: "none", reason: "plan finished (or nothing left worth retrying)" };
-    if (zeroRuns >= MAX_ZERO_PROGRESS_RUNS) return { action: "none", reason: `no progress in ${zeroRuns} consecutive segments` };
-    if (chain.step >= MAX_CHAIN_STEPS) return { action: "none", reason: `chain already ${chain.step} segments long` };
+    // The chain ends here: say why on the run's outcome (the board shows it next to 未完成) and
+    // in the server log — task #133 ended with nothing but "未完成 · 海投 63/90" to go on.
+    const endChain = (end: ChainEnd, reason: string): ContinueResult => {
+      recordChainEnd(db, runId, end);
+      console.log(`[apply continue] run #${runId} (chain #${chain.root} step ${chain.step}) ends: ${reason}`);
+      return { action: "none", reason };
+    };
+    const givenUp = (entries: PlanEntryLike[]): NonNullable<ChainEnd["dropped"]> =>
+      entries.map((e) => ({ direction: e.direction, count: Math.max(0, Math.floor(Number(e.count) || 0)), mode: e.mode === "referral" ? "referral" : "direct" }));
+    if (remaining.length === 0) {
+      return dropped.length > 0
+        ? endChain({ reason: "exhausted", dropped: givenUp(dropped) }, `nothing left worth retrying: ${dropped.map((d) => `${d.direction}/${d.mode} ${d.count}`).join(", ")}`)
+        : endChain({ reason: "done" }, "plan finished");
+    }
+    if (zeroRuns >= MAX_ZERO_PROGRESS_RUNS) {
+      return endChain({ reason: "no_progress", dropped: givenUp([...dropped, ...remaining]) }, `no progress in ${zeroRuns} consecutive segments`);
+    }
+    if (chain.step >= MAX_CHAIN_STEPS) return endChain({ reason: "too_long", dropped: givenUp([...dropped, ...remaining]) }, `chain already ${chain.step} segments long`);
 
     const next: StartOptions = {
       resume: true, // submit whatever the user approved meanwhile before filling new ones

@@ -152,6 +152,25 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    `task.applyUrl`. Give the page a moment to load, then `read_page` to see what you're working
    with.
 
+   **LinkedIn postings (`applyUrl` on `linkedin.com/jobs/view/…`) — never click "Apply on
+   company website".** That link is `<a target="_blank" href="https://www.linkedin.com/safety/go/?url=…">`:
+   the click opens a tab *outside* your tab group and you can never reach it (six jobs went to
+   cards this way on 2026-09-18: Pennymac, Speria, 2K, Imprivata, Repligen, Komatsu). Read the
+   external address out of the link instead and open it in your own tab — verified on 2026-09-18:
+   ```js
+   // javascript_tool on the LinkedIn job page. The tool refuses to return query strings, so hand
+   // back origin + path only (the query is LinkedIn tracking: mode / iis / iisn).
+   const a = [...document.querySelectorAll('a[target="_blank"]')].find(e =>
+     /^apply\b/i.test((e.textContent||'').replace(/\s+/g,' ').trim()) && /\/safety\/go/.test(e.getAttribute('href')||''));
+   const ext = new URL(new URL(a.getAttribute('href'), location.href).searchParams.get('url'));
+   ext.origin + ext.pathname
+   ```
+   then `navigate` the same tab to that address and continue as with any company page (a
+   Workday / iCIMS sign-in there is an ordinary `login` item). If the path needs its query to
+   resolve (rare), `a.setAttribute('target','_self')` does stick — set it, then click the link
+   with `computer`/`find` so it opens in place. Easy Apply postings (no external link) are filled
+   on LinkedIn itself. Only if neither route works is it a `manual` card.
+
 3. **Detect the ATS and fill (tiered strategy).** See §3 below for the full procedure.
 
 4. **Report the fill.** Once the form is filled (or you've determined it can't be), read back the
@@ -392,7 +411,11 @@ user skipped it or handed it back — close the tab, next task. Log a heartbeat 
 `{ "status": "needs_manual", "reason": "info request timed out after 30 minutes" }` (the items stay
 on the card; the App re-queues the job when the user answers) and move on.
 
-Not items at all (the App handles these without a card): a dead link is `status: "closed"`, an
+Not items at all (the App handles these without a card): a job the user's own standing answers
+rule out (`answerPack.custom` says Summer 2027 internships are skipped, senior 5+-year roles are
+skipped, …) is `{ "status": "needs_manual", "reason": "<why>", "archive": true }` — archived, no
+card; never a bare `needs_manual`, which becomes a 「助手没能完成这份申请」 card the user has to
+dismiss by hand (six of them in one night, run #126). A dead link is `status: "closed"`, an
 "already applied" page is `status: "already_applied"` (§2 step 4). Free-text essays and cover
 letters are not missing answers either: draft them from `answerPack.experiences` and the profile
 facts only, put the text in `filledFields`, and the user reviews it on the confirmation card. If

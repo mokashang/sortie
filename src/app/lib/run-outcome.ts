@@ -6,7 +6,7 @@
 // from the message tree in the language asked for.
 import type { Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
-import { RUN_STATUS_TONE, labelOf, Tone } from "@/app/lib/labels";
+import { RUN_STATUS_TONE, directionName, labelOf, Tone } from "@/app/lib/labels";
 
 export interface ModeCounts {
   direct: number;
@@ -45,6 +45,23 @@ export interface RunOutcome {
   info: number; // 待处理 cards: missing answers / files, a login wall, something to finish by hand, an error, a rejected fill
   complete: boolean; // achieved >= planned for both modes
   chain?: { root: number; step: number }; // present for continuation segments
+  // Why no further segment was queued after this run (src/apply/continue.ts). Absent while the
+  // chain goes on, and for runs that never had a plan. 任务 #133 (2026-09-18): the chain ended
+  // because every remaining direction had run dry, and nothing on the board said so.
+  end?: ChainEnd;
+}
+
+export type ChainEndReason =
+  | "done" // every quota met
+  | "exhausted" // the remaining entries were all dropped: attempted, nothing achieved (no eligible jobs left, quota walls)
+  | "no_progress" // MAX_ZERO_PROGRESS_RUNS consecutive segments achieved nothing
+  | "too_long"; // MAX_CHAIN_STEPS safety valve
+
+export interface ChainEnd {
+  reason: ChainEndReason;
+  // Plan entries given up on (direction, how many were still owed, mode) — what the user would
+  // move to another direction.
+  dropped?: { direction: string; count: number; mode: "direct" | "referral" }[];
 }
 
 // Status chip for a task. A normally-ended run that fell short of its plan is 未完成, not 已完成;
@@ -64,7 +81,29 @@ export function runProgressText(outcome: RunOutcome | null | undefined, lang: La
   if (outcome.planned.direct > 0) parts.push(t.progressDirect(outcome.achieved.direct, outcome.planned.direct));
   if (outcome.planned.referral > 0) parts.push(t.progressReferral(outcome.achieved.referral, outcome.planned.referral));
   if (outcome.chain) parts.push(t.segmentShare(outcome.own.direct + outcome.own.referral));
+  const end = chainEndText(outcome, lang);
+  if (end) parts.push(end);
   return parts.join(" · ");
+}
+
+// "剩余方向无可投岗(嵌入式 17)" — why the plan stopped short; "" when the plan was met or the
+// chain is still going.
+export function chainEndText(outcome: RunOutcome | null | undefined, lang: Lang): string {
+  if (!outcome?.end || outcome.complete) return "";
+  const t = messages[lang].runs;
+  const dropped = (outcome.end.dropped ?? [])
+    .map((d) => `${directionName(d.direction, lang)}${d.mode === "referral" ? t.referralSuffix : ""} ${d.count}`)
+    .join(", ");
+  switch (outcome.end.reason) {
+    case "exhausted":
+      return t.endExhausted(dropped);
+    case "no_progress":
+      return t.endNoProgress(dropped);
+    case "too_long":
+      return t.endTooLong;
+    default:
+      return "";
+  }
 }
 
 // "提交 5 · 待确认 1 · 待处理 3 · 归档 2 · 找不到人 1" — zero buckets omitted; "" when nothing to say.

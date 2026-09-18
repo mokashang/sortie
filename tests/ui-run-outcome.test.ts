@@ -56,3 +56,31 @@ describe("run outcome display", () => {
     expect(runBreakdownText(null, "zh")).toBe("");
   });
 });
+
+describe("chain end text", () => {
+  const base: RunOutcome = {
+    planned: { direct: 90, referral: 0 },
+    achieved: { direct: 63, referral: 0 },
+    own: { direct: 0, referral: 0 },
+    submitted: 0,
+    awaiting: 0,
+    manual: 0,
+    archived: 3,
+    info: 1,
+    complete: false,
+    chain: { root: 118, step: 9 },
+  };
+  it("says why the plan stopped short, naming the directions given up on", () => {
+    const o = { ...base, end: { reason: "exhausted" as const, dropped: [{ direction: "embedded", count: 17, mode: "direct" as const }] } };
+    expect(runProgressText(o, "zh")).toBe("海投 63/90 · 本段 0 · 剩余方向无可投岗(Embedded / Firmware 17)");
+    expect(runProgressText(o, "en")).toBe("direct 63/90 · this segment 0 · remaining directions ran dry (Embedded / Firmware 17)");
+    expect(runProgressText({ ...base, end: { reason: "no_progress" } }, "zh")).toBe("海投 63/90 · 本段 0 · 连续两段无进展,已停止");
+    expect(runProgressText({ ...base, end: { reason: "too_long" } }, "en")).toBe("direct 63/90 · this segment 0 · stopped: relay segment limit reached");
+  });
+  it("stays silent while the chain goes on, when the plan was met, and for a referral entry it labels the mode", () => {
+    expect(runProgressText(base, "zh")).toBe("海投 63/90 · 本段 0");
+    expect(runProgressText({ ...base, achieved: { direct: 90, referral: 0 }, complete: true, end: { reason: "done" } }, "zh")).toBe("海投 90/90 · 本段 0");
+    const o = { ...base, planned: { direct: 0, referral: 5 }, achieved: { direct: 0, referral: 2 }, end: { reason: "exhausted" as const, dropped: [{ direction: "swe_general", count: 3, mode: "referral" as const }] } };
+    expect(runProgressText(o, "zh")).toBe("内推 2/5 · 本段 0 · 剩余方向无可投岗(SWE (General) · 内推 3)");
+  });
+});

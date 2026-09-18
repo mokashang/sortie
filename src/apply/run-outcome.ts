@@ -1,7 +1,7 @@
 import { DB } from "@/lib/db";
-import type { ChainInfo, ModeCounts, RunOutcome } from "@/app/lib/run-outcome";
+import type { ChainEnd, ChainInfo, ModeCounts, RunOutcome } from "@/app/lib/run-outcome";
 
-export type { RunOutcome } from "@/app/lib/run-outcome";
+export type { ChainEnd, RunOutcome } from "@/app/lib/run-outcome";
 
 // 「任务 #N 已完成」以前只表示会话正常收工,跟计划完成了几份没有关系(2026-09-13 任务 #68:计划海投 70,
 // 提交 5,标签照样是已完成)。现在:取件时把 run id 盖在 applications.run_id 上,run 到终态时服务器按
@@ -124,6 +124,23 @@ export function settleRunOutcome(db: DB, runId: number): RunOutcome | null {
     return outcome;
   } catch (e) {
     console.error("[run-outcome] settle failed for run", runId, e);
+    return null;
+  }
+}
+
+// The chain decided not to queue another segment after this run: stamp why onto the outcome
+// that settleRunOutcome already stored, so the board can say 「剩余方向无可投岗」 instead of a
+// bare 「未完成 · 海投 63/90」 (task #133, 2026-09-18). Bookkeeping only, never throws.
+export function recordChainEnd(db: DB, runId: number, end: ChainEnd): RunOutcome | null {
+  try {
+    const raw = (db.prepare("SELECT outcome FROM executor_runs WHERE id = ?").get(runId) as { outcome: string | null } | undefined)?.outcome;
+    const outcome = (raw ? JSON.parse(raw) : computeRunOutcome(db, runId)) as RunOutcome | null;
+    if (!outcome) return null;
+    const next = { ...outcome, end };
+    db.prepare("UPDATE executor_runs SET outcome = ? WHERE id = ?").run(JSON.stringify(next), runId);
+    return next;
+  } catch (e) {
+    console.error("[run-outcome] record chain end failed for run", runId, e);
     return null;
   }
 }

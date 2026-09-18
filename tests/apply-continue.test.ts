@@ -307,3 +307,58 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     expect(runRow(db, p2.runId)).toMatchObject({ status: "stopped", summary: "被新的投递计划取代" });
   });
 });
+
+describe("接力 chain end reason (task #133, 2026-09-18)", () => {
+  let db: DB;
+  let logDir: string;
+  beforeEach(() => {
+    db = openTestDb();
+    seedResumes(db);
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), "apply-continue-end-"));
+  });
+  afterEach(() => {
+    db.close();
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  it("a segment that attempted the last remaining direction and achieved nothing ends the chain as 'exhausted', naming what was dropped", () => {
+    seedJob(db, { score: 90 });
+    seedJob(db, { score: 85 });
+    const plan = [{ direction: "swe_general", count: 3, mode: "direct" as const }];
+    const a = (() => {
+      const { id } = startExecutor(db, U, "apply", { plan, chunk: 10 }, { logDir }, "user_chrome");
+      claimNextRun(db, U, "user_chrome");
+      return id;
+    })();
+    const first = takeNextApplication(db, U, profile, { direction: "swe_general" }) as { jobId: number };
+    reportFill(db, U, { jobId: first.jobId, status: "awaiting_confirm", filledFields: { Name: "Mengjia Shang" } });
+    finishRun(db, U, a, "done");
+    const b = (maybeContinueApplyRun(db, a, { logDir }) as { runId: number }).runId;
+    expect(JSON.parse(runRow(db, a).outcome!).end).toBeUndefined(); // the chain goes on
+
+    claimNextRun(db, U, "user_chrome");
+    const second = takeNextApplication(db, U, profile, { direction: "swe_general" }) as { jobId: number };
+    reportFill(db, U, { jobId: second.jobId, status: "closed", reason: "posting gone" });
+    finishRun(db, U, b, "done");
+    expect(maybeContinueApplyRun(db, b, { logDir })).toMatchObject({ action: "none", reason: expect.stringContaining("nothing left") });
+
+    const outcome = JSON.parse(runRow(db, b).outcome!);
+    expect(outcome.end).toEqual({ reason: "exhausted", dropped: [{ direction: "swe_general", count: 2, mode: "direct" }] });
+    expect(outcome.complete).toBe(false);
+    expect(runProgressText(outcome, "zh")).toBe("海投 1/3 · 本段 0 · 剩余方向无可投岗(SWE (General) 2)");
+    expect(runStatusDisplay("done", outcome, "zh").label).toBe("未完成");
+  });
+
+  it("a plan that is met ends as 'done' and shows no end text", () => {
+    seedJob(db, { score: 90 });
+    const { id } = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 1, mode: "direct" }], chunk: 10 }, { logDir }, "user_chrome");
+    claimNextRun(db, U, "user_chrome");
+    const t = takeNextApplication(db, U, profile, { direction: "swe_general" }) as { jobId: number };
+    reportFill(db, U, { jobId: t.jobId, status: "awaiting_confirm", filledFields: {} });
+    finishRun(db, U, id, "done");
+    expect(maybeContinueApplyRun(db, id, { logDir })).toMatchObject({ action: "none", reason: "plan finished" });
+    const outcome = JSON.parse(runRow(db, id).outcome!);
+    expect(outcome.end).toEqual({ reason: "done" });
+    expect(runProgressText(outcome, "zh")).toBe("海投 1/1");
+  });
+});

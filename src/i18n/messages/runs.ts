@@ -22,6 +22,9 @@ export const runs = defineMessages({
     breakdownInfo: (n: number) => `待处理 ${n}`,
     breakdownArchived: (n: number) => `归档 ${n}`,
     breakdownManual: (n: number) => `找不到人 ${n}`,
+    endExhausted: (dropped: string) => (dropped ? `剩余方向无可投岗(${dropped})` : "剩余方向无可投岗"),
+    endNoProgress: (dropped: string) => (dropped ? `连续两段无进展,已停止(${dropped})` : "连续两段无进展,已停止"),
+    endTooLong: "接力段数达到上限,已停止",
   },
   en: {
     resumeApply: "Resume mode: submit the approved applications",
@@ -42,5 +45,8 @@ export const runs = defineMessages({
     breakdownInfo: (n: number) => `to do ${n}`,
     breakdownArchived: (n: number) => `archived ${n}`,
     breakdownManual: (n: number) => `no contact ${n}`,
+    endExhausted: (dropped: string) => (dropped ? `remaining directions ran dry (${dropped})` : "remaining directions ran dry"),
+    endNoProgress: (dropped: string) => (dropped ? `stopped after two segments without progress (${dropped})` : "stopped after two segments without progress"),
+    endTooLong: "stopped: relay segment limit reached",
   },
 });
