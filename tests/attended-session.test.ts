@@ -7,8 +7,11 @@ import {
   resetAttendedRegistry,
   approvedNotice,
   rejectedNotice,
+  answeredNotice,
   queuedRunNotice,
   stoppedRunNotice,
+  stalledRunNotice,
+  CARRY_ON,
   noticeDue,
   markNotice,
   clearNotices,
@@ -71,6 +74,19 @@ describe("attended session terminal registry", () => {
     expect(rejectedNotice(414860, "Lumion 露米")).toContain("rejected job 414860 (Lumion)");
     expect(queuedRunNotice(77, "apply")).toContain("run 77 queued (apply)");
     expect(queuedRunNotice(77, "apply")).toContain("claim-next");
+  });
+
+  it("per-job notices tell the session to carry on with its running segment, never to just stop (run #118, 2026-09-17)", () => {
+    for (const line of [approvedNotice(1, "NOV"), rejectedNotice(1, "NOV"), answeredNotice(1, "NOV")]) {
+      expect(line).toContain(CARRY_ON);
+      expect(line).not.toMatch(/Then stop and wait/);
+    }
+    const stall = stalledRunNotice(118, 50);
+    expect(stall.startsWith(`${NOTICE_PREFIX} run 118 is still running`)).toBe(true);
+    expect(stall).toContain("50 min");
+    expect(stall).toContain("finish {runId:118");
+    expect(stall).toMatch(/^[\x20-\x7e]+$/);
+    expect(stall).not.toContain("\n");
   });
 
   it("throttles queued-run reminders", () => {

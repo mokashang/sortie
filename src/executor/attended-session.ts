@@ -72,13 +72,26 @@ export function writeToAttended(
 export const NOTICE_PREFIX = "[Sortie]";
 const ascii = (s: string) => s.replace(/[^\x20-\x7e]/g, "").replace(/\s+/g, " ").trim();
 
+// How every per-job notice ends. A notice is an interruption, not a sign-off: run #118 on
+// 2026-09-17 was four fills into a ten-fill segment when an approval arrived, the session
+// obeyed the old "then stop and wait" tail, and nothing woke it for the next fifty minutes
+// (the dispatcher does not announce queued runs to a session that is still on a run, and idle
+// reaping does not fire while a run is running). So the tail names the loop it belongs to.
+export const CARRY_ON =
+  "Then, if a run of yours is still running and its segment is not full, carry on with it (take the next job as usual); only stop and wait for the next line once the segment is full or you have no run.";
+
 export function approvedNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, then POST /api/apply/report {jobId, status:'submitted'}. Do NOT close the tab (closing one tab destroys the whole tab group and every other filled form with it) - leave the confirmation page open or navigate that tab to about:blank. Then stop and wait for the next line.`;
+  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, then POST /api/apply/report {jobId, status:'submitted'}. Do NOT close the tab (closing one tab destroys the whole tab group and every other filled form with it) - leave the confirmation page open or navigate that tab to about:blank. ${CARRY_ON}`;
 }
 export function rejectedNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} rejected job ${jobId}${who ? ` (${who})` : ""}: do not submit it. Do NOT close its tab (that destroys the whole tab group) - navigate that tab to about:blank instead. The App keeps the reason for the next fill. Then stop and wait for the next line.`;
+  return `${NOTICE_PREFIX} rejected job ${jobId}${who ? ` (${who})` : ""}: do not submit it. Do NOT close its tab (that destroys the whole tab group) - navigate that tab to about:blank instead. The App keeps the reason for the next fill. ${CARRY_ON}`;
+}
+// The dispatcher's backstop for a session that stopped at its prompt while its run is still
+// running (see CARRY_ON): typed every STALL_NUDGE_MS of silence until the run ends.
+export function stalledRunNotice(runId: number, quietMin: number): string {
+  return `${NOTICE_PREFIX} run ${runId} is still running and has written no log line for ${quietMin} min. Nobody is going to send you another line for it: the run is yours until you finish it. If you are waiting, stop waiting and carry on with its plan (next job); if its segment is full or nothing is left to take, POST /api/executor/finish {runId:${runId}, status:'done', summary}. If a tool is genuinely stuck, log what happened and finish it as failed.`;
 }
 export function queuedRunNotice(runId: number, kind: string): string {
   return `${NOTICE_PREFIX} run ${runId} queued (${ascii(kind)}): claim it with GET /api/executor/claim-next?channel=user_chrome and carry on as usual.`;
@@ -87,7 +100,7 @@ export function queuedRunNotice(runId: number, kind: string): string {
 // answers are on the App, the tab is the session's own.
 export function answeredNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} answered job ${jobId}${who ? ` (${who})` : ""}: the user answered your questions. GET /api/apply/pending?jobId=${jobId} returns them in infoAnswers; go back to the tab you kept open for it, fill them in, read the form back and POST /api/apply/report {jobId, status:'awaiting_confirm', filledFields}. If that tab is gone, POST /api/apply/next {"jobIds":[${jobId}],"mode":"direct"} and fill it afresh. Then stop and wait for the next line.`;
+  return `${NOTICE_PREFIX} answered job ${jobId}${who ? ` (${who})` : ""}: the user answered your questions. GET /api/apply/pending?jobId=${jobId} returns them in infoAnswers; go back to the tab you kept open for it, fill them in, read the form back and POST /api/apply/report {jobId, status:'awaiting_confirm', filledFields}. If that tab is gone, POST /api/apply/next {"jobIds":[${jobId}],"mode":"direct"} and fill it afresh. ${CARRY_ON}`;
 }
 export function stoppedRunNotice(runId: number): string {
   return `${NOTICE_PREFIX} run ${runId} stopped by the user: stop working on it now (do not submit anything for it), leave its tabs as they are, and wait for the next line.`;

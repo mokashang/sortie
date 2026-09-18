@@ -18,10 +18,12 @@ import {
   HEARTBEAT_STALE_MS,
   IDLE_REAP_MS,
   NOTICE_RETRY_MS,
+  STALL_NUDGE_MS,
   notifyAttendedSession,
   isAttendedSessionReachable,
 } from "@/executor/attended";
 import type { WindowsSpawnOptions } from "@/executor/attended-win";
+import { clearNotices } from "@/executor/attended-session";
 import { startExecutor, finishRun, claimNextRun } from "@/executor/runner";
 import { seedOwner } from "./helpers";
 
@@ -58,6 +60,16 @@ describe("attended dispatcher — decide()", () => {
     // current run (src/apply/followup.ts) waits for the child's own claim-next after it finishes.
     expect(decide(input({ queuedRunId: 9, runningRunId: 8, spawn: child() })).action).toBe("none");
     expect(decide(input({ queuedRunId: 9, runningRunId: null, spawn: child() })).action).toBe("notify");
+  });
+  it("nudges a reachable child whose own run has gone quiet, throttled, never while it is working or has no run", () => {
+    const quiet = STALL_NUDGE_MS;
+    expect(decide(input({ runningRunId: 8, runningQuietMs: quiet, stallNoticeDue: true, spawn: child() }))).toMatchObject({ action: "nudge", pid: 1, runId: 8 });
+    expect(decide(input({ runningRunId: 8, runningQuietMs: quiet - 1, stallNoticeDue: true, spawn: child() })).action).toBe("none");
+    expect(decide(input({ runningRunId: 8, runningQuietMs: quiet, stallNoticeDue: false, spawn: child() })).action).toBe("none");
+    expect(decide(input({ runningRunId: null, runningQuietMs: quiet, stallNoticeDue: true, spawn: child() })).action).toBe("none");
+    // An unreachable child cannot be nudged; a queued run it can hear about is announced first.
+    expect(decide(input({ runningRunId: 8, runningQuietMs: quiet, stallNoticeDue: true, spawn: child({ reachable: false }) })).action).toBe("none");
+    expect(decide(input({ queuedRunId: 9, runningRunId: null, runningQuietMs: quiet, stallNoticeDue: true, spawn: child() })).action).toBe("notify");
   });
   it("keeps a child alive without any age limit while it has work, and reaps it only after idling", () => {
     expect(decide(input({ spawn: child({ idleForMs: null }) })).action).toBe("none");
@@ -244,6 +256,81 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     const row = db.prepare("SELECT status, summary FROM executor_runs WHERE id=?").get(run.id) as { status: string; summary: string };
     expect(row.status).toBe("failed");
     expect(row.summary).toMatch(/attended session ended/);
+  });
+
+  it("types a stall reminder into a child whose run has been silent, once per STALL_NUDGE_MS, and stops once the run ends", () => {
+    clearNotices();
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 10, mode: "direct" }], chunk: 10 }, { logDir }, "user_chrome");
+    const typed: string[] = [];
+    const t0 = Date.parse("2026-09-18T01:29:47Z"); // NOV's last log line, run #118
+    let now = t0;
+    let lastLog = t0;
+    const deps = {
+      now: () => new Date(now),
+      isAlive: () => true,
+      reachable: () => true,
+      write: (_pid: number, line: string) => { typed.push(line); return true; },
+      mtime: () => lastLog,
+      spawnExpect: () => ({ pid: 1 }),
+      kill: () => {},
+      claudeBin: "/fake/claude",
+      logDir,
+      cwd: "/fake",
+      platform: "darwin" as const,
+    };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    // Working normally: the log is fresh, nothing is typed.
+    now = t0 + 5 * 60_000;
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    expect(typed).toEqual([]);
+    // Fifty minutes of silence with the run still running: one reminder naming the run.
+    now = t0 + 50 * 60_000;
+    expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "nudge", pid: 1, runId: run.id });
+    expect(typed).toHaveLength(1);
+    expect(typed[0]).toMatch(new RegExp(`^\\[Sortie\\] run ${run.id} is still running .*50 min`));
+    expect(typed[0]).toContain("carry on");
+    // Not repeated every tick; again after another STALL_NUDGE_MS of silence.
+    now += 10_000;
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    now += STALL_NUDGE_MS;
+    expect(dispatchAttended(db, deps).decision.action).toBe("nudge");
+    expect(typed).toHaveLength(2);
+    // The session picks up again: a fresh log line resets the clock.
+    lastLog = now;
+    now += STALL_NUDGE_MS - 1_000;
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    // Run over: nothing running, so nothing to remind it of.
+    lastLog = t0;
+    finishRun(db, U, run.id, "done", "ok");
+    now += 2 * STALL_NUDGE_MS;
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    expect(typed).toHaveLength(2);
+  });
+
+  it("a reaped child's mid-segment plan chains on to a fresh session instead of dying with it", () => {
+    clearNotices();
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 30, mode: "direct" }], chunk: 10 }, { logDir }, "user_chrome");
+    let alive = true;
+    const deps = { isAlive: () => alive, reachable: () => true, spawnExpect: () => ({ pid: 1 }), kill: () => {}, claudeBin: "/fake/claude", logDir, cwd: "/fake", platform: "darwin" as const };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    alive = false;
+    expect(dispatchAttended(db, deps).decision.action).toBe("reap");
+    expect((db.prepare("SELECT status FROM executor_runs WHERE id=?").get(run.id) as { status: string }).status).toBe("failed");
+    const next = db.prepare("SELECT id, status, options FROM executor_runs WHERE id > ? ORDER BY id").all(run.id) as { id: number; status: string; options: string }[];
+    expect(next).toHaveLength(1);
+    expect(next[0].status).toBe("queued");
+    expect(JSON.parse(next[0].options)).toMatchObject({ resume: true, plan: [{ direction: "swe_general", count: 30, mode: "direct" }], chain: { root: run.id, step: 2 } });
+    // Next tick: a fresh session for the continuation.
+    alive = true;
+    expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "spawn", runId: next[0].id });
   });
 
   it("does not spawn while a desktop session heartbeats", () => {

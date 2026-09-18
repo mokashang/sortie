@@ -30,6 +30,10 @@ export interface ContinueDeps {
   hasLiveOrQueuedRun?: typeof hasLiveOrQueuedRun;
   // Where a resumed user_chrome segment's log file goes (tests point this at a temp dir).
   logDir?: string;
+  // The run did not finish: its attended session was reaped mid-segment (server restart, child
+  // crash — src/executor/attended.ts closeOutReapedSession). The plan still continues; only a
+  // run the user stopped, or one the session itself reported as failed, ends the chain.
+  interrupted?: boolean;
 }
 
 export type ContinueResult =
@@ -123,7 +127,8 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
       | { user_id: string; kind: string; status: string; channel: string; options: string }
       | undefined;
     if (!run || run.kind !== "apply") return { action: "none", reason: "not an apply run" };
-    if (run.status !== "done") return { action: "none", reason: `run ended as ${run.status}, chain stops` };
+    if (run.status !== "done" && !(deps.interrupted && run.status === "failed"))
+      return { action: "none", reason: `run ended as ${run.status}, chain stops` };
     const userId = run.user_id;
     let options: StartOptions & { chain?: ChainInfo } = {};
     try {

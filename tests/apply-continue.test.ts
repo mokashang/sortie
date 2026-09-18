@@ -260,6 +260,28 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     expect(maybeContinueApplyRun(db, c, { logDir })).toMatchObject({ action: "none", reason: "no plan to continue" });
   });
 
+  it("a segment whose session was reaped mid-way (interrupted) chains on with what is left; a stopped one still does not", () => {
+    for (let i = 0; i < 3; i++) seedJob(db, { score: 95 - i });
+    const a = startSegment({ plan: [{ direction: "swe_general", count: 3, mode: "direct" }], chunk: 10 });
+    fillNext();
+    // What closeOutReapedSession does before asking: the run is failed, not done.
+    finishRun(db, U, a, "failed", "attended session ended: child 1 is unreachable (server restarted?) and work is waiting");
+    expect(maybeContinueApplyRun(db, a, { logDir })).toMatchObject({ action: "none", reason: expect.stringContaining("failed") });
+    const r = maybeContinueApplyRun(db, a, { logDir, interrupted: true });
+    expect(r).toMatchObject({ action: "queued", channel: "user_chrome" });
+    expect(optionsOf(db, (r as { runId: number }).runId)).toMatchObject({
+      resume: true,
+      plan: [{ direction: "swe_general", count: 2, mode: "direct" }],
+      chain: { root: a, step: 2, before: { direct: 1, referral: 0 } },
+    });
+
+    // The user stopping a run breaks the chain even when the session is reaped afterwards.
+    stopExecutor(db, U, (r as { runId: number }).runId);
+    const b = startSegment({ plan: [{ direction: "swe_general", count: 1, mode: "direct" }], chunk: 1 });
+    stopExecutor(db, U, b);
+    expect(maybeContinueApplyRun(db, b, { logDir, interrupted: true })).toMatchObject({ action: "none", reason: expect.stringContaining("stopped") });
+  });
+
   it("a paused chain can be stopped by the user, and a new plan from /apply supersedes one", () => {
     for (let i = 0; i < 11; i++) seedJob(db, { score: 95 - i });
     const a = startSegment({ plan: [{ direction: "swe_general", count: 11, mode: "direct" }], chunk: 10 });
