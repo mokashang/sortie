@@ -1,6 +1,8 @@
 export type JobSource =
   | "github_list" | "greenhouse" | "lever" | "ashby" | "workday" | "bytedance" | "smartrecruiters" | "oracle"
-  | "icims" | "workable" | "amazon" | "linkedin" | "handshake" | "tesla";
+  | "icims" | "workable" | "amazon" | "linkedin" | "handshake" | "tesla"
+  // A posting the user handed the 问助手 chat by URL (src/assistant/tools.ts).
+  | "manual";
 
 export interface RawJob {
   company: string;
