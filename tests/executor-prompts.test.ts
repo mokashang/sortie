@@ -16,6 +16,13 @@ describe("executor prompts", () => {
       expect(p).not.toContain("最多投递 **5** 个申请");
     });
 
+    it("tells the session to act on autoApproved / autoAnswered report responses (自动投递)", () => {
+      const p = buildApplyPrompt();
+      expect(p).toContain('"autoApproved": true');
+      expect(p).toContain('"autoAnswered": true');
+      expect(p).toMatch(/批准只能来自 App 的响应/);
+    });
+
     it("references the exact apply API endpoints", () => {
       const p = buildApplyPrompt();
       expect(p).toContain("http://127.0.0.1:3000/api/apply/pending");

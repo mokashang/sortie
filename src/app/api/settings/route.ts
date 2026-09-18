@@ -3,10 +3,11 @@ import { authPublicConfig } from "@/lib/auth";
 import { failResponse, requireOwner, withUser } from "@/lib/actor";
 import { getDb } from "@/lib/db";
 import { getAiProvider, parseAiProvider, providerStatuses, setAiProvider } from "@/ai/config";
+import { getAutoSubmit } from "@/apply/auto-submit";
 
 // GET — read-only facts the 设置 page shows (nothing secret: whether phone push and mail are
 // configured, whether Google sign-in is available, who is signed in).
-export const GET = withUser(async (_req, { user, via }) => {
+export const GET = withUser(async (_req, { user, via, userId }) => {
   const db = getDb();
   return NextResponse.json({
     ntfyConfigured: Boolean(process.env.NTFY_TOPIC),
@@ -14,6 +15,7 @@ export const GET = withUser(async (_req, { user, via }) => {
     user: user ? { id: user.id, name: user.name, email: user.email, emailVerified: user.emailVerified, role: user.role } : null,
     via,
     ai: { provider: getAiProvider(db), providers: providerStatuses() },
+    autoSubmit: getAutoSubmit(db, userId),
   });
 });
 

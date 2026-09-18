@@ -27,6 +27,11 @@ export const notify = defineMessages({
         body: (jobTitle: string, labels: string) => `${jobTitle}:${labels} — 做完后打开 App 投递页「待处理」点「完成了」。`,
       },
     },
+    // 自动投递 on: the assistant submitted without a confirmation — a heads-up, not a to-do.
+    autoSubmitted: {
+      title: (company: string) => `Sortie · 已自动投出 ${company}`,
+      body: (jobTitle: string) => `${jobTitle} — 自动投递已开启,助手填好后直接提交了;记录在「历史」里。`,
+    },
   },
   en: {
     todo: {
@@ -51,6 +56,10 @@ export const notify = defineMessages({
         title: (company: string, _n: number) => `Sortie · ${company} needs a quick action in its tab`,
         body: (jobTitle: string, labels: string) => `${jobTitle}: ${labels} — when it is done, press Done under To do on the Apply page.`,
       },
+    },
+    autoSubmitted: {
+      title: (company: string) => `Sortie · auto-submitted to ${company}`,
+      body: (jobTitle: string) => `${jobTitle} — auto-apply is on, so the assistant submitted as soon as the form was filled; it is in History.`,
     },
   },
 });
