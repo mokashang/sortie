@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Ellipsis, Languages, LogOut, Monitor, Moon, Search, Settings, Sun, UserRound } from "lucide-react";
+import { Ellipsis, Languages, LogOut, MessageCircleQuestionMark, Monitor, Moon, Search, Settings, Sun, UserRound } from "lucide-react";
 import { attentionTotal } from "@/app/lib/overview-types";
 import { cx } from "@/app/lib/cx";
 import { getTheme, setTheme, type Theme } from "@/app/lib/settings";
@@ -11,6 +11,7 @@ import { Menu, useToast } from "@/app/components/ui";
 import { useMessages } from "@/i18n/client";
 import { useOverview } from "../overview-context";
 import { AssistantPill } from "../assistant-card";
+import { ChatButton, ChatDrawer, ChatProvider, useChat } from "../assistant-chat";
 import { CommandPalette } from "../command-palette";
 import { LogoMark } from "./logo";
 import { NAV, SETTINGS_NAV, TABBAR_HREFS, isActivePath } from "./nav";
@@ -126,8 +127,19 @@ function UserMenu({ user }: { user: ShellUser }) {
   );
 }
 
-export function AppShell({ children, user }: { children: React.ReactNode; user: ShellUser }) {
+// The chat provider wraps the shell so the drawer, the top-bar button, the 「更多」 sheet and ⌘K
+// share one conversation; the frame itself is ShellFrame.
+export function AppShell(props: { children: React.ReactNode; user: ShellUser }) {
+  return (
+    <ChatProvider>
+      <ShellFrame {...props} />
+    </ChatProvider>
+  );
+}
+
+function ShellFrame({ children, user }: { children: React.ReactNode; user: ShellUser }) {
   const m = useMessages();
+  const chat = useChat();
   const pathname = usePathname();
   const { data } = useOverview();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -145,11 +157,16 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         setPaletteOpen((o) => !o);
         return;
       }
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === "/") {
+        e.preventDefault();
+        chat.toggle();
+        return;
+      }
       if (e.key === "Escape") setMoreOpen(false);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, []);
+  }, [chat.toggle]);
 
   const counts = data?.counts;
   const badges = {
@@ -189,6 +206,7 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
 
         <div className="topbar-right">
           <AssistantPill />
+          <ChatButton />
           <button type="button" className="cmdk-trigger" onClick={() => setPaletteOpen(true)} aria-label={m.shell.searchLabel} title={m.shell.searchTitle(shortcut)}>
             <Search size={14} aria-hidden />
             <span className="hide-mobile">{m.shell.search}</span>
@@ -255,6 +273,17 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
               );
             })}
             <div className="sheet-sep" />
+            <button
+              type="button"
+              className="sheet-item"
+              onClick={() => {
+                setMoreOpen(false);
+                chat.setOpen(true);
+              }}
+            >
+              <MessageCircleQuestionMark size={18} aria-hidden />
+              <span>{m.chat.open}</span>
+            </button>
             <button type="button" className="sheet-item" onClick={langToggle.toggle} aria-label={langToggle.aria}>
               <Languages size={18} aria-hidden />
               <span>{langToggle.title}</span>
@@ -285,7 +314,8 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
         </>
       ) : null}
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onAskAssistant={() => chat.setOpen(true)} />
+      <ChatDrawer />
     </div>
   );
 }

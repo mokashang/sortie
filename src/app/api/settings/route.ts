@@ -4,6 +4,7 @@ import { failResponse, requireOwner, withUser } from "@/lib/actor";
 import { getDb } from "@/lib/db";
 import { getAiProvider, parseAiProvider, providerStatuses, setAiProvider } from "@/ai/config";
 import { getAutoSubmit } from "@/apply/auto-submit";
+import { getChatProvider } from "@/assistant/provider";
 
 // GET — read-only facts the 设置 page shows (nothing secret: whether phone push and mail are
 // configured, whether Google sign-in is available, who is signed in).
@@ -16,6 +17,7 @@ export const GET = withUser(async (_req, { user, via, userId }) => {
     via,
     ai: { provider: getAiProvider(db), providers: providerStatuses() },
     autoSubmit: getAutoSubmit(db, userId),
+    chatProvider: getChatProvider(db, userId),
   });
 });
 

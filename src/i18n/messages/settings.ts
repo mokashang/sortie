@@ -170,6 +170,16 @@ export const settings = defineMessages({
       toastOff: "之后填好的申请会先等你确认",
       saveFailed: "保存失败",
     },
+    chat: {
+      title: "问答助手",
+      description: "顶栏「问助手」里回答问题用的模型。它只读:看得到任务、卡片和队列的当前情况,不会替你操作。",
+      claude: "Claude 订阅",
+      claudeDescription: "用本机 claude 命令行的登录,不需要 API key。",
+      follow: "跟随 AI 提供方",
+      followDescription: "和上面的选择用同一个模型。",
+      switched: (name: string) => `问答助手之后由 ${name} 回答`,
+      switchFailed: "保存失败",
+    },
     language: {
       title: "语言",
       description: "界面、通知和提示的语言。",
@@ -380,6 +390,16 @@ export const settings = defineMessages({
       toastOn: "Filled applications will now be submitted right away, with missing answers written by the App",
       toastOff: "Filled applications will wait for your confirmation again",
       saveFailed: "Could not save",
+    },
+    chat: {
+      title: "Chat assistant",
+      description: "The model behind the top bar's Ask button. It is read-only: it sees the current tasks, cards and queue and never acts for you.",
+      claude: "Claude subscription",
+      claudeDescription: "Uses the claude command line's login on this machine; no API key needed.",
+      follow: "Follow the AI provider",
+      followDescription: "Same model as the choice above.",
+      switched: (name: string) => `The chat assistant will now be answered by ${name}`,
+      switchFailed: "Could not save",
     },
     language: {
       title: "Language",

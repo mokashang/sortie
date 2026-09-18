@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpDown, Briefcase, CornerDownLeft, Languages, Monitor, Moon, Play, Search, Sun } from "lucide-react";
+import { ArrowUpDown, Briefcase, CornerDownLeft, Languages, MessageCircleQuestionMark, Monitor, Moon, Play, Search, Sun } from "lucide-react";
 import { directionLabel } from "@/matcher/directions";
 import { getJson } from "@/app/lib/api";
 import { ALL_JOBS_DIRECTION } from "@/app/lib/queue-const";
@@ -34,7 +34,7 @@ const THEME_NEXT: Record<Theme, Theme> = { system: "light", light: "dark", dark:
 
 // ⌘K: pages, a few actions, and a live search over every job in the library. Navigation only —
 // nothing here submits, sends or starts a task without the page's own confirmation.
-export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CommandPalette({ open, onClose, onAskAssistant }: { open: boolean; onClose: () => void; onAskAssistant?: () => void }) {
   const m = useMessages();
   const router = useRouter();
   const langToggle = useLangToggle();
@@ -94,6 +94,21 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const actions: Item[] = [
       { key: "act:apply", group: m.palette.groups.actions, label: m.palette.startApply, hint: m.palette.startApplyHint, icon: <Play size={16} />, run: go("/apply#plan") },
       { key: "act:queue", group: m.palette.groups.actions, label: m.palette.queueTop, hint: m.palette.queueTopHint, icon: <Briefcase size={16} />, run: go("/queue") },
+      ...(onAskAssistant
+        ? [
+            {
+              key: "act:chat",
+              group: m.palette.groups.actions,
+              label: m.palette.askAssistant,
+              hint: m.palette.askAssistantHint,
+              icon: <MessageCircleQuestionMark size={16} />,
+              run: () => {
+                onClose();
+                onAskAssistant();
+              },
+            },
+          ]
+        : []),
       {
         key: "act:theme",
         group: m.palette.groups.actions,
@@ -135,7 +150,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       };
     });
     return term.length >= 2 ? [...hits, ...pages, ...actions] : [...pages, ...actions];
-  }, [q, jobs, router, onClose, m, langToggle]);
+  }, [q, jobs, router, onClose, onAskAssistant, m, langToggle]);
 
   useEffect(() => setActive(0), [items.length, q]);
 

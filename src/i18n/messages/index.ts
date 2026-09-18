@@ -3,6 +3,7 @@ import { answers } from "./answers";
 import { apply } from "./apply";
 import { assistant } from "./assistant";
 import { auth } from "./auth";
+import { chat } from "./chat";
 import { common } from "./common";
 import { dashboard } from "./dashboard";
 import { errors } from "./errors";
@@ -57,6 +58,7 @@ function tree(l: Lang) {
     sources: sources[l],
     auth: auth[l],
     assistant: assistant[l],
+    chat: chat[l],
     palette: palette[l],
     scan: scan[l],
   };

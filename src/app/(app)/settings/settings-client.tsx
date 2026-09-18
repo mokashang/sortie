@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Bell, Bot, Database, ExternalLink, Globe, Languages, Monitor, Moon, Sun, Zap } from "lucide-react";
+import { Bell, Bot, Database, ExternalLink, Globe, Languages, MessageCircleQuestionMark, Monitor, Moon, Sun, Zap } from "lucide-react";
 import { postJson, errorMessage } from "@/app/lib/api";
 import { getChannel, getTheme, setChannel, setTheme, type Channel, type Theme } from "@/app/lib/settings";
 import { relativeTime } from "@/app/lib/time";
@@ -12,6 +12,7 @@ import { messages } from "@/i18n/messages";
 import type { AuthPublicConfig } from "@/lib/auth";
 import { AccountCard, type AccountInfo } from "./account-card";
 import type { AiProvider, AiProviderStatus } from "@/ai/config";
+import type { ChatProvider } from "@/assistant/provider";
 
 export interface LastTick {
   at: string;
@@ -27,6 +28,7 @@ export function SettingsClient({
   auth,
   ai,
   autoSubmit: autoSubmitInitial,
+  chatProvider: chatProviderInitial,
 }: {
   ntfyConfigured: boolean;
   lastTick: LastTick | null;
@@ -34,6 +36,7 @@ export function SettingsClient({
   auth: AuthPublicConfig;
   ai: { provider: AiProvider; providers: AiProviderStatus[] };
   autoSubmit: boolean;
+  chatProvider: ChatProvider;
 }) {
   const m = useMessages();
   const lang = useLang();
@@ -45,6 +48,8 @@ export function SettingsClient({
   const [savingAi, setSavingAi] = useState(false);
   const [autoSubmit, setAutoSubmit] = useState<boolean>(autoSubmitInitial);
   const [savingAutoSubmit, setSavingAutoSubmit] = useState(false);
+  const [chatProvider, setChatProvider] = useState<ChatProvider>(chatProviderInitial);
+  const [savingChat, setSavingChat] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -114,6 +119,22 @@ export function SettingsClient({
       toast({ title: m.settings.autoSubmit.saveFailed, description: errorMessage(e), tone: "danger" });
     } finally {
       setSavingAutoSubmit(false);
+    }
+  }
+
+  async function chooseChatProvider(value: ChatProvider) {
+    if (value === chatProvider || savingChat) return;
+    const previous = chatProvider;
+    setChatProvider(value);
+    setSavingChat(true);
+    try {
+      await postJson("/api/settings/chat-provider", { provider: value });
+      toast({ title: m.settings.chat.switched(value === "claude" ? m.settings.chat.claude : m.settings.ai.providers[aiProvider].title), tone: "good" });
+    } catch (e) {
+      setChatProvider(previous);
+      toast({ title: m.settings.chat.switchFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setSavingChat(false);
     }
   }
 
@@ -214,6 +235,35 @@ export function SettingsClient({
               />
             );
           })}
+        </div>
+      </Section>
+
+      <Section title={m.settings.chat.title} description={m.settings.chat.description}>
+        <div className="col gap-3" style={{ maxWidth: 640 }} aria-busy={savingChat}>
+          <RadioCard
+            name="chat-provider"
+            value="claude"
+            checked={chatProvider === "claude"}
+            onChange={(v) => void chooseChatProvider(v as ChatProvider)}
+            title={
+              <span className="row gap-1">
+                <MessageCircleQuestionMark size={15} aria-hidden /> {m.settings.chat.claude}
+              </span>
+            }
+            description={m.settings.chat.claudeDescription}
+          />
+          <RadioCard
+            name="chat-provider"
+            value="follow"
+            checked={chatProvider === "follow"}
+            onChange={(v) => void chooseChatProvider(v as ChatProvider)}
+            title={
+              <span className="row gap-1">
+                <Bot size={15} aria-hidden /> {m.settings.chat.follow} · {m.settings.ai.providers[aiProvider].title}
+              </span>
+            }
+            description={m.settings.chat.followDescription}
+          />
         </div>
       </Section>
 

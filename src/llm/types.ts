@@ -6,6 +6,11 @@ export interface LlmRequest {
   // 提示后端可用的模型档位(便宜/快 vs 强);后端自行映射到具体模型,允许忽略。
   tier?: "fast" | "smart";
   maxTokens?: number;
+  // Bare mode (the in-app 问助手 chat, spec 2026-09-18 §5): `system` REPLACES the backend's default
+  // system prompt instead of being appended to it, and the model gets no tools, no settings, no
+  // repository memory and no MCP servers — it can only read what the prompt hands it. Backends
+  // that are already isolated (codex exec, a direct API call) may ignore the flag.
+  bare?: boolean;
 }
 
 export interface LlmResult {
@@ -17,4 +22,8 @@ export interface LlmResult {
 export interface LlmBackend {
   readonly name: string;
   complete(req: LlmRequest): Promise<LlmResult>;
+  // Optional: the same completion delivered incrementally. `onDelta` receives each new piece of
+  // output text as it arrives; the resolved result carries the whole text. Callers fall back to
+  // complete() when a backend does not implement it.
+  stream?(req: LlmRequest, onDelta: (text: string) => void): Promise<LlmResult>;
 }

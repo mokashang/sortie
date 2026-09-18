@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import { LlmBackend, LlmRequest, LlmResult } from "@/llm/types";
 import { resolveClaudeBin } from "@/lib/claude-bin";
 
@@ -8,6 +8,15 @@ export type Runner = (
   args: string[],
   input: string
 ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+
+// Streaming variant: the runner hands every stdout line to `onLine` as it arrives instead of
+// buffering the whole output (claude -p --output-format stream-json prints one JSON event per line).
+export type StreamRunner = (
+  bin: string,
+  args: string[],
+  input: string,
+  onLine: (line: string) => void
+) => Promise<{ stderr: string; exitCode: number }>;
 
 // Minimal shape we read off an execFile callback error — deliberately narrower than
 // Node's ExecFileException so this stays a small, easily-testable pure function.
@@ -29,20 +38,26 @@ export function describeRunnerError(err: RunnerErrorLike | null): string | undef
   return undefined;
 }
 
+const TIMEOUT_MS = 180_000;
+
+function childEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  // A machine may have GPT mode configured while Claude is selected. The Claude subprocess
+  // never needs OpenAI credentials, so do not let untrusted prompt text reach them through a
+  // model-invoked shell command.
+  delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
+  return env;
+}
+
 const defaultRunner: Runner = (bin, args, input) =>
   new Promise((resolve) => {
-    const env = { ...process.env };
-    // A machine may have GPT mode configured while Claude is selected. The Claude subprocess
-    // never needs OpenAI credentials, so do not let untrusted prompt text reach them through a
-    // model-invoked shell command.
-    delete env.OPENAI_API_KEY;
-    delete env.CODEX_API_KEY;
     const child = execFile(
       bin,
       args,
       // windowsHide: a console-less parent (pm2-managed server) would otherwise get a blank
       // console window per call on Windows — hundreds per hour during a matching pass.
-      { maxBuffer: 32 * 1024 * 1024, timeout: 180_000, windowsHide: true, env },
+      { maxBuffer: 32 * 1024 * 1024, timeout: TIMEOUT_MS, windowsHide: true, env: childEnv() },
       (err, stdout, stderr) => {
         const mapped = describeRunnerError(err as RunnerErrorLike | null);
         resolve({
@@ -55,16 +70,98 @@ const defaultRunner: Runner = (bin, args, input) =>
     child.stdin?.end(input);
   });
 
+// spawn (not execFile) so stdout can be consumed line by line while the model is still writing.
+const defaultStreamRunner: StreamRunner = (bin, args, input, onLine) =>
+  new Promise((resolve) => {
+    let stderr = "";
+    let buffered = "";
+    let settled = false;
+    const finish = (r: { stderr: string; exitCode: number }) => {
+      if (settled) return;
+      settled = true;
+      if (buffered.trim()) onLine(buffered);
+      resolve(r);
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(bin, args, { windowsHide: true, env: childEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    } catch (e) {
+      resolve({ stderr: describeRunnerError(e as RunnerErrorLike) ?? String(e), exitCode: 1 });
+      return;
+    }
+    const timer = setTimeout(() => {
+      child.kill();
+      finish({ stderr: describeRunnerError({ killed: true }) ?? "timed out", exitCode: 1 });
+    }, TIMEOUT_MS);
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      buffered += chunk;
+      let nl = buffered.indexOf("\n");
+      while (nl >= 0) {
+        const line = buffered.slice(0, nl).replace(/\r$/, "");
+        buffered = buffered.slice(nl + 1);
+        if (line.trim()) onLine(line);
+        nl = buffered.indexOf("\n");
+      }
+    });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      if (stderr.length < 8000) stderr += chunk;
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      finish({ stderr: describeRunnerError(err as RunnerErrorLike) ?? String(err), exitCode: 1 });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      finish({ stderr, exitCode: code ?? 1 });
+    });
+    child.stdin?.on("error", () => {
+      // the CLI exited before reading its input; `close` reports the exit code
+    });
+    child.stdin?.end(input);
+  });
+
 interface ClaudeEnvelope {
   result?: string;
   is_error?: boolean;
   subtype?: string;
 }
 
+// One line of `--output-format stream-json --include-partial-messages` output, reduced to what
+// the chat needs: a piece of answer text, the final envelope, or nothing (init / thinking /
+// usage / rate-limit events). Pure and exported so the parsing is unit-testable.
+export type StreamLine = { kind: "delta"; text: string } | { kind: "result"; envelope: ClaudeEnvelope } | null;
+
+export function parseStreamLine(line: string): StreamLine {
+  let ev: {
+    type?: string;
+    event?: { type?: string; delta?: { type?: string; text?: string } };
+    result?: string;
+    is_error?: boolean;
+    subtype?: string;
+  };
+  try {
+    ev = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (ev.type === "stream_event") {
+    const e = ev.event;
+    if (e?.type === "content_block_delta" && e.delta?.type === "text_delta" && typeof e.delta.text === "string") {
+      return { kind: "delta", text: e.delta.text };
+    }
+    return null;
+  }
+  if (ev.type === "result") return { kind: "result", envelope: { result: ev.result, is_error: ev.is_error, subtype: ev.subtype } };
+  return null;
+}
+
 export interface SubscriptionOptions {
   bin?: string;                                  // 默认 "claude"(依赖 PATH)
   model?: { fast: string; smart: string };
   runner?: Runner;
+  streamRunner?: StreamRunner;
 }
 
 export class SubscriptionBackend implements LlmBackend {
@@ -72,6 +169,7 @@ export class SubscriptionBackend implements LlmBackend {
   private bin: string;
   private model: { fast: string; smart: string };
   private runner: Runner;
+  private streamRunner: StreamRunner;
 
   constructor(opts: SubscriptionOptions = {}) {
     // Same resolution as the executor: CLAUDE_BIN → ~/.local/bin/claude → PATH. The launchd
@@ -79,13 +177,14 @@ export class SubscriptionBackend implements LlmBackend {
     this.bin = opts.bin ?? resolveClaudeBin();
     this.model = opts.model ?? { fast: "claude-haiku-4-5-20251001", smart: "claude-sonnet-5" };
     this.runner = opts.runner ?? defaultRunner;
+    this.streamRunner = opts.streamRunner ?? defaultStreamRunner;
   }
 
-  async complete(req: LlmRequest): Promise<LlmResult> {
+  private args(req: LlmRequest, output: "json" | "stream-json"): string[] {
     const args = [
       "-p",
       "--output-format",
-      "json",
+      output,
       "--no-session-persistence",
       "--model",
       req.tier === "smart" ? this.model.smart : this.model.fast,
@@ -94,9 +193,19 @@ export class SubscriptionBackend implements LlmBackend {
       // entries and spawn both, six at a time during a matching pass).
       "--strict-mcp-config",
     ];
-    if (req.system) args.push("--append-system-prompt", req.system);
+    if (output === "stream-json") args.push("--verbose", "--include-partial-messages");
+    if (req.bare) {
+      // Bare mode (LlmRequest.bare): our system prompt is the whole system prompt, no built-in
+      // tools, and no settings / CLAUDE.md / skills from the user or the working directory.
+      args.push("--system-prompt", req.system ?? "", "--tools", "", "--setting-sources", "");
+    } else if (req.system) {
+      args.push("--append-system-prompt", req.system);
+    }
+    return args;
+  }
 
-    const { stdout, stderr, exitCode } = await this.runner(this.bin, args, req.prompt);
+  async complete(req: LlmRequest): Promise<LlmResult> {
+    const { stdout, stderr, exitCode } = await this.runner(this.bin, this.args(req, "json"), req.prompt);
     if (exitCode !== 0) {
       throw new Error(`subscription backend: claude exited ${exitCode}: ${stderr.slice(0, 300)}`);
     }
@@ -106,11 +215,39 @@ export class SubscriptionBackend implements LlmBackend {
     } catch {
       throw new Error(`subscription backend: could not parse claude envelope: ${stdout.slice(0, 200)}`);
     }
+    return this.fromEnvelope(env, stdout);
+  }
+
+  async stream(req: LlmRequest, onDelta: (text: string) => void): Promise<LlmResult> {
+    let envelope: ClaudeEnvelope | null = null;
+    let streamed = "";
+    const { stderr, exitCode } = await this.streamRunner(this.bin, this.args(req, "stream-json"), req.prompt, (line) => {
+      const parsed = parseStreamLine(line);
+      if (!parsed) return;
+      if (parsed.kind === "delta") {
+        streamed += parsed.text;
+        onDelta(parsed.text);
+      } else {
+        envelope = parsed.envelope;
+      }
+    });
+    if (exitCode !== 0) {
+      throw new Error(`subscription backend: claude exited ${exitCode}: ${stderr.slice(0, 300)}`);
+    }
+    if (!envelope) {
+      // The CLI ended without its result line (killed mid-way); the streamed text is all we have.
+      if (streamed) return { text: streamed, backend: this.name };
+      throw new Error(`subscription backend: stream ended without a result: ${stderr.slice(0, 200)}`);
+    }
+    return this.fromEnvelope(envelope, streamed);
+  }
+
+  private fromEnvelope(env: ClaudeEnvelope, raw: string): LlmResult {
     if (env.is_error) {
       throw new Error(`subscription backend: claude reported error: ${String(env.result).slice(0, 300)}`);
     }
     if (typeof env.result !== "string") {
-      throw new Error(`subscription backend: envelope missing result field: ${stdout.slice(0, 200)}`);
+      throw new Error(`subscription backend: envelope missing result field: ${raw.slice(0, 200)}`);
     }
     return { text: env.result, backend: this.name, raw: env };
   }
