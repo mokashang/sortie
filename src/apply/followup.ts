@@ -1,6 +1,7 @@
 import { DB, logEvent } from "@/lib/db";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
 import { manualItem, parkWithItems } from "@/apply/queue";
+import { isAttendedSessionReachable } from "@/executor/attended";
 
 // What a resolved 待处理 card turns into (2026-09-17). The user answered / uploaded / logged in /
 // clicked 「让助手再试一次」, so the job must be filled next — and "next" has to mean something even
@@ -19,6 +20,8 @@ export interface FollowupDeps {
   lastRunChannel?: typeof lastRunChannel;
   startExecutor?: typeof startExecutor;
   logDir?: string;
+  // The long-lived attended session is alive and this process can type into it (tests fake it).
+  sessionReachable?: () => boolean;
 }
 
 export interface FollowupResult {
@@ -84,13 +87,26 @@ export function queueTargetedRun(
   }
 }
 
-// Is the run that took this application still running? Only then can its session act on an
-// answer in place (the tab is that session's own): answerInfo keeps the row 'prepared' for it.
-// Any other case — the run ended, was reaped, or the row was never taken — means nobody is on
-// the form, whatever other run of the account happens to be alive. (Before 2026-09-17 the check
-// was "any apply run of the account is running": Commure (1747881) and Neighbor (620336) were
-// answered on 2026-09-14 while an unrelated targeted run was on, flipped to 'prepared' for a
-// session that had died hours earlier, and sat invisible for three days.)
+// Can the session that asked still act on an answer in the tab it kept open? Two ways yes: the
+// run that took the job is still running (a desktop-App session mid-run, polling per protocol),
+// or the long-lived attended session is alive and reachable — it stops at its prompt with its
+// tabs open after each run, so a finished run does not mean the form is gone; the App types
+// `[Sortie] answered job` into it and it fills the answers where it left off. Only when neither
+// holds (session exited, server restarted, row never taken) is nobody on the form, and the job
+// becomes a targeted run that fills it afresh. (Before 2026-09-17 the check was "any apply run
+// of the account is running": Commure (1747881) and Neighbor (620336) were answered on
+// 2026-09-14 while an unrelated targeted run was on, flipped to 'prepared' for a session that had
+// died hours earlier, and sat invisible for three days.)
+export function askerCanContinue(db: DB, userId: string, jobId: number, deps: FollowupDeps = {}): boolean {
+  if (askingRunAlive(db, userId, jobId)) return true;
+  try {
+    return (deps.sessionReachable ?? (() => isAttendedSessionReachable(db)))();
+  } catch {
+    return false;
+  }
+}
+
+// Is the run that took this application still running?
 export function askingRunAlive(db: DB, userId: string, jobId: number): boolean {
   const row = db
     .prepare(
@@ -112,23 +128,36 @@ export interface ReclaimResult {
   followup: FollowupResult | null;
 }
 
-// Rows at 'prepared' whose run is over (or that never had one, 30 minutes on) were taken and never reported —
-// the session crashed, skipped them without saying, or the row was flipped to 'prepared' for a
-// run that no longer existed. Left alone they are invisible: not a card, not in the queue, not
-// in any run's plan (takeNextApplication reclaims them after 30 minutes, but only when something
-// asks it for a job). Run from the dispatcher tick and at every run's end: back to 'matched',
-// and the ones carrying the user's answers become a targeted run — once. If the run that dropped
-// them was already targeted at them, they become a card instead (让助手再试一次), so no loop.
+// Rows at 'prepared' that nobody is working on were taken and never reported — the session
+// crashed, skipped them without saying, or was told about an answer and never filled it. Left
+// alone they are invisible: not a card, not in the queue, not in any run's plan
+// (takeNextApplication reclaims them after 30 minutes, but only when something asks it for a
+// job). Run from the dispatcher tick and at every run's end: back to 'matched', and the ones
+// carrying the user's answers become a targeted run — once. If the run that dropped them was
+// already targeted at them, they become a card instead (让助手再试一次), so no loop.
+//
+// "Nobody working on it": with no reachable attended session, any row whose run is over (or that
+// never had one and is 30 minutes old). While a session is alive its tabs may still hold the
+// form — a finished run does not mean the form is gone — so its rows get 30 minutes from the
+// last change (the answer being handed to it) before they count as dropped.
 export function reclaimStrandedPrepared(db: DB, userId: string, deps: FollowupDeps = {}): ReclaimResult {
   const result: ReclaimResult = { reclaimed: [], requeued: [], parked: [], followup: null };
   try {
+    let reachable = false;
+    try {
+      reachable = (deps.sessionReachable ?? (() => isAttendedSessionReachable(db)))();
+    } catch {
+      reachable = false;
+    }
+    const stale = reachable
+      ? `a.updated_at < datetime('now', '-30 minutes') AND (a.run_id IS NULL OR r.id IS NULL OR r.status NOT IN ('running','queued','paused'))`
+      : `((a.run_id IS NULL AND a.updated_at < datetime('now', '-30 minutes'))
+             OR (a.run_id IS NOT NULL AND (r.id IS NULL OR r.status NOT IN ('running','queued','paused'))))`;
     const rows = db
       .prepare(
         `SELECT a.job_id, a.run_id, a.info_answers, r.status AS run_status, r.options AS run_options
          FROM applications a LEFT JOIN executor_runs r ON r.id = a.run_id
-         WHERE a.user_id = ? AND a.status = 'prepared'
-           AND ((a.run_id IS NULL AND a.updated_at < datetime('now', '-30 minutes'))
-             OR (a.run_id IS NOT NULL AND (r.id IS NULL OR r.status NOT IN ('running','queued','paused'))))`
+         WHERE a.user_id = ? AND a.status = 'prepared' AND ${stale}`
       )
       .all(userId) as { job_id: number; run_id: number | null; info_answers: string | null; run_status: string | null; run_options: string | null }[];
     if (rows.length === 0) return result;

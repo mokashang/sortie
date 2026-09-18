@@ -5,7 +5,7 @@ import path from "path";
 import { openDb, DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
 import { startExecutor, claimNextRun, finishRun } from "@/executor/runner";
-import { queueTargetedRun, askingRunAlive, reclaimStrandedPrepared } from "@/apply/followup";
+import { queueTargetedRun, askingRunAlive, askerCanContinue, reclaimStrandedPrepared } from "@/apply/followup";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
 import { pendingInfo } from "@/apply/info";
 
@@ -113,7 +113,33 @@ describe("askingRunAlive", () => {
   });
 });
 
+describe("askerCanContinue", () => {
+  it("is true while the attended session is alive even after its run finished — the tab is still open", () => {
+    const { db, logDir } = openTestDb();
+    const run = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 1, mode: "direct" }] }, { logDir }, "user_chrome");
+    claimNextRun(db, U, "user_chrome");
+    const jobId = seedJob(db, "needs_info", { runId: run.id });
+    finishRun(db, U, run.id, "done", "one form waiting on the user");
+    expect(askerCanContinue(db, U, jobId, { sessionReachable: () => true })).toBe(true);
+    expect(askerCanContinue(db, U, jobId, { sessionReachable: () => false })).toBe(false);
+  });
+});
+
 describe("reclaimStrandedPrepared", () => {
+  it("with the session alive, a row it was handed keeps its form for 30 minutes before it counts as dropped", () => {
+    const { db, logDir } = openTestDb();
+    const run = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 1, mode: "direct" }] }, { logDir }, "user_chrome");
+    claimNextRun(db, U, "user_chrome");
+    finishRun(db, U, run.id, "done");
+    const handed = seedJob(db, "prepared", { runId: run.id, infoAnswers: { gpa: "3.3" } });
+    expect(reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => true }).reclaimed).toEqual([]);
+    expect(app(db, handed).status).toBe("prepared");
+    // Session gone: dropped right away, and re-queued with its answers.
+    const r = reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false });
+    expect(r.reclaimed).toEqual([handed]);
+    expect(r.requeued).toEqual([handed]);
+  });
+
   it("returns rows of a dead run to the queue and requeues the answered ones as one targeted run", () => {
     const { db, logDir } = openTestDb();
     const dead = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 5, mode: "direct" }] }, { logDir }, "user_chrome");
@@ -122,7 +148,7 @@ describe("reclaimStrandedPrepared", () => {
     const answered = seedJob(db, "prepared", { runId: dead.id, infoAnswers: { gpa: "3.3" } });
     const answered2 = seedJob(db, "prepared", { runId: dead.id, infoAnswers: { transcript: "/x.pdf" } });
     const plain = seedJob(db, "prepared", { runId: dead.id });
-    const r = reclaimStrandedPrepared(db, U, { logDir });
+    const r = reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false });
     expect(r.reclaimed.sort()).toEqual([answered, answered2, plain].sort());
     expect(r.requeued.sort()).toEqual([answered, answered2].sort());
     expect(r.parked).toEqual([]);
@@ -132,7 +158,7 @@ describe("reclaimStrandedPrepared", () => {
     expect(r.followup?.autoStarted).toBe(true);
     expect(JSON.parse(runRow(db, r.followup!.runId!).options)).toEqual({ jobIds: [answered, answered2].sort((a, b) => a - b), mode: "direct" });
     // Idempotent: nothing left to reclaim, nothing queued twice.
-    expect(reclaimStrandedPrepared(db, U, { logDir }).reclaimed).toEqual([]);
+    expect(reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false }).reclaimed).toEqual([]);
   });
 
   it("leaves rows of a running run alone, and fresh rows with no run", () => {
@@ -141,7 +167,7 @@ describe("reclaimStrandedPrepared", () => {
     claimNextRun(db, U, "user_chrome");
     const mine = seedJob(db, "prepared", { runId: live.id, infoAnswers: { gpa: "3.3" } });
     const fresh = seedJob(db, "prepared", { runId: null });
-    expect(reclaimStrandedPrepared(db, U, { logDir }).reclaimed).toEqual([]);
+    expect(reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false }).reclaimed).toEqual([]);
     expect(app(db, mine).status).toBe("prepared");
     expect(app(db, fresh).status).toBe("prepared");
     // A run-less row is only stranded once it is old (the updated_at trigger resets any UPDATE,
@@ -150,7 +176,7 @@ describe("reclaimStrandedPrepared", () => {
       .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, source) VALUES (?,?,?,?,?)")
       .run("fp-old", "Acme", "SWE", "https://boards.greenhouse.io/acme/jobs/2", "manual").lastInsertRowid as number;
     db.prepare("INSERT INTO applications (job_id, status, updated_at) VALUES (?, 'prepared', '2020-01-01 00:00:00')").run(oldJob);
-    expect(reclaimStrandedPrepared(db, U, { logDir }).reclaimed).toEqual([oldJob]);
+    expect(reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false }).reclaimed).toEqual([oldJob]);
   });
 
   it("an answered row a targeted run already dropped becomes a card, not another silent retry", () => {
@@ -160,7 +186,7 @@ describe("reclaimStrandedPrepared", () => {
     claimNextRun(db, U, "user_chrome");
     db.prepare("UPDATE applications SET status = 'prepared', run_id = ? WHERE job_id = ?").run(targeted.id, jobId);
     finishRun(db, U, targeted.id, "done");
-    const r = reclaimStrandedPrepared(db, U, { logDir });
+    const r = reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false });
     expect(r).toMatchObject({ reclaimed: [jobId], requeued: [], parked: [jobId], followup: null });
     const cards = pendingInfo(db, U);
     expect(cards.map((c) => c.jobId)).toEqual([jobId]);

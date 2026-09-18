@@ -369,14 +369,18 @@ export function notifyAttendedSession(db: DB, line: string, deps: AttendedDeps =
   return (deps.write ?? writeToAttended)(rec.pid, line);
 }
 
-// Anything the session is still needed for: a run of its channel running or queued, or a filled
-// application the user has not decided on (the tab for it must stay open).
+// Anything the session is still needed for: a run of its channel running or queued, a filled
+// application the user has not decided on, a form waiting on the user's answers (needs_info),
+// or one it was just handed the answers for (prepared) — each of those is an open tab only this
+// session can see, so it must not be reaped while any exists.
 function attendedBusy(db: DB, userId: string): boolean {
   const runs = db
     .prepare("SELECT COUNT(*) n FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status IN ('running','queued')")
     .get(userId) as { n: number };
   if (runs.n > 0) return true;
-  const waiting = db.prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status = 'awaiting_confirm'").get(userId) as { n: number };
+  const waiting = db
+    .prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status IN ('awaiting_confirm','needs_info','prepared')")
+    .get(userId) as { n: number };
   return waiting.n > 0;
 }
 

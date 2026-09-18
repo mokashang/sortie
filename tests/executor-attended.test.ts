@@ -171,7 +171,8 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     const jobId = db
       .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at) VALUES (?,?,?,?,?,?,?)")
       .run("fp-1", "Acme", "SWE", "https://acme.example/apply", "greenhouse", "manual", "2026-01-01 00:00:00").lastInsertRowid as number;
-    db.prepare("INSERT INTO applications (job_id, status) VALUES (?, 'awaiting_confirm')").run(jobId);
+    // A form waiting on the user's answers is an open tab too: it keeps the session just the same.
+    db.prepare("INSERT INTO applications (job_id, status) VALUES (?, 'needs_info')").run(jobId);
     const typed: string[] = [];
     let clock = new Date();
     const deps = {
@@ -199,6 +200,10 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     clock = new Date(clock.getTime() + 3 * 24 * 3600_000);
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
     expect(currentSpawn(db)?.idleSince ?? null).toBeNull();
+
+    db.prepare("UPDATE applications SET status = 'awaiting_confirm' WHERE job_id = ?").run(jobId);
+    clock = new Date(clock.getTime() + 3 * 24 * 3600_000);
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
 
     // The App types the approval straight into the session.
     expect(notifyAttendedSession(db, "[Sortie] approved job 1", deps)).toBe(true);
