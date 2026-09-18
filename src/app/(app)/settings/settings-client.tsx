@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Bell, Bot, Database, ExternalLink, Globe, Languages, Monitor, Moon, Sun } from "lucide-react";
+import { Bell, Bot, Database, ExternalLink, Globe, Languages, Monitor, Moon, Sun, Zap } from "lucide-react";
 import { postJson, errorMessage } from "@/app/lib/api";
 import { getChannel, getTheme, setChannel, setTheme, type Channel, type Theme } from "@/app/lib/settings";
 import { relativeTime } from "@/app/lib/time";
@@ -26,12 +26,14 @@ export function SettingsClient({
   account,
   auth,
   ai,
+  autoSubmit: autoSubmitInitial,
 }: {
   ntfyConfigured: boolean;
   lastTick: LastTick | null;
   account: AccountInfo;
   auth: AuthPublicConfig;
   ai: { provider: AiProvider; providers: AiProviderStatus[] };
+  autoSubmit: boolean;
 }) {
   const m = useMessages();
   const lang = useLang();
@@ -41,6 +43,8 @@ export function SettingsClient({
   const [opening, setOpening] = useState(false);
   const [aiProvider, setAiProvider] = useState<AiProvider>(ai.provider);
   const [savingAi, setSavingAi] = useState(false);
+  const [autoSubmit, setAutoSubmit] = useState<boolean>(autoSubmitInitial);
+  const [savingAutoSubmit, setSavingAutoSubmit] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -96,6 +100,23 @@ export function SettingsClient({
     }
   }
 
+  async function chooseAutoSubmit(value: string) {
+    const next = value === "auto";
+    if (next === autoSubmit || savingAutoSubmit) return;
+    const previous = autoSubmit;
+    setAutoSubmit(next);
+    setSavingAutoSubmit(true);
+    try {
+      await postJson("/api/settings/auto-submit", { enabled: next });
+      toast({ title: next ? m.settings.autoSubmit.toastOn : m.settings.autoSubmit.toastOff, tone: "good" });
+    } catch (e) {
+      setAutoSubmit(previous);
+      toast({ title: m.settings.autoSubmit.saveFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setSavingAutoSubmit(false);
+    }
+  }
+
   return (
     <>
       <Section id="account" title={m.settings.account.title} description={m.settings.account.description}>
@@ -131,6 +152,32 @@ export function SettingsClient({
               <span className="muted xs">{m.settings.channel.openProfileHint}</span>
             </div>
           </RadioCard>
+        </div>
+      </Section>
+
+      <Section id="auto-submit" title={m.settings.autoSubmit.title} description={m.settings.autoSubmit.description}>
+        <div className="col gap-3" style={{ maxWidth: 640 }} aria-busy={savingAutoSubmit}>
+          <RadioCard
+            name="auto-submit"
+            value="manual"
+            checked={!autoSubmit}
+            onChange={(value) => void chooseAutoSubmit(value)}
+            title={m.settings.autoSubmit.manual}
+            description={m.settings.autoSubmit.manualDescription}
+          />
+          <RadioCard
+            name="auto-submit"
+            value="auto"
+            checked={autoSubmit}
+            onChange={(value) => void chooseAutoSubmit(value)}
+            title={
+              <span className="row gap-1">
+                <Zap size={15} aria-hidden /> {m.settings.autoSubmit.auto}
+                {autoSubmit ? <Chip tone="good">{m.settings.autoSubmit.on}</Chip> : null}
+              </span>
+            }
+            description={m.settings.autoSubmit.autoDescription}
+          />
         </div>
       </Section>
 

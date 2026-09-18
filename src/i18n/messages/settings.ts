@@ -157,6 +157,19 @@ export const settings = defineMessages({
         },
       },
     },
+    autoSubmit: {
+      title: "自动投递",
+      description:
+        "开着的时候助手不再停下来等你:填好的申请直接提交,表单里缺的答案由 App 按你的档案、标准答案和经历自行作答。只有登录、创建账号、验证码、缺少的文件和必须亲自完成的题目才会留一张待处理卡。发给人的内推消息不受影响,仍然要你批准。",
+      manual: "填好后等我确认",
+      manualDescription: "每份申请都在「待确认」卡上等你看一眼再提交;缺答案就出一张待处理卡。",
+      auto: "全自动:填好直接提交",
+      autoDescription: "你忙的时候投递也不停。自动作答的内容会存进档案的「标准答案」,随时可以改;每次自动提交都会发一条通知。",
+      on: "已开启",
+      toastOn: "之后填好的申请会直接提交,缺的答案由 App 自行作答",
+      toastOff: "之后填好的申请会先等你确认",
+      saveFailed: "保存失败",
+    },
     language: {
       title: "语言",
       description: "界面、通知和提示的语言。",
@@ -353,6 +366,20 @@ export const settings = defineMessages({
           description: "Keeps the original Claude CLI path available for a gradual migration or quick rollback.",
         },
       },
+    },
+    autoSubmit: {
+      title: "Auto-apply",
+      description:
+        "With this on, the assistant no longer stops for you: a filled application is submitted right away, and any answer missing from the form is written by the App from your profile, standard answers and experience. Only signing in, creating an account, a captcha, a missing file or a step you must do yourself still leaves a to-do card. Referral messages to people are unaffected and still wait for your approval.",
+      manual: "Wait for my confirmation",
+      manualDescription: "Every filled application waits on a Confirm card until you look at it; a missing answer becomes a to-do card.",
+      auto: "Fully automatic: submit as soon as it is filled",
+      autoDescription:
+        "Applying keeps going while you are busy. Auto-written answers are saved to your profile's standard answers, where you can edit them; every auto-submission sends a notification.",
+      on: "On",
+      toastOn: "Filled applications will now be submitted right away, with missing answers written by the App",
+      toastOff: "Filled applications will wait for your confirmation again",
+      saveFailed: "Could not save",
     },
     language: {
       title: "Language",

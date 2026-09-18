@@ -7,6 +7,7 @@ import { PageHeader } from "@/app/components/ui";
 import { getMessages } from "@/i18n/server";
 import { SettingsClient, type LastTick } from "./settings-client";
 import { getAiProvider, providerStatuses } from "@/ai/config";
+import { getAutoSubmit } from "@/apply/auto-submit";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,7 @@ export default async function SettingsPage() {
         account={{ id: user.id, name: user.name, email: user.email, emailVerified: user.emailVerified, role: user.role }}
         auth={auth}
         ai={{ provider: getAiProvider(getDb()), providers: providerStatuses() }}
+        autoSubmit={getAutoSubmit(getDb(), user.id)}
       />
     </>
   );

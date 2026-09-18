@@ -362,6 +362,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(p).toContain("list_connected_browsers");
     expect(p).toContain("claim-next");
     expect(p).toContain("--data-binary @/tmp/sortie-body.json");
+    // 自动投递: the session acts on the report response instead of waiting for a terminal line.
+    expect(p).toContain("autoApproved: true");
+    expect(p).toContain("autoAnswered: true");
     expect(buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 1, prompt: 'say "hi" $x' })).toContain('say \\"hi\\" \\$x');
   });
 
