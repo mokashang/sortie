@@ -1486,6 +1486,18 @@ details > summary:hover {
   }
 }
 
+.chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: 8px;
+}
+
+.chat-actions .chip {
+  gap: 5px;
+  text-decoration: none;
+}
+
 .chat-meta {
   margin-top: 6px;
   font-size: var(--t-xs);

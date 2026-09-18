@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Eraser, MessageCircleQuestionMark, SendHorizontal } from "lucide-react";
+import { Eraser, MessageCircleQuestionMark, Play, PlusCircle, SendHorizontal } from "lucide-react";
+import type { ToolEvent } from "@/assistant/tools";
 import { cx } from "@/app/lib/cx";
 import { parseMarkdown, type Span } from "@/app/lib/chat-markdown";
 import { Button, Drawer, EmptyState, IconButton, useToast } from "@/app/components/ui";
@@ -21,6 +22,8 @@ export interface ChatTurn {
   status: "done" | "streaming" | "error";
   backend?: string;
   error?: string;
+  // Tools the turn ran (an application started, a posting added) — shown as chips under the answer.
+  actions?: ToolEvent[];
 }
 
 interface ChatContextValue {
@@ -67,6 +70,7 @@ function saveTurns(turns: ChatTurn[]): void {
 async function streamAnswer(
   history: { role: "user" | "assistant"; content: string }[],
   onDelta: (text: string) => void,
+  onAction: (event: ToolEvent) => void,
   signal: AbortSignal
 ): Promise<{ text: string; backend?: string }> {
   const r = await fetch("/api/assistant/chat", {
@@ -89,7 +93,7 @@ async function streamAnswer(
   let done = false;
   const handle = (line: string) => {
     if (!line.trim()) return;
-    let ev: { delta?: string; done?: boolean; text?: string; backend?: string; error?: string };
+    let ev: { delta?: string; done?: boolean; text?: string; backend?: string; error?: string; action?: ToolEvent };
     try {
       ev = JSON.parse(line);
     } catch {
@@ -98,6 +102,8 @@ async function streamAnswer(
     if (typeof ev.delta === "string") {
       text += ev.delta;
       onDelta(text);
+    } else if (ev.action) {
+      onAction(ev.action);
     } else if (ev.done) {
       if (typeof ev.text === "string" && ev.text) text = ev.text;
       backend = ev.backend;
@@ -145,6 +151,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const r = await streamAnswer(
         history,
         (text) => setTurns((cur) => cur.map((t) => (t.id === id ? { ...t, content: text } : t))),
+        (event) => setTurns((cur) => cur.map((t) => (t.id === id ? { ...t, actions: [...(t.actions ?? []), event] } : t))),
         ctl.signal
       );
       setTurns((cur) => cur.map((t) => (t.id === id ? { ...t, content: r.text, status: "done", backend: r.backend } : t)));
@@ -400,6 +407,23 @@ export function ChatDrawer() {
                 ) : (
                   <p className="muted chat-thinking">{m.chat.thinking}</p>
                 )}
+                {t.role === "assistant" && t.actions?.some((a) => a.ok && (a.tool === "apply" || a.tool === "add_job")) ? (
+                  <div className="chat-actions">
+                    {t.actions
+                      .filter((a) => a.ok && (a.tool === "apply" || a.tool === "add_job"))
+                      .map((a, i) =>
+                        a.tool === "apply" && a.runId ? (
+                          <Link key={i} href="/apply" className="chip chip-accent" onClick={close}>
+                            <Play size={12} aria-hidden /> {m.chat.actionApply(a.runId)} · {a.company}
+                          </Link>
+                        ) : (
+                          <span key={i} className="chip">
+                            <PlusCircle size={12} aria-hidden /> {m.chat.actionAdded} · {a.company} {a.title}
+                          </span>
+                        )
+                      )}
+                  </div>
+                ) : null}
                 {t.role === "assistant" && t.status === "done" && t.backend ? <div className="chat-meta">{m.chat.poweredBy(backendName(t.backend))}</div> : null}
               </div>
             </li>

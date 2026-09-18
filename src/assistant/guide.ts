@@ -149,6 +149,17 @@ conversations. The user decides: "Got a referral" (then the application is fille
 referral link / code), "Apply directly", or "Cast again" (different people). If nobody at the
 company can be contacted, the card says so and the job goes back to direct.
 
+## What the chat itself can do
+
+Besides answering, the chat can (1) look a posting up in the library, (2) start a direct
+application to one posting the user names — it queues an "apply" task for that job exactly as the
+Jobs page would, the assistant fills it in the user's Chrome, and it ends on a To confirm card
+(or is submitted at once when auto-apply is on), after which it shows under Submitted today and in
+History — and (3) add a posting the user pastes a link to, then apply to it. A posting that was
+archived (no sponsorship, PhD only, low score) or is paused on a to-do card is not applied to
+silently: the chat says why and applies only if the user still wants it. It cannot send messages,
+plan a batch, approve, stop, or change settings.
+
 ## Notifications
 
 Desktop notifications in the browser; phone push through ntfy when configured in Settings. Sent

@@ -3,11 +3,14 @@ import { getDb } from "@/lib/db";
 import { withUser, failResponse, requestLang } from "@/lib/actor";
 import { answerChat, ChatInputError, normalizeMessages } from "@/assistant/chat";
 import { chatBackend } from "@/assistant/provider";
+import { getBackend } from "@/llm/registry";
 
 // POST /api/assistant/chat {messages:[{role,content}]} — one turn of the in-app 问助手 chat
 // (spec 2026-09-18 §6). Streams newline-delimited JSON: {"delta":"…"} as the answer arrives,
+// {"action":{…}} for each tool the turn ran (a search, an application started, a posting added),
 // then {"done":true,"text":"…","backend":"…"}, or {"error":"…"} if the model call failed. The
-// snapshot is built for the acting account only; the model gets no tools (LlmRequest.bare).
+// snapshot is built for the acting account only; the model gets no tools of its own
+// (LlmRequest.bare) — the three chat tools run here, on the server, as this account.
 export const POST = withUser(async (req, { userId }) => {
   let input;
   try {
@@ -25,7 +28,13 @@ export const POST = withUser(async (req, { userId }) => {
     async start(controller) {
       const send = (obj: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
       try {
-        const r = await answerChat(db, userId, lang, input, { backend, onDelta: (text) => send({ delta: text }) });
+        const r = await answerChat(db, userId, lang, input, {
+          backend,
+          onDelta: (text) => send({ delta: text }),
+          onEvent: (event) => send({ action: event }),
+          // Scoring a posting the user asked for uses the global AI provider, like the pipeline.
+          toolDeps: { backend: getBackend() },
+        });
         send({ done: true, text: r.text, backend: r.backend });
       } catch (e) {
         send({ error: e instanceof Error ? e.message : String(e) });

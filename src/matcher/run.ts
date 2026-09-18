@@ -28,6 +28,9 @@ export interface MatchOptions {
   // Archives only on an eligibility hard-rule failure, never purely for a low score, and never
   // for a pinned row. Default false.
   rescoreMatched?: boolean;
+  // Only these jobs (still subject to the "no match row yet" gate above): the 问助手 chat scores
+  // one posting the user asked to apply to right away instead of waiting for the hourly pass.
+  jobIds?: number[];
 }
 
 export interface MatchSummary {
@@ -61,8 +64,9 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
   // The applications row for (user, job) always exists (backfilled at sign-up / written by the
   // scanner), so the inner JOIN is what scopes the pass to this account.
   const rescoreClause = opts.rescoreArchived ? " OR a.status = 'archived'" : "";
-  const sinceClause = opts.since ? " AND j.created_at >= ?" : "";
-  const sinceParams = opts.since ? [opts.since] : [];
+  const ids = (opts.jobIds ?? []).filter((n) => Number.isInteger(n) && n > 0);
+  const sinceClause = (opts.since ? " AND j.created_at >= ?" : "") + (ids.length ? ` AND j.id IN (${ids.map(() => "?").join(",")})` : "");
+  const sinceParams: unknown[] = [...(opts.since ? [opts.since] : []), ...ids];
   const rows = (
     opts.rescoreMatched
       ? db.prepare(
