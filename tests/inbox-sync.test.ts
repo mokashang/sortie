@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
-import { connectFromGoogleAccount, disconnectMailbox, inboxStatus, resetInboxCachesForTests, syncAllMailboxes, syncMailbox, InboxConnectError } from "@/inbox/sync";
+import { connectFromGoogleAccount, describeSyncError, disconnectMailbox, inboxStatus, resetInboxCachesForTests, syncAllMailboxes, syncMailbox, InboxConnectError } from "@/inbox/sync";
 import { GMAIL_SCOPE } from "@/inbox/scope";
 import { getMailAccount, upsertMailAccount, recentMailEvents } from "@/inbox/store";
 import type { LlmBackend } from "@/llm/types";
@@ -151,6 +151,32 @@ describe("inbox/sync syncMailbox", () => {
     expect(s.error).toMatch(/^reconnect needed/);
     expect(getMailAccount(db, U)!.lastError).toMatch(/^reconnect needed/);
     expect(await syncMailbox(db, "nobody", { fetcher, log: () => {} })).toMatchObject({ error: "not connected" });
+  });
+
+  it("turns Google's 'API not enabled' 403 into one sentence with the enable link", async () => {
+    const db = openDb(":memory:");
+    seedOwner(db);
+    seedJob(db, "Datadog", "SWE");
+    upsertMailAccount(db, { userId: U, email: null, refreshToken: "rt", scope: GMAIL_SCOPE });
+    const body = {
+      error: {
+        code: 403,
+        message:
+          "Gmail API has not been used in project 1070513376946 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=1070513376946 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry.",
+        status: "PERMISSION_DENIED",
+      },
+    };
+    const fetcher = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), { status: 200 });
+      return new Response(JSON.stringify(body, null, 2), { status: 403 });
+    }) as typeof fetch;
+    const s = await syncMailbox(db, U, { fetcher, backend: fakeBackend(() => []), now: () => T0, log: () => {} });
+    expect(s.error).toBe(
+      "Gmail API is not enabled on the Google Cloud project — enable it at https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=1070513376946, then sync again"
+    );
+    expect(getMailAccount(db, U)!.lastError).toBe(s.error);
+    expect(describeSyncError(new Error("boom"))).toBe("boom");
   });
 
   it("syncAllMailboxes with dueOnly skips an account synced a moment ago", async () => {
