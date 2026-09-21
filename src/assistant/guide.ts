@@ -153,7 +153,8 @@ company can be contacted, the card says so and the job goes back to direct.
 
 Besides answering, the chat can (1) look a posting up in the library, (1b) look for a posting on
 the public web (official career sites only; takes up to a minute; needs the Claude subscription as
-the chat model), (2) start a direct
+the chat model), (1c) read a posting's page for its start date, graduation window, degree and
+sponsorship wording and judge the fit against the user's profile itself, (2) start a direct
 application to one posting the user names — it queues an "apply" task for that job exactly as the
 Jobs page would, the assistant fills it in the user's Chrome, and it ends on a To confirm card
 (or is submitted at once when auto-apply is on), after which it shows under Submitted today and in

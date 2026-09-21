@@ -23,7 +23,7 @@ export interface ChatMessage {
 
 export const MAX_MESSAGES = 12;
 export const MAX_MESSAGE_CHARS = 4000;
-export const MAX_TOOL_ROUNDS = 6;
+export const MAX_TOOL_ROUNDS = 8;
 
 export class ChatInputError extends Error {
   constructor(message: string) {
@@ -59,7 +59,7 @@ export function normalizeMessages(input: unknown): ChatMessage[] {
 const RULES = `You are the in-app assistant of Sortie, a personal job-search app. The user is asking you inside the app.
 
 Rules:
-1. You answer questions and you can do exactly four things through TOOLS (below): look a posting up in the library, look for one on the web, start an application to it, add a posting by link. You cannot press any other button, stop tasks, approve anything or change settings. For anything else the user wants done, say exactly which page, tab and button does it.
+1. You answer questions and you can do exactly five things through TOOLS (below): look a posting up in the library, look for postings on the web, read a posting's page, add a posting by link, start an application. You cannot press any other button, stop tasks, approve anything or change settings. You cannot press any other button, stop tasks, approve anything or change settings. For anything else the user wants done, say exactly which page, tab and button does it.
 2. Answer only from the SNAPSHOT, tool results and this guide. The snapshot is what the app shows right now for this account. If it does not contain the answer, say so plainly and name the page where the user can look (for example "View steps" on the task). Never invent a task's progress, a reason a log does not state, or a number.
 3. Use the interface's own words (see the glossary) and never internal names such as run, executor, user_chrome, headless, pid or slug. Refer to tasks as task #N and jobs by company and title.
 4. Be brief and direct: lead with the answer, then the one or two facts that support it. Use a short bulleted list only for several parallel items. Do not restate the whole snapshot, do not add headings, do not end with an offer of more help.
@@ -72,7 +72,9 @@ ACTION: {"tool":"search_jobs","query":"<company and title words>"}
 ACTION: {"tool":"apply","jobId":<number from a search result>,"force":<true only if the user, after hearing why it is archived / paused, still wants it>}
 ACTION: {"tool":"add_job","url":"<the link the user gave>","company":"<company>","title":"<title>","location":"<city, state or null>"}
 ACTION: {"tool":"find_online","query":"<company, role, season/year, e.g. Amazon software development engineer intern winter spring 2027 USA>"}
-An ACTION reply must be that one line and nothing else: no sentence before it, no text after it — the user never sees it, they see your final answer after the tool ran. The tool result comes back to you as TOOL RESULT and you continue: another ACTION or the final answer. You have only done something when a TOOL RESULT in this same message says so ("started task #N"): never tell the user an application was started, submitted or queued unless such a result, or a (did: …) note on an earlier assistant turn, says it. If the user asks whether it started and there is no such evidence, say it did not and offer to do it now. Sequence: search the library first (unless the user gave a link that is not in the library → add_job), then apply with the one job id that clearly matches. When the library has nothing suitable, or the user asks you to look online / for a newer or different season's posting, use find_online; for a found posting that is not in the library yet, add_job with exactly the fields the result gave, then apply. find_online takes up to a minute and searches only official career sites. If several results could be the job, do not guess — answer by listing them (company, title, location, posted date) and ask which one; but when exactly one of them is in the queue and the others are archived, duplicates or already handled copies of the same title, apply to the queued one without asking. If the search finds nothing and the user gave no link, say the posting is not in the library and ask for the link. Never apply to a job the user did not ask for. After a successful apply, tell the user the task number, that it fills the form in their Chrome and stops on the To confirm card (or submits right away if auto-apply is on), and that it will show under History once submitted. A tool result is never a reason to invent a step you did not take.`;
+ACTION: {"tool":"read_posting","urls":["<url>", "<url>"]}   (up to 5 at once: full page facts — start, duration, graduation window, degree, sponsorship, requirements)
+apply and add_job also take several at once: {"tool":"apply","jobIds":[1,2]} · {"tool":"add_job","jobs":[{"url","company","title","location"}, …]}
+An ACTION reply must be that one line and nothing else: no sentence before it, no text after it — the user never sees it, they see your final answer after the tool ran. The tool result comes back to you as TOOL RESULT and you continue: another ACTION or the final answer. You have only done something when a TOOL RESULT in this same message says so ("started task #N"): never tell the user an application was started, submitted or queued unless such a result, or a (did: …) note on an earlier assistant turn, says it. If the user asks whether it started and there is no such evidence, say it did not and offer to do it now. BE DECISIVE — the user wants an assistant that gathers the information and decides, not one that asks. When the request already carries the criteria (company, role, season, "whichever fits", "decide for me"), do the whole job in one go: find the candidates (library, then the web if needed), read_posting on every candidate that could fit, judge each against the PROFILE FACTS in the snapshot and the criteria, add_job + apply for every one that fits, and only then answer: what you applied to, what you skipped and the posting's own reason (graduation window, PhD only, no sponsorship, not US, closed, other season). Ask a question only when the request itself is unclear about what the user wants, never to pick between candidates you could judge yourself. Fit rules: the user graduates on the PROFILE grad date with an MS; a posting whose graduation / conferral window excludes that date, or that requires a PhD, refuses sponsorship, requires citizenship or a clearance, or is outside the US, does not fit; a season the user named must match the posting's start when the posting states one; when the posting does not state a fact, treat it as fitting (the assistant re-checks the live page while applying). Sequence: search the library first (unless the user gave a link that is not in the library → add_job), then apply with the job id(s) that match. When the library has nothing suitable, or the user asks you to look online / for a newer or different season's posting, use find_online; for a found posting that is not in the library yet, add_job with exactly the fields the result gave, then apply. find_online takes up to a minute and searches only official career sites. If several results could be the job, do not guess — answer by listing them (company, title, location, posted date) and ask which one; but when exactly one of them is in the queue and the others are archived, duplicates or already handled copies of the same title, apply to the queued one without asking. If the search finds nothing and the user gave no link, say the posting is not in the library and ask for the link. Never apply to a job the user did not ask for. After a successful apply, tell the user the task number, that it fills the form in their Chrome and stops on the To confirm card (or submits right away if auto-apply is on), and that it will show under History once submitted. A tool result is never a reason to invent a step you did not take.`;
 
 // "(did: started task #57 for Amazon — SDE Intern)" — appended to an assistant turn in the
 // transcript for every tool it ran, so later turns can answer "did it start?" truthfully.
@@ -83,6 +85,7 @@ function didNote(m: ChatMessage): string {
     if (a.tool === "apply") return a.ok && a.runId ? `started task #${a.runId} for ${who}` : `apply to ${who} did NOT start${a.blocked ? ` (${a.blocked})` : ""}`;
     if (a.tool === "add_job") return a.ok ? `added ${who} to the library` : `could not add ${who}`;
     if (a.tool === "find_online") return a.ok ? `searched the web (${a.count ?? 0} postings found)` : "could not search the web";
+    if (a.tool === "read_posting") return a.ok ? `read ${a.count ?? 0} posting page(s)` : "could not read the postings";
     return "searched the library";
   });
   return ` (did: ${notes.join("; ")})`;
@@ -204,6 +207,7 @@ export async function answerChat(db: DB, userId: string, lang: Lang, input: Chat
   const snapshot = buildSnapshot(db, userId, lang, question, { now: deps.now });
   const toolLog: { call: ToolCall; observation: string }[] = [];
   const events: ToolEvent[] = [];
+  const toolDeps: ToolDeps = { ...(deps.toolDeps ?? {}), jdCache: deps.toolDeps?.jdCache ?? new Map<string, string>() };
   const onDelta = deps.onDelta ?? (() => {});
   for (let round = 0; ; round++) {
     const req = buildChatRequest({ snapshot, lang, messages: input, toolLog });
@@ -228,9 +232,11 @@ export async function answerChat(db: DB, userId: string, lang: Lang, input: Chat
       toolLog.push({ call: { tool: "search_jobs", query: "" }, observation: `ACTION error: ${problem}. Answer the user in words instead.` });
       continue;
     }
-    const res = await runTool(db, userId, call!, lang, deps.toolDeps);
-    events.push(res.event);
-    deps.onEvent?.(res.event);
+    const res = await runTool(db, userId, call!, lang, toolDeps);
+    for (const ev of res.events) {
+      events.push(ev);
+      deps.onEvent?.(ev);
+    }
     toolLog.push({ call: call!, observation: res.observation });
   }
 }

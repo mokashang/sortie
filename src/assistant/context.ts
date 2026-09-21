@@ -11,6 +11,8 @@ import { sourcesSummary } from "@/scanner/sources-view";
 import { getAiProvider } from "@/ai/config";
 import { getAutoSubmit } from "@/apply/auto-submit";
 import { getUser } from "@/lib/users";
+import { tryLoadProfile } from "@/lib/profile";
+import { directionLabel } from "@/matcher/directions";
 import { describeRun } from "@/app/lib/describe-run";
 import { runStatusDisplay, runProgressText, runBreakdownText } from "@/app/lib/run-outcome";
 import { directionName, labelOf } from "@/app/lib/labels";
@@ -103,6 +105,26 @@ export function buildSnapshot(db: DB, userId: string, lang: Lang, question: stri
       ]),
     ].join("\n")
   );
+
+  // Profile facts the chat judges postings against (read_posting → fit). Never the contact details.
+  const profile = tryLoadProfile(db, userId);
+  if (profile) {
+    const tier1 = Object.entries(profile.directions)
+      .filter(([, t]) => t === 1)
+      .map(([slug]) => directionLabel(slug));
+    sections.push(
+      [
+        "## Profile facts (for judging whether a posting fits)",
+        bullet([
+          `school and degree: ${profile.school}, ${profile.degree}`,
+          `graduation (degree conferral): ${profile.grad_date}`,
+          `work authorization: ${profile.work_auth.status}; needs visa sponsorship: ${profile.work_auth.needs_sponsorship ? "yes" : "no"}`,
+          `targets: ${profile.targets.primary}${profile.targets.secondary ? ` (also ${profile.targets.secondary})` : ""} · US roles only`,
+          `top tracks: ${tier1.join(", ") || "(none marked tier 1)"}`,
+        ]),
+      ].join("\n")
+    );
+  }
 
   // Numbers
   const c = ov.counts;
