@@ -49,14 +49,26 @@ export interface ToolDeps {
 
 export const MAX_SEARCH_ROWS = 8;
 
-// Parses the single `ACTION: {...}` line the model may answer with. Null when the text is an
-// ordinary answer; throws on a malformed or unknown action so the loop can tell the model.
+// Where an `ACTION:` line starts in a model turn (at a line start), or -1. Models sometimes put
+// a sentence before the action line despite the rules (production 2026-09-20: "我就投这条…
+// ACTION: {…}"), so the action counts wherever the line is — the prose before it is dropped.
+export function actionIndex(text: string): number {
+  const m = text.match(/(^|\n)\s*ACTION:/);
+  return m ? (m.index ?? 0) + m[1].length : -1;
+}
+
+// Parses the `ACTION: {...}` line the model may answer with. Null when the text is an ordinary
+// answer; throws on a malformed or unknown action so the loop can tell the model.
 export function parseAction(text: string): ToolCall | null {
-  const m = text.trim().match(/^ACTION:\s*(\{[\s\S]*\})\s*$/);
-  if (!m) return null;
+  const at = actionIndex(text);
+  if (at < 0) return null;
+  const rest = text.slice(at).replace(/^\s*ACTION:\s*/, "");
+  const open = rest.indexOf("{");
+  const close = rest.lastIndexOf("}");
+  if (open < 0 || close < open) throw new Error("ACTION is not valid JSON");
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(m[1]);
+    raw = JSON.parse(rest.slice(open, close + 1));
   } catch {
     throw new Error("ACTION is not valid JSON");
   }

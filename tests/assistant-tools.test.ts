@@ -6,7 +6,7 @@ import { openDb, DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
 import { parseProfile, saveProfile } from "@/lib/profile";
 import { parseAction, searchJobs, applyToJob, addJob, runTool, type ToolDeps } from "@/assistant/tools";
-import { answerChat, deltaGate } from "@/assistant/chat";
+import { answerChat, buildChatRequest, deltaGate, normalizeMessages } from "@/assistant/chat";
 import type { LlmBackend, LlmRequest } from "@/llm/types";
 
 const U = "legacy";
@@ -65,6 +65,9 @@ describe("parseAction", () => {
     expect(parseAction('  ACTION: {"tool":"apply","jobId":12,"force":true}')).toEqual({ tool: "apply", jobId: 12, force: true });
     expect(parseAction('ACTION: {"tool":"add_job","url":"https://x.example/j","company":"X","title":"SWE"}')).toEqual({ tool: "add_job", url: "https://x.example/j", company: "X", title: "SWE", location: null });
     expect(parseAction("Task #5 is running.")).toBeNull();
+    // prose before the line (production 2026-09-20) still counts as the action
+    expect(parseAction('我就投这条还在队列里的 #5223957。\nACTION: {"tool":"apply","jobId":5223957,"force":false}')).toEqual({ tool: "apply", jobId: 5223957, force: false });
+    expect(parseAction('ACTION: {"tool":"apply","jobId":7}\n(then I will tell you)')).toEqual({ tool: "apply", jobId: 7, force: false });
     expect(() => parseAction('ACTION: {"tool":"delete_everything"}')).toThrow(/unknown tool/);
     expect(() => parseAction('ACTION: {"tool":"apply"}')).toThrow(/jobId/);
     expect(() => parseAction("ACTION: nope")).toBeNull;
@@ -189,6 +192,24 @@ describe("deltaGate", () => {
     g3.finish();
     expect(out3).toEqual(["A"]);
   });
+
+  it("streams prose before an ACTION line but never the line itself or anything after it", () => {
+    const out: string[] = [];
+    const g = deltaGate((t) => out.push(t));
+    g.push("我就投这条还在队列里的 #52。\nAC");
+    g.push("TION: {\"tool\":\"apply\",\"jobId\":52}\ntrailing");
+    g.finish();
+    expect(out).toEqual(["我就投这条还在队列里的 #52。\n"]);
+    expect(g.isAction()).toBe(true);
+
+    const out2: string[] = [];
+    const g2 = deltaGate((t) => out2.push(t));
+    g2.push("Line one\nA");
+    g2.push("nd line two");
+    g2.finish();
+    // "A" is held (it could become ACTION:) and released together with the rest of the line
+    expect(out2).toEqual(["Line one\n", "And line two"]);
+  });
 });
 
 describe("answerChat with tools", () => {
@@ -221,6 +242,40 @@ describe("answerChat with tools", () => {
     expect(r.events.map((e) => e.tool)).toEqual(["search_jobs", "apply"]);
     expect(r.events[1]).toMatchObject({ ok: true, jobId: id });
     expect(queuedRuns(db).length).toBe(1);
+  });
+
+  it("runs an action the model put after a sentence, and later turns see what was done", async () => {
+    const { db, deps } = setup();
+    const id = seedJob(db, "Amazon", "SDE Intern Summer 2027");
+    const prompts: string[] = [];
+    const backend: LlmBackend = {
+      name: "chatty",
+      complete: async (req) => {
+        prompts.push(req.prompt);
+        if (prompts.length === 1) return { text: `我就投这条还在队列里的 #${id}。\nACTION: {"tool":"apply","jobId":${id},"force":false}`, backend: "chatty" };
+        return { text: "已开始投递。", backend: "chatty" };
+      },
+    };
+    const deltas: string[] = [];
+    const r = await answerChat(db, U, "zh", [{ role: "user", content: "这不都一样吗" }], { backend, onDelta: (t) => deltas.push(t), toolDeps: deps });
+    expect(r.events[0]).toMatchObject({ tool: "apply", ok: true, jobId: id });
+    expect(deltas.join("")).not.toContain("ACTION");
+    expect(r.text).toBe("已开始投递。");
+    expect(queuedRuns(db).length).toBe(1);
+
+    // the next turn's transcript carries what the earlier turn did
+    const req = buildChatRequest({
+      snapshot: "",
+      lang: "zh",
+      messages: [
+        { role: "user", content: "帮我投" },
+        { role: "assistant", content: "已开始投递。", actions: r.events },
+        { role: "user", content: "开始投递了吗" },
+      ],
+    });
+    expect(req.prompt).toContain("(did: started task");
+    expect(req.prompt).toMatch(/started task #\d+ for Amazon — SDE Intern Summer 2027/);
+    expect(normalizeMessages([{ role: "assistant", content: "x", actions: [{ tool: "apply", ok: true, runId: 3 }] }, { role: "user", content: "y" }])[0].actions).toEqual([{ tool: "apply", ok: true, runId: 3 }]);
   });
 
   it("tells the model about a malformed action and gives up after too many rounds", async () => {
