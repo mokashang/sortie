@@ -92,9 +92,14 @@ export interface JobRowProps extends RowHandlers {
   active: boolean;
   busy: boolean;
   onOpen: (id: number) => void;
+  // Multi-select (track tabs only): when `selectable` the row grows a checkbox column; shift-click
+  // is passed through so the list can extend the selection as a range.
+  selectable?: boolean;
+  selected?: boolean;
+  onSelect?: (row: JobRowData, selected: boolean, shiftKey: boolean) => void;
 }
 
-export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSkip }: JobRowProps) {
+export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSkip, selectable, selected, onSelect }: JobRowProps) {
   const m = useMessages();
   const lang = useLang();
   const loc = truncateLocations(row.location);
@@ -108,7 +113,7 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
 
   return (
     <div
-      className={cx("job-row", active && "is-active", row.pinned ? "is-pinned" : null)}
+      className={cx("job-row", active && "is-active", row.pinned ? "is-pinned" : null, selectable && "is-selectable", selected && "is-selected")}
       role="button"
       tabIndex={0}
       aria-label={`${row.company} · ${row.title}`}
@@ -120,6 +125,23 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
         }
       }}
     >
+      {selectable ? (
+        <label
+          className="job-check"
+          title={m.queue.select.row}
+          // The whole row is a button that opens the detail; the checkbox must not.
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={!!selected}
+            aria-label={`${m.queue.select.row}: ${row.company} · ${row.title}`}
+            // React raises a checkbox's onChange from the click, so the modifier keys ride along.
+            onChange={(e) => onSelect?.(row, e.target.checked, (e.nativeEvent as MouseEvent).shiftKey === true)}
+          />
+        </label>
+      ) : null}
       <div className={cx("job-score", (row.score ?? 0) >= 90 && "is-top", row.score == null && "is-none")} title={m.queue.row.scoreTitle}>
         {row.score ?? "—"}
       </div>

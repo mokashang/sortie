@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Search, SearchX, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Handshake, Search, SearchX, Send, Sparkles, Undo2, X } from "lucide-react";
 import { directionName, tierLabel } from "@/app/lib/labels";
 import { ALL_JOBS_DIRECTION, type QueueModeKey, type QueueSortKey } from "@/app/lib/queue-const";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
@@ -40,7 +40,9 @@ const isTypingTarget = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
   if (!t) return false;
   const tag = t.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable;
+  // A focused checkbox (the row selectors) is not a place where j / k / x / Esc would be typed.
+  if (tag === "INPUT") return !["checkbox", "radio", "button", "submit"].includes((t as HTMLInputElement).type);
+  return tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable;
 };
 
 export interface QueueClientProps {
@@ -76,6 +78,11 @@ export function QueueClient(props: QueueClientProps) {
     props.initialJobId != null && props.initialResult.rows.some((r) => r.id === props.initialJobId) ? props.initialJobId : null
   );
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
+  // Multi-select on the track tabs. Kept across pages and sorts of the same tab so a user can tick
+  // rows on page 1 and 2 and change them together; cleared when the tab, filter or search changes.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const lastPickRef = useRef<number | null>(null);
   const [fitInfo, setFitInfo] = useState<{ unclassified: number; running: boolean } | null>(null);
   const wide = useMediaQuery("(min-width: 1200px)");
   const { toast } = useToast();
@@ -130,7 +137,11 @@ export function QueueClient(props: QueueClientProps) {
     void fetchFitInfo();
   }, [fetchFitInfo]);
 
-  // j / k walk the list, Esc closes the detail — only while nothing is being typed and no dialog is open.
+  const selectedRef = useRef(selectedIds);
+  selectedRef.current = selectedIds;
+
+  // j / k walk the list, x ticks the active row, Esc closes the detail (then clears the selection) —
+  // only while nothing is being typed and no dialog is open.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return;
@@ -143,8 +154,20 @@ export function QueueClient(props: QueueClientProps) {
         const next = e.key === "j" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i < 0 ? 0 : i - 1);
         setActiveId(rows[next].id);
         document.querySelectorAll<HTMLElement>(".job-row")[next]?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "x" && activeRef.current != null && paramsRef.current.direction !== ALL_JOBS_DIRECTION) {
+        e.preventDefault();
+        const id = activeRef.current;
+        setSelectedIds((prev) => {
+          const n = new Set(prev);
+          if (n.has(id)) n.delete(id);
+          else n.add(id);
+          return n;
+        });
+        lastPickRef.current = id;
       } else if (e.key === "Escape" && activeRef.current != null) {
         setActiveId(null);
+      } else if (e.key === "Escape" && selectedRef.current.size > 0) {
+        setSelectedIds(new Set());
       }
     };
     document.addEventListener("keydown", onKey);
@@ -160,6 +183,11 @@ export function QueueClient(props: QueueClientProps) {
 
   function apply(next: Partial<Params>) {
     const p = { ...paramsRef.current, ...next };
+    const prev = paramsRef.current;
+    if (p.direction !== prev.direction || p.mode !== prev.mode || p.query !== prev.query) {
+      setSelectedIds(new Set());
+      lastPickRef.current = null;
+    }
     setParams(p);
     syncUrl(p);
     void fetchPage(p);
@@ -223,8 +251,70 @@ export function QueueClient(props: QueueClientProps) {
     });
   }
 
+  function selectRow(row: JobRowData, selected: boolean, shiftKey: boolean) {
+    const rows = result.rows;
+    // Work out the affected ids now: the state updater below may run later, after the anchor
+    // has already moved to this row.
+    const anchor = lastPickRef.current;
+    const from = shiftKey && anchor != null ? rows.findIndex((r) => r.id === anchor) : -1;
+    const to = rows.findIndex((r) => r.id === row.id);
+    const ids = from >= 0 && to >= 0 ? rows.slice(Math.min(from, to), Math.max(from, to) + 1).map((r) => r.id) : [row.id];
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      for (const id of ids) {
+        if (selected) n.add(id);
+        else n.delete(id);
+      }
+      return n;
+    });
+    lastPickRef.current = row.id;
+  }
+
+  function selectPage(selected: boolean) {
+    const ids = result.rows.map((r) => r.id);
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      for (const id of ids) {
+        if (selected) n.add(id);
+        else n.delete(id);
+      }
+      return n;
+    });
+    lastPickRef.current = null;
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    lastPickRef.current = null;
+  }
+
+  function bulkMode(mode: RowMode) {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    void (async () => {
+      try {
+        const r = await postJson<{ changed: number; skipped: number }>("/api/queue/mode", { jobIds: ids, mode });
+        clearSelection();
+        await Promise.all([fetchPage(paramsRef.current), fetchTabs()]);
+        const title = mode === null ? m.queue.toast.bulkReset(r.changed) : mode === "referral" ? m.queue.toast.bulkReferral(r.changed) : m.queue.toast.bulkDirect(r.changed);
+        toast({ title, description: r.skipped > 0 ? m.queue.toast.bulkSkippedNote(r.skipped) : undefined, tone: "good" });
+      } catch (e) {
+        toast({ title: m.queue.toast.modeFailed, description: errorMessage(e), tone: "danger" });
+      } finally {
+        setBulkBusy(false);
+      }
+    })();
+  }
+
   function skipRow(row: JobRowData) {
     const rows = result.rows;
+    setSelectedIds((prev) => {
+      if (!prev.has(row.id)) return prev;
+      const n = new Set(prev);
+      n.delete(row.id);
+      return n;
+    });
     const i = rows.findIndex((r) => r.id === row.id);
     const nextActive = activeId === row.id ? (rows[i + 1] ?? rows[i - 1] ?? null) : null;
     setResult((prev) => ({ rows: prev.rows.filter((r) => r.id !== row.id), total: Math.max(0, prev.total - 1), pages: prev.pages }));
@@ -277,6 +367,9 @@ export function QueueClient(props: QueueClientProps) {
   }
 
   const activeRow = result.rows.find((r) => r.id === activeId) ?? null;
+  const pageSelectedCount = result.rows.reduce((n, r) => n + (selectedIds.has(r.id) ? 1 : 0), 0);
+  const pageAllSelected = result.rows.length > 0 && pageSelectedCount === result.rows.length;
+  const pageSomeSelected = pageSelectedCount > 0;
   const rowHandlers = { onPin: togglePin, onMode: setRowMode, onSkip: skipRow };
   const detailProps = {
     row: activeRow,
@@ -316,6 +409,19 @@ export function QueueClient(props: QueueClientProps) {
       <div className={cx("queue-split", wide && activeRow && "has-panel")}>
         <div className="queue-main">
           <div className="job-toolbar">
+            {!isAllTab && result.rows.length > 0 ? (
+              <label className="job-check job-check-all" title={m.queue.select.hint}>
+                <input
+                  type="checkbox"
+                  aria-label={m.queue.select.page}
+                  checked={pageAllSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = !pageAllSelected && pageSomeSelected;
+                  }}
+                  onChange={(e) => selectPage(e.target.checked)}
+                />
+              </label>
+            ) : null}
             <div className="job-search input-icon">
               <Search size={14} aria-hidden />
               <Input
@@ -377,7 +483,18 @@ export function QueueClient(props: QueueClientProps) {
           ) : (
             <div className={cx("job-list", loading && "is-loading")} aria-busy={loading}>
               {result.rows.map((r) => (
-                <JobRow key={r.id} row={r} allTab={isAllTab} active={r.id === activeId} busy={busyIds.has(r.id)} onOpen={setActiveId} {...rowHandlers} />
+                <JobRow
+                  key={r.id}
+                  row={r}
+                  allTab={isAllTab}
+                  active={r.id === activeId}
+                  busy={busyIds.has(r.id)}
+                  onOpen={setActiveId}
+                  selectable={!isAllTab}
+                  selected={selectedIds.has(r.id)}
+                  onSelect={selectRow}
+                  {...rowHandlers}
+                />
               ))}
             </div>
           )}
@@ -409,6 +526,25 @@ export function QueueClient(props: QueueClientProps) {
       </div>
 
       {!wide ? <JobDrawer {...detailProps} /> : null}
+
+      {selectedIds.size > 0 && !isAllTab ? (
+        <div className="select-bar" role="region" aria-label={m.queue.select.selected(selectedIds.size)}>
+          <span className="select-bar-count">{m.queue.select.selected(selectedIds.size)}</span>
+          <Button size="sm" variant="primary" icon={<Handshake size={14} />} loading={bulkBusy} onClick={() => bulkMode("referral")}>
+            {m.queue.select.toReferral}
+          </Button>
+          <Button size="sm" icon={<Send size={14} />} disabled={bulkBusy} onClick={() => bulkMode("direct")}>
+            {m.queue.select.toDirect}
+          </Button>
+          <Button size="sm" variant="ghost" icon={<Undo2 size={14} />} disabled={bulkBusy} onClick={() => bulkMode(null)}>
+            {m.queue.select.follow}
+          </Button>
+          <span className="grow" />
+          <Button size="sm" variant="ghost" icon={<X size={14} />} disabled={bulkBusy} onClick={clearSelection}>
+            {m.queue.select.clear}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
