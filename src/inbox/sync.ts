@@ -83,6 +83,21 @@ function isoOf(ms: number): string {
   return new Date(ms).toISOString();
 }
 
+// The one line 设置 shows for a failed sync. Google's two operator-fixable refusals get a plain
+// sentence instead of the raw JSON body: a lapsed grant (reconnect), and the Gmail API not yet
+// enabled on the Cloud project the OAuth client belongs to (2026-09-21 first connect: the login
+// client had never called Gmail, so every request answered 403 until the API was switched on).
+export function describeSyncError(e: unknown): string {
+  if (e instanceof GmailError) {
+    if (e.status === 401) return `reconnect needed: ${e.message}`;
+    if (e.status === 403 && /has not been used in project|is disabled/i.test(e.message)) {
+      const url = e.message.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/gmail[^\s"\\]*/)?.[0];
+      return `Gmail API is not enabled on the Google Cloud project${url ? ` — enable it at ${url}` : ""}, then sync again`;
+    }
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
 export async function syncMailbox(db: DB, userId: string, deps: SyncDeps = {}): Promise<SyncSummary> {
   const out: SyncSummary = { userId, fetched: 0, candidates: 0, matched: 0, applied: 0, notified: 0, skipped: false, error: null };
   const account = getMailAccount(db, userId);
@@ -169,7 +184,7 @@ export async function syncMailbox(db: DB, userId: string, deps: SyncDeps = {}): 
     log(`[inbox] ${userId}: ${out.fetched} new, ${out.candidates} classified, ${out.matched} matched, ${out.applied} stage changes`);
     return out;
   } catch (e) {
-    const msg = e instanceof GmailError && e.status === 401 ? `reconnect needed: ${e.message}` : e instanceof Error ? e.message : String(e);
+    const msg = describeSyncError(e);
     out.error = msg;
     markSyncError(db, userId, msg);
     if (e instanceof GmailError && e.status === 401) tokenCache().delete(userId);

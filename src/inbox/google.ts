@@ -53,7 +53,7 @@ async function api<T>(accessToken: string, path: string, fetcher: typeof fetch):
   const res = await fetcher(`${API}${path}`, { headers: { authorization: `Bearer ${accessToken}` } });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new GmailError(`gmail ${path.split("?")[0]} -> ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`, res.status);
+    throw new GmailError(`gmail ${path.split("?")[0]} -> ${res.status}${text ? `: ${text.replace(/\s+/g, " ").slice(0, 600)}` : ""}`, res.status);
   }
   return (await res.json()) as T;
 }

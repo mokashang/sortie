@@ -75,7 +75,7 @@ export function markSynced(db: DB, userId: string, watermark: number): void {
 }
 
 export function markSyncError(db: DB, userId: string, error: string): void {
-  db.prepare("UPDATE mail_accounts SET last_error = ? WHERE user_id = ?").run(error.slice(0, 500), userId);
+  db.prepare("UPDATE mail_accounts SET last_error = ? WHERE user_id = ?").run(error.slice(0, 800), userId);
 }
 
 // ---- events -----------------------------------------------------------------------------
