@@ -124,3 +124,21 @@
 聊天模型是 Codex / GPT 时工具直接回「需要把问答助手切到 Claude 订阅」。`MAX_TOOL_ROUNDS` 提到 6(库内搜 →
 上网找 → 入库 → 投 → 回答)。实测一次上网找约 12–60 秒,约 2 轮。规则:库里没有合适的、或用户明确要上网 /
 要别的季节的岗位时才用;绝不投用户没要的岗。
+
+### 9.2 自主判断:「读正文」+ 批量 + 果断规则(2026-09-21,用户:「我想要全权获得信息、自主判断投哪个的聪明助手」)
+
+- 第五个工具 `read_posting {urls:[…≤5]}`(`readPostings`):先服务端 `fetchJdText` 抓页面,抓到 ≥800 字的直接喂给
+  一次裸模式抽取调用;抓不到的(amazon.jobs 这类客户端渲染页)让抽取调用自己 `WebFetch` 打开(只有这时才开
+  `webTools`)。抽取只许回 JSON:title / company / location / start / duration / graduationWindow / degree /
+  sponsorship / usBased / requirements / closed,毕业窗口、学历、签证三项**照抄原文**。观察结果每条标注在库 /
+  不在库,读到的正文放进本轮 `jdCache`,`add_job` 入库时直接用,不再抓第二次。
+- 快照新增「Profile facts」段:学校学历、毕业(授予学位)时间、工作授权与是否需要 sponsorship、目标(newgrad /
+  intern)、tier-1 方向——不含联系方式。模型据此自己判断 fit。
+- `apply` 接受 `jobIds:[…]`、`add_job` 接受 `jobs:[…]`(各 ≤5),一次工具调用处理多个;`runTool` 改回
+  `{observation, events[]}`,每个岗位一个事件 / 一个芯片。`MAX_TOOL_ROUNDS` 8。
+- 规则改为「果断」:请求里已经带了条件(公司、岗位、季节、「你决定」)就一口气做完——找候选(库、再上网)→
+  对每个可能合适的 `read_posting` → 按档案事实与条件判断 → 合适的全部 `add_job` + `apply` → 最后汇报投了哪些、跳过
+  哪些及岗位原文里的原因(毕业窗口 / 仅限博士 / 不 sponsor / 非美国 / 已关闭 / 季节不符)。只有请求本身不清楚
+  才问,绝不为了「选哪一条」反问。岗位没写明的项按合适处理(投递时助手仍读活页面复核)。
+- 实测:amazon.jobs 的「Jan 2027 6-month」在 find_online 里被标成 USA,`read_posting` 打开后读出是 Bengaluru,
+  usBased=false——这正是要读正文而不是只看搜索结果的原因。

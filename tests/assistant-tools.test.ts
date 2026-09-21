@@ -62,12 +62,12 @@ function queuedRuns(db: DB) {
 describe("parseAction", () => {
   it("accepts the three tools and rejects everything else", () => {
     expect(parseAction('ACTION: {"tool":"search_jobs","query":"Amazon intern"}')).toEqual({ tool: "search_jobs", query: "Amazon intern" });
-    expect(parseAction('  ACTION: {"tool":"apply","jobId":12,"force":true}')).toEqual({ tool: "apply", jobId: 12, force: true });
-    expect(parseAction('ACTION: {"tool":"add_job","url":"https://x.example/j","company":"X","title":"SWE"}')).toEqual({ tool: "add_job", url: "https://x.example/j", company: "X", title: "SWE", location: null });
+    expect(parseAction('  ACTION: {"tool":"apply","jobId":12,"force":true}')).toEqual({ tool: "apply", jobId: 12, jobIds: [12], force: true });
+    expect(parseAction('ACTION: {"tool":"add_job","url":"https://x.example/j","company":"X","title":"SWE"}')).toMatchObject({ tool: "add_job", url: "https://x.example/j", company: "X", title: "SWE", location: null });
     expect(parseAction("Task #5 is running.")).toBeNull();
     // prose before the line (production 2026-09-20) still counts as the action
-    expect(parseAction('我就投这条还在队列里的 #5223957。\nACTION: {"tool":"apply","jobId":5223957,"force":false}')).toEqual({ tool: "apply", jobId: 5223957, force: false });
-    expect(parseAction('ACTION: {"tool":"apply","jobId":7}\n(then I will tell you)')).toEqual({ tool: "apply", jobId: 7, force: false });
+    expect(parseAction('我就投这条还在队列里的 #5223957。\nACTION: {"tool":"apply","jobId":5223957,"force":false}')).toEqual({ tool: "apply", jobId: 5223957, jobIds: [5223957], force: false });
+    expect(parseAction('ACTION: {"tool":"apply","jobId":7}\n(then I will tell you)')).toEqual({ tool: "apply", jobId: 7, jobIds: [7], force: false });
     expect(() => parseAction('ACTION: {"tool":"delete_everything"}')).toThrow(/unknown tool/);
     expect(() => parseAction('ACTION: {"tool":"apply"}')).toThrow(/jobId/);
     expect(() => parseAction("ACTION: nope")).toBeNull;
@@ -153,15 +153,15 @@ describe("applyToJob", () => {
 describe("addJob", () => {
   it("adds a posting by link with its fetched description, then apply can score and queue it", async () => {
     const { db, deps } = setup();
-    const r = await addJob(db, { tool: "add_job", url: "https://amazon.jobs/en/jobs/123", company: "Amazon", title: "SDE Intern 2027", location: "Seattle, WA" }, deps);
+    const r = await addJob(db, { url: "https://amazon.jobs/en/jobs/123", company: "Amazon", title: "SDE Intern 2027", location: "Seattle, WA" }, deps);
     expect(r.event).toMatchObject({ tool: "add_job", ok: true, company: "Amazon" });
     const job = db.prepare("SELECT id, source, jd_text FROM jobs WHERE apply_url = ?").get("https://amazon.jobs/en/jobs/123") as { id: number; source: string; jd_text: string };
     expect(job.source).toBe("manual");
     expect(job.jd_text.length).toBeGreaterThan(200);
-    const again = await addJob(db, { tool: "add_job", url: "https://amazon.jobs/en/jobs/123", company: "Amazon", title: "SDE Intern 2027" }, deps);
+    const again = await addJob(db, { url: "https://amazon.jobs/en/jobs/123", company: "Amazon", title: "SDE Intern 2027" }, deps);
     expect(again.observation).toContain(`already in the library as #${job.id}`);
     const applied = await runTool(db, U, { tool: "apply", jobId: job.id }, "en", deps);
-    expect(applied.event.ok).toBe(true);
+    expect(applied.events[0].ok).toBe(true);
     expect(queuedRuns(db).length).toBe(1);
   });
 });
@@ -292,7 +292,7 @@ describe("answerChat with tools", () => {
     const r = await answerChat(db, U, "en", [{ role: "user", content: "apply to amazon" }], { backend, onDelta: (t) => deltas.push(t), toolDeps: deps });
     expect(r.text).toMatch(/could not finish/i);
     expect(deltas).toEqual([r.text]);
-    expect(n).toBe(7); // MAX_TOOL_ROUNDS tool calls, then one more turn that is cut off
+    expect(n).toBe(9); // MAX_TOOL_ROUNDS tool calls, then one more turn that is cut off
 
     const bad: LlmBackend = {
       name: "bad",
@@ -340,5 +340,90 @@ describe("find_online", () => {
     expect(r.observation).toContain("https://www.amazon.jobs/en/jobs/2/sde-intern-may · not in the library — add_job");
     const none = await findOnline(db, U, "x", { ...deps, chatBackend: { name: "subscription", complete: async () => ({ text: "[]", backend: "subscription" }) } });
     expect(none.event).toMatchObject({ ok: true, count: 0 });
+  });
+});
+
+// 「读正文」 (read_posting) and the batch forms of apply / add_job.
+import { parsePostingFacts, readPostings } from "@/assistant/tools";
+
+describe("read_posting and batch tools", () => {
+  it("parses actions with several ids / jobs / urls", () => {
+    expect(parseAction('ACTION: {"tool":"apply","jobIds":[3,4,4]}')).toEqual({ tool: "apply", jobId: 3, jobIds: [3, 4], force: false });
+    expect(parseAction('ACTION: {"tool":"read_posting","urls":["https://a.example/1","bad","https://a.example/1"]}')).toEqual({ tool: "read_posting", urls: ["https://a.example/1"] });
+    expect(() => parseAction('ACTION: {"tool":"read_posting","urls":[]}')).toThrow(/urls/);
+    const add = parseAction('ACTION: {"tool":"add_job","jobs":[{"url":"https://a.example/1","company":"A","title":"T1"},{"url":"https://a.example/2","company":"A","title":"T2","location":"Seattle"}]}');
+    expect(add?.tool === "add_job" && add.jobs?.length).toBe(2);
+  });
+
+  it("turns the extraction JSON into facts per url, unknown urls included", () => {
+    const facts = parsePostingFacts(
+      '```json\n[{"url":"https://a.example/1","title":"SDE Intern","company":"A","location":"Bengaluru, India","start":"January 2027","duration":"6 month","graduationWindow":"graduating in 2027","degree":"Bachelor or above","sponsorship":null,"usBased":false,"requirements":"x | y","closed":false}]\n```',
+      ["https://a.example/1", "https://a.example/2"]
+    );
+    expect(facts[0]).toMatchObject({ url: "https://a.example/1", usBased: false, start: "January 2027", sponsorship: null });
+    expect(facts[1]).toMatchObject({ url: "https://a.example/2", title: null, closed: false });
+    expect(parsePostingFacts("garbage", ["https://a.example/1"])[0].title).toBeNull();
+  });
+
+  it("feeds fetched text to the extraction call, asks for web tools only for pages without text, and reports library state", async () => {
+    const { db, deps } = setup();
+    const known = seedJob(db, "Amazon", "SDE Intern", { url: "https://www.amazon.jobs/en/jobs/1/x" });
+    const seen: LlmRequest[] = [];
+    const sub: LlmBackend = {
+      name: "subscription",
+      complete: async (req) => {
+        seen.push(req);
+        return {
+          text: JSON.stringify([
+            { url: "https://www.amazon.jobs/en/jobs/1/x", title: "SDE Intern", company: "Amazon", location: "Seattle, WA", start: "May 2027", duration: "12 weeks", graduationWindow: "graduate between Oct 2027 and Sep 2029", degree: "BS/MS", sponsorship: null, usBased: true, requirements: "Java | Python", closed: false },
+            { url: "https://www.amazon.jobs/en/jobs/2/y", closed: true },
+          ]),
+          backend: "subscription",
+        };
+      },
+    };
+    const long = "Basic qualifications: ".repeat(60);
+    const cache = new Map<string, string>();
+    const r = await readPostings(db, U, ["https://www.amazon.jobs/en/jobs/1/x", "https://www.amazon.jobs/en/jobs/2/y"], {
+      ...deps,
+      chatBackend: sub,
+      jdCache: cache,
+      fetchJd: async (u) => (u.endsWith("/1/x") ? long : null),
+    });
+    expect(seen[0]).toMatchObject({ bare: true, webTools: true });
+    expect(seen[0].prompt).toContain(`<posting url="https://www.amazon.jobs/en/jobs/1/x">`);
+    expect(seen[0].prompt).toContain("Basic qualifications");
+    expect(seen[0].prompt).toContain("(no text captured — open this url with WebFetch)");
+    expect(cache.get("https://www.amazon.jobs/en/jobs/1/x")).toBe(long);
+    expect(r.event).toMatchObject({ tool: "read_posting", ok: true, count: 2 });
+    expect(r.observation).toContain(`in library as #${known}`);
+    expect(r.observation).toContain("graduation window: graduate between Oct 2027 and Sep 2029");
+    expect(r.observation).toContain("POSTING CLOSED");
+
+    // all pages had text → no web tools needed
+    seen.length = 0;
+    await readPostings(db, U, ["https://www.amazon.jobs/en/jobs/1/x"], { ...deps, chatBackend: sub, jdCache: cache, fetchJd: async () => long });
+    expect(seen[0].webTools).toBe(false);
+
+    const codex: LlmBackend = { name: "codex", complete: async () => ({ text: "[]", backend: "codex" }) };
+    expect((await readPostings(db, U, ["https://a.example/1"], { ...deps, chatBackend: codex })).event.blocked).toBe("no_web_tools");
+  });
+
+  it("applies to several jobs in one call and adds several postings in one call", async () => {
+    const { db, deps } = setup();
+    const a = seedJob(db, "Amazon", "SDE Intern May 2027");
+    const b = seedJob(db, "Amazon", "SDE Intern Jan 2027");
+    const out = await runTool(db, U, { tool: "apply", jobId: a, jobIds: [a, b] }, "en", deps);
+    expect(out.events.map((e) => e.ok)).toEqual([true, true]);
+    expect(out.observation.match(/started task/g)?.length).toBe(2);
+    const added = await runTool(
+      db,
+      U,
+      { tool: "add_job", url: "https://x.example/1", company: "X", title: "T1", jobs: [{ url: "https://x.example/1", company: "X", title: "T1" }, { url: "https://x.example/2", company: "X", title: "T2", location: null }] },
+      "en",
+      deps
+    );
+    expect(added.events.map((e) => e.ok)).toEqual([true, true]);
+    expect(db.prepare("SELECT COUNT(*) n FROM jobs WHERE apply_url LIKE 'https://x.example/%'").get()).toEqual({ n: 2 });
   });
 });
