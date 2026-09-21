@@ -72,7 +72,7 @@ describe("v14 → v16 migration (accounts; main's v15 run_id/outcome step runs f
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "v16-")), "db.sqlite");
     makeV14(file);
     const db = openDb(file);
-    expect(db.pragma("user_version", { simple: true })).toBe(17);
+    expect(db.pragma("user_version", { simple: true })).toBe(18);
 
     for (const t of ["matches", "applications", "people", "outreach", "resumes", "experiences", "executor_runs", "events"]) {
       const cols = (db.prepare(`PRAGMA table_info(${t})`).all() as { name: string }[]).map((c) => c.name);
@@ -115,7 +115,7 @@ describe("v14 → v16 migration (accounts; main's v15 run_id/outcome step runs f
     // Re-open: no-op.
     const again = openDb(file);
     expect((again.prepare("SELECT COUNT(*) n FROM applications").get() as { n: number }).n).toBe(3);
-    expect(again.pragma("user_version", { simple: true })).toBe(17);
+    expect(again.pragma("user_version", { simple: true })).toBe(18);
     again.close();
   });
 

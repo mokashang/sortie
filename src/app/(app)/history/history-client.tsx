@@ -44,6 +44,8 @@ function MailFeed({ events }: { events: MailEventRow[] }) {
   const [expanded, setExpanded] = useState(false);
   if (events.length === 0) return null;
   const shown = expanded ? events : events.slice(0, 6);
+  // Only name the mailbox when more than one feeds the list.
+  const mailboxes = new Set(events.map((e) => e.mailbox).filter(Boolean));
   return (
     <Section
       title={m.inbox.history.feedTitle}
@@ -81,6 +83,7 @@ function MailFeed({ events }: { events: MailEventRow[] }) {
                     {e.summary}
                   </span>
                 ) : null}
+                {mailboxes.size > 1 && e.mailbox ? <span className="muted xs mono">{e.mailbox}</span> : null}
               </div>
               {e.nextStep ? (
                 <div className="small mt-1">

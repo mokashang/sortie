@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import { openDb, type DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
 import { applyMailResult, decideStage, inboxNotification, MIN_CONFIDENCE } from "@/inbox/apply";
-import { recentMailEvents, latestMailByJob, countMailEvents, submittedApplications, earliestSubmissionUnix } from "@/inbox/store";
+import { recentMailEvents, latestMailByJob, countMailEvents, submittedApplications, earliestSubmissionUnix, upsertMailAccount } from "@/inbox/store";
 import { applicationHistory } from "@/apply/history";
 import type { ParsedMail } from "@/inbox/google";
 
 const U = "legacy";
+// Every test seeds one mailbox; applyMailResult records events against it.
+const BOX = 1;
 
 function seedJob(db: DB, opts: { company?: string; title?: string; status?: string; submittedAt?: string | null } = {}): number {
   const jobId = db
@@ -59,8 +61,9 @@ describe("inbox/apply applyMailResult", () => {
   it("moves the application through setStage with a note, records the event, and surfaces the mail on 历史", () => {
     const db = openDb(":memory:");
     seedOwner(db);
+    expect(upsertMailAccount(db, { userId: U, email: "me@example.com", refreshToken: "rt", scope: null }).id).toBe(BOX);
     const jobId = seedJob(db, { company: "Datadog", title: "SWE Intern" });
-    const a = applyMailResult(db, U, mail("m1", { subject: "Datadog interview" }), {
+    const a = applyMailResult(db, U, BOX, mail("m1", { subject: "Datadog interview" }), {
       message_id: "m1",
       job_id: jobId,
       outcome: "interview",
@@ -90,14 +93,15 @@ describe("inbox/apply applyMailResult", () => {
   it("records without moving when confidence is low, when the row already stands higher, or when the mail is informational", () => {
     const db = openDb(":memory:");
     seedOwner(db);
+    expect(upsertMailAccount(db, { userId: U, email: "me@example.com", refreshToken: "rt", scope: null }).id).toBe(BOX);
     const jobId = seedJob(db, { status: "interview" });
-    const low = applyMailResult(db, U, mail("m1"), { message_id: "m1", job_id: jobId, outcome: "offer", confidence: 0.4, summary: "maybe an offer", next_step: null });
+    const low = applyMailResult(db, U, BOX, mail("m1"), { message_id: "m1", job_id: jobId, outcome: "offer", confidence: 0.4, summary: "maybe an offer", next_step: null });
     expect(low.applied).toBe(false);
     expect(low.notify).toBe(false);
-    const lower = applyMailResult(db, U, mail("m2"), { message_id: "m2", job_id: jobId, outcome: "oa", confidence: 0.95, summary: "OA link", next_step: "Finish the OA" });
+    const lower = applyMailResult(db, U, BOX, mail("m2"), { message_id: "m2", job_id: jobId, outcome: "oa", confidence: 0.95, summary: "OA link", next_step: "Finish the OA" });
     expect(lower.applied).toBe(false);
     expect(lower.notify).toBe(true); // actionable + confident: worth a push even though the stage stays
-    const ack = applyMailResult(db, U, mail("m3"), { message_id: "m3", job_id: jobId, outcome: "received", confidence: 0.99, summary: "Received", next_step: null });
+    const ack = applyMailResult(db, U, BOX, mail("m3"), { message_id: "m3", job_id: jobId, outcome: "received", confidence: 0.99, summary: "Received", next_step: null });
     expect(ack.applied).toBe(false);
     expect(ack.notify).toBe(false);
     expect(status(db, jobId)).toBe("interview");
@@ -108,22 +112,24 @@ describe("inbox/apply applyMailResult", () => {
   it("files a job the user never submitted (or another account's) as unmatched", () => {
     const db = openDb(":memory:");
     seedOwner(db);
+    expect(upsertMailAccount(db, { userId: U, email: "me@example.com", refreshToken: "rt", scope: null }).id).toBe(BOX);
     const queued = seedJob(db, { status: "matched", submittedAt: null });
-    const a = applyMailResult(db, U, mail("m1"), { message_id: "m1", job_id: queued, outcome: "rejected", confidence: 0.9, summary: "Declined", next_step: null });
+    const a = applyMailResult(db, U, BOX, mail("m1"), { message_id: "m1", job_id: queued, outcome: "rejected", confidence: 0.9, summary: "Declined", next_step: null });
     expect(a).toMatchObject({ jobId: null, applied: false, outcome: "rejected", notify: false });
     expect(status(db, queued)).toBe("matched");
-    const other = applyMailResult(db, U, mail("m2"), { message_id: "m2", job_id: 999999, outcome: "received", confidence: 0.9, summary: "Ack", next_step: null });
+    const other = applyMailResult(db, U, BOX, mail("m2"), { message_id: "m2", job_id: 999999, outcome: "received", confidence: 0.9, summary: "Ack", next_step: null });
     expect(other.outcome).toBe("unrelated");
     // a second sighting of the same message is a no-op
-    applyMailResult(db, U, mail("m1"), { message_id: "m1", job_id: queued, outcome: "rejected", confidence: 0.9, summary: "Declined", next_step: null });
+    applyMailResult(db, U, BOX, mail("m1"), { message_id: "m1", job_id: queued, outcome: "rejected", confidence: 0.9, summary: "Declined", next_step: null });
     expect(countMailEvents(db, U).total).toBe(2);
   });
 
   it("does not touch an accepted offer, even for a confident rejection", () => {
     const db = openDb(":memory:");
     seedOwner(db);
+    expect(upsertMailAccount(db, { userId: U, email: "me@example.com", refreshToken: "rt", scope: null }).id).toBe(BOX);
     const jobId = seedJob(db, { status: "offer_accepted" });
-    const a = applyMailResult(db, U, mail("m1"), { message_id: "m1", job_id: jobId, outcome: "rejected", confidence: 0.99, summary: "Rescinded", next_step: null });
+    const a = applyMailResult(db, U, BOX, mail("m1"), { message_id: "m1", job_id: jobId, outcome: "rejected", confidence: 0.99, summary: "Rescinded", next_step: null });
     expect(a.applied).toBe(false);
     expect(status(db, jobId)).toBe("offer_accepted");
   });
@@ -133,6 +139,7 @@ describe("inbox/store submittedApplications", () => {
   it("lists only this account's submitted rows, newest first, with the earliest submission time", () => {
     const db = openDb(":memory:");
     seedOwner(db);
+    expect(upsertMailAccount(db, { userId: U, email: "me@example.com", refreshToken: "rt", scope: null }).id).toBe(BOX);
     const a = seedJob(db, { company: "A", submittedAt: "2026-09-01 08:00:00" });
     const b = seedJob(db, { company: "B", status: "rejected", submittedAt: "2026-09-05 08:00:00" });
     seedJob(db, { company: "C", status: "matched", submittedAt: null });

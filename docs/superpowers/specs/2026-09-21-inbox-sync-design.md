@@ -22,26 +22,30 @@
 - **不猜**:置信度 < 0.7、或对不上任何申请的邮件只记入 `mail_events`(历史页「邮件动态」里能看到),不动状态。
 - 令牌只存服务器库里(`mail_accounts.refresh_token`),不进页面、不进日志。
 
-## 3. 连接方式
+## 3. 连接方式(同日改为多邮箱)
 
-设置页「邮箱同步」区:「连接 Gmail」= Better Auth 的 `linkSocial({provider:'google', scopes:[gmail.readonly],
-additionalParams:{prompt:'consent'}, callbackURL:'/settings?inbox=connected'})`。Google 提供方全局加
-`accessType:'offline'`(登录本身不受影响;`prompt=consent` 只在连接这一次出现)。回到设置页后客户端调
-`POST /api/inbox/connect`:服务端从 Better Auth 的 `account` 表读该账号 google 行的 `refreshToken` 与 `scope`,
-scope 含 gmail.readonly 才复制进 `mail_accounts`(之后普通 Google 登录覆盖 `account.accessToken` 也无所谓,
-同步永远用自己那份 refresh token 现换 access token),并立即跑第一次同步。
+一个账号可以连任意多个 Google 邮箱(用户 2026-09-21:shangmengjiajiajia 和 mjtheevil 都在用)。登录关联走不通
+(Better Auth 只关联与登录邮箱相同的 Google 账号),所以 Sortie 自己走一遍 OAuth(`src/inbox/oauth.ts`):
 
-Google Cloud 项目 `Sortie` 未做品牌与敏感权限审核,请求 gmail.readonly 时 Google 会弹「未验证的应用」页,
-主账号点「高级 → 继续前往 usesortie.com」即可(个人使用,≤100 用户不用审核)。回调地址不变。
+- 设置页「添加 Google 邮箱」→ `GET /api/inbox/google/start`(需登录):`state` = HMAC(authSecret) 签名的
+  `{userId, 时间, 随机数}`,10 分钟有效;跳到 Google,scope = `gmail.readonly openid email`,
+  `access_type=offline`、`prompt=consent select_account`(每次都出同意页,保证发 refresh token;可选别的邮箱)。
+- Google 回 `GET /api/inbox/google/callback?code&state`:校验 state 属于当前登录账号 → 换 code →
+  从 id_token 读 email(直接来自 Google 令牌端点,无需验签)→ 校验 scope 含 gmail.readonly、有 refresh_token →
+  `mail_accounts` 按 (user_id, email) upsert → 立刻跑第一次同步 → 回 `/settings?inbox=connected&email=…`;
+  失败回 `?inbox=error&reason=state|denied|exchange|no_scope|no_refresh_token|no_email`,设置页只弹一次提示。
+- 回调地址 `https://usesortie.com/api/inbox/google/callback` 已登记在 Cloud 项目 `Sortie` 的 OAuth 客户端
+  「Sortie web」上(2026-09-21 在用户 Chrome 里加的);Gmail API 同日在该项目启用。
+- Google 会弹「未验证的应用」页(gmail.readonly 是受限权限,项目未审核),点「高级 → 继续前往 usesortie.com」即可。
+- 「断开」按邮箱:删掉那一行并尽力向 Google 撤销该 refresh token(不影响登录:登录靠 cookie)。
 
-「断开」= 删掉 `mail_accounts` 行并尽力向 Google 撤销该 refresh token(不影响登录:登录靠 cookie)。
-
-## 4. 数据(schema v17)
+## 4. 数据(schema v18;v17 是单邮箱版,`migrateV18` 重建两表)
 
 ```
-mail_accounts(user_id PK, provider, email, refresh_token, scope, connected_at, synced_at, watermark, last_error, enabled)
-mail_events(id, user_id, message_id, thread_id, received_at, from_addr, subject, snippet, job_id, outcome,
-            confidence, summary, next_step, applied, stage_from, stage_to, created_at, UNIQUE(user_id, message_id))
+mail_accounts(id PK, user_id, provider, email, refresh_token, scope, connected_at, synced_at, watermark, last_error,
+              enabled, UNIQUE(user_id, email))
+mail_events(id, user_id, account_id, message_id, thread_id, received_at, from_addr, subject, snippet, job_id, outcome,
+            confidence, summary, next_step, applied, stage_from, stage_to, created_at, UNIQUE(account_id, message_id))
 ```
 
 - `watermark`:unix 秒,只拉这之后收到的邮件;首次连接 = max(最早一份已投申请的提交时间, 30 天前)。
@@ -50,8 +54,8 @@ mail_events(id, user_id, message_id, thread_id, received_at, from_addr, subject,
 
 ## 5. 同步流程(`src/inbox/`)
 
-`src/instrumentation.ts` 每 15 分钟 `POST /api/inbox/tick`(内部令牌);设置页「现在同步」= `POST /api/inbox/sync`。
-每个启用的账号(`src/inbox/sync.ts`):
+`src/instrumentation.ts` 每 15 分钟 `POST /api/inbox/tick`(内部令牌);设置页每个邮箱的「同步」/「全部同步」=
+`POST /api/inbox/sync {accountId?}`。每个启用的邮箱(`src/inbox/sync.ts`):
 
 1. `google.ts`:用 refresh token 换 access token(进程内缓存 50 分钟)。
 2. `users/me/messages?q=after:<watermark> -in:spam -in:trash -category:promotions -category:social`,
@@ -69,8 +73,8 @@ mail_events(id, user_id, message_id, thread_id, received_at, from_addr, subject,
 
 ## 6. 界面
 
-- 设置页「邮箱同步」:未连接 → 说明 + 「连接 Gmail」;已连接 → 邮箱、上次同步时间、累计处理数、
-  「现在同步」「断开」,有错误时显示。
+- 设置页「邮箱同步」:邮箱列表,每个显示地址、上次同步时间、计数、错误,「同步」「断开」;下方「添加 Google 邮箱」
+  (多于一个时还有「全部同步」)。
 - 历史页:每行若有邮件事件,显示 `邮件 · <结果>` 角标(悬停看摘要),`next_step` 以小字附在行内;
   列表上方一个「邮件动态」区列最近 30 条事件(时间 / 公司或发件人 / 主题 / 结果 / 是否已改状态),
   对不上申请的也列出来,让用户知道模型读到了什么。
@@ -80,4 +84,4 @@ mail_events(id, user_id, message_id, thread_id, received_at, from_addr, subject,
 
 - 不回信、不安排面试、不点邮件里的链接。
 - 不把邮件正文存库(只存主题、发件人、Gmail 的 snippet、模型摘要)。
-- 不做 IMAP / 其他邮箱;非 Google 登录的账号看到「需要先关联 Google 账号」。
+- 不做 IMAP / 非 Google 邮箱;服务器没配 `GOOGLE_CLIENT_ID/SECRET` 时设置页只显示「连不了 Gmail」。

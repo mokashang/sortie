@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { withUser, failResponse } from "@/lib/actor";
-import { inboxStatus, syncMailbox } from "@/inbox/sync";
+import { inboxStatus, syncUserMailboxes } from "@/inbox/sync";
 
-// 设置's "sync now": one pass for the calling account, result in the response.
-export const POST = withUser(async (_req, { userId }) => {
+// 设置's "sync now": {accountId?} — one mailbox, or every mailbox of the calling account.
+export const POST = withUser(async (req, { userId }) => {
   const db = getDb();
   try {
-    const summary = await syncMailbox(db, userId);
-    return NextResponse.json({ ok: !summary.error, summary, status: inboxStatus(db, userId) });
+    const body = (await req.json().catch(() => ({}))) as { accountId?: unknown };
+    const accountId = typeof body.accountId === "number" ? body.accountId : undefined;
+    const summaries = await syncUserMailboxes(db, userId, { accountId });
+    return NextResponse.json({ ok: summaries.every((s) => !s.error), summaries, status: inboxStatus(db, userId) });
   } catch (e) {
     return failResponse(e);
   }

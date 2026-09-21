@@ -5,7 +5,7 @@ import type { LlmBackend } from "@/llm/types";
 import { notify } from "@/lib/notify";
 import { serverLang } from "@/lib/prefs";
 import type { Lang } from "@/i18n/lang";
-import { GMAIL_SCOPE, GmailError, getMessage, listMessageIds, parseMessage, refreshAccessToken, revokeToken, type ParsedMail } from "@/inbox/google";
+import { GmailError, getMessage, listMessageIds, parseMessage, refreshAccessToken, revokeToken, type ParsedMail } from "@/inbox/google";
 import { isCandidateMail } from "@/inbox/filter";
 import { classifyMails, type ClassifyMail } from "@/inbox/classify";
 import { applyMailResult, inboxNotification, type AppliedMail } from "@/inbox/apply";
@@ -16,16 +16,20 @@ import {
   getMailAccount,
   hasMailEvent,
   listEnabledMailAccounts,
+  listMailAccounts,
   markSyncError,
   markSynced,
   submittedApplications,
   upsertMailAccount,
+  type MailAccountRow,
+  type MailEventCounts,
 } from "@/inbox/store";
+import { exchangeCode, requireGoogleCredentials, type ExchangedGrant } from "@/inbox/oauth";
 
-// 邮箱同步 orchestration (spec 2026-09-21 inbox-sync §5). One pass per account: refresh the access
+// 邮箱同步 orchestration (spec 2026-09-21 inbox-sync §5). One pass per mailbox: refresh the access
 // token, list mail newer than the cursor, parse, pre-filter, classify in batches, apply, push
 // notifications, advance the cursor. Runs from the 15-minute tick (src/instrumentation.ts ->
-// POST /api/inbox/tick) and from 设置's "sync now". Never throws for one account's trouble: the
+// POST /api/inbox/tick) and from 设置's "sync now". Never throws for one mailbox's trouble: the
 // error is written to mail_accounts.last_error and shown on 设置.
 
 export const INBOX_SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -46,7 +50,8 @@ export interface SyncDeps {
 }
 
 export interface SyncSummary {
-  userId: string;
+  accountId: number;
+  email: string;
   fetched: number; // messages listed newer than the cursor (minus already-seen ids)
   candidates: number; // passed the pre-filter and were classified
   matched: number; // filed against one of the user's applications
@@ -56,13 +61,13 @@ export interface SyncSummary {
   error: string | null;
 }
 
-// Access tokens live an hour; one per account per process, refreshed a little early.
-type TokenCache = Map<string, { token: string; expiresAt: number }>;
-const g = globalThis as unknown as { __sortieInboxTokens?: TokenCache; __sortieInboxBusy?: Set<string> };
+// Access tokens live an hour; one per mailbox per process, refreshed a little early.
+type TokenCache = Map<number, { token: string; expiresAt: number }>;
+const g = globalThis as unknown as { __sortieInboxTokens?: TokenCache; __sortieInboxBusy?: Set<number> };
 function tokenCache(): TokenCache {
   return (g.__sortieInboxTokens ??= new Map());
 }
-function busy(): Set<string> {
+function busy(): Set<number> {
   return (g.__sortieInboxBusy ??= new Set());
 }
 export function resetInboxCachesForTests(): void {
@@ -70,12 +75,12 @@ export function resetInboxCachesForTests(): void {
   g.__sortieInboxBusy = new Set();
 }
 
-async function accessTokenFor(userId: string, refreshToken: string, deps: SyncDeps): Promise<string> {
+async function accessTokenFor(account: MailAccountRow, deps: SyncDeps): Promise<string> {
   const now = deps.now ? deps.now() : Date.now();
-  const cached = tokenCache().get(userId);
+  const cached = tokenCache().get(account.id);
   if (cached && cached.expiresAt > now) return cached.token;
-  const t = await refreshAccessToken(refreshToken, { fetcher: deps.fetcher });
-  tokenCache().set(userId, { token: t.accessToken, expiresAt: now + Math.max(60, t.expiresInS - 300) * 1000 });
+  const t = await refreshAccessToken(account.refreshToken, { fetcher: deps.fetcher });
+  tokenCache().set(account.id, { token: t.accessToken, expiresAt: now + Math.max(60, t.expiresInS - 300) * 1000 });
   return t.accessToken;
 }
 
@@ -98,18 +103,18 @@ export function describeSyncError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export async function syncMailbox(db: DB, userId: string, deps: SyncDeps = {}): Promise<SyncSummary> {
-  const out: SyncSummary = { userId, fetched: 0, candidates: 0, matched: 0, applied: 0, notified: 0, skipped: false, error: null };
-  const account = getMailAccount(db, userId);
-  if (!account || !account.enabled) {
-    out.error = "not connected";
+export async function syncMailbox(db: DB, account: MailAccountRow, deps: SyncDeps = {}): Promise<SyncSummary> {
+  const userId = account.userId;
+  const out: SyncSummary = { accountId: account.id, email: account.email, fetched: 0, candidates: 0, matched: 0, applied: 0, notified: 0, skipped: false, error: null };
+  if (!account.enabled) {
+    out.error = "disabled";
     return out;
   }
-  if (busy().has(userId)) {
+  if (busy().has(account.id)) {
     out.error = "sync already running";
     return out;
   }
-  busy().add(userId);
+  busy().add(account.id);
   const log = deps.log ?? ((l: string) => console.log(l));
   try {
     const now = deps.now ? deps.now() : Date.now();
@@ -119,10 +124,10 @@ export async function syncMailbox(db: DB, userId: string, deps: SyncDeps = {}): 
       const earliest = earliestSubmissionUnix(db, userId);
       since = Math.max(nowS - FIRST_SYNC_LOOKBACK_S, earliest ?? 0);
     }
-    const token = await accessTokenFor(userId, account.refreshToken, deps);
+    const token = await accessTokenFor(account, deps);
     const fetcher = deps.fetcher ?? fetch;
     const refs = await listMessageIds(token, `after:${Math.max(0, since - OVERLAP_S)} ${GMAIL_QUERY_TAIL}`, { max: MAX_MESSAGES_PER_SYNC, fetcher });
-    const fresh = refs.filter((r) => !hasMailEvent(db, userId, r.id));
+    const fresh = refs.filter((r) => !hasMailEvent(db, account.id, r.id));
     out.fetched = fresh.length;
 
     const apps = submittedApplications(db, userId);
@@ -134,7 +139,7 @@ export async function syncMailbox(db: DB, userId: string, deps: SyncDeps = {}): 
         const m = parseMessage(await getMessage(token, r.id, fetcher));
         newest = Math.max(newest, Math.floor(m.receivedAtMs / 1000));
       }
-      markSynced(db, userId, Math.max(newest, since));
+      markSynced(db, account.id, Math.max(newest, since));
       return out;
     }
 
@@ -161,9 +166,9 @@ export async function syncMailbox(db: DB, userId: string, deps: SyncDeps = {}): 
         if (!r) continue;
         let a: AppliedMail;
         try {
-          a = applyMailResult(db, userId, m, r);
+          a = applyMailResult(db, userId, account.id, m, r);
         } catch (e) {
-          log(`[inbox] ${userId} message ${m.id}: ${e instanceof Error ? e.message : String(e)}`);
+          log(`[inbox] ${account.email} message ${m.id}: ${e instanceof Error ? e.message : String(e)}`);
           continue;
         }
         if (a.jobId != null) out.matched++;
@@ -179,23 +184,31 @@ export async function syncMailbox(db: DB, userId: string, deps: SyncDeps = {}): 
         }
       }
     }
-    markSynced(db, userId, Math.max(newest, since));
-    logEvent(db, "inbox_sync", { userId, payload: { fetched: out.fetched, candidates: out.candidates, matched: out.matched, applied: out.applied } });
-    log(`[inbox] ${userId}: ${out.fetched} new, ${out.candidates} classified, ${out.matched} matched, ${out.applied} stage changes`);
+    markSynced(db, account.id, Math.max(newest, since));
+    logEvent(db, "inbox_sync", { userId, payload: { accountId: account.id, email: account.email, fetched: out.fetched, candidates: out.candidates, matched: out.matched, applied: out.applied } });
+    log(`[inbox] ${account.email}: ${out.fetched} new, ${out.candidates} classified, ${out.matched} matched, ${out.applied} stage changes`);
     return out;
   } catch (e) {
     const msg = describeSyncError(e);
     out.error = msg;
-    markSyncError(db, userId, msg);
-    if (e instanceof GmailError && e.status === 401) tokenCache().delete(userId);
-    log(`[inbox] ${userId} sync failed: ${msg}`);
+    markSyncError(db, account.id, msg);
+    if (e instanceof GmailError && e.status === 401) tokenCache().delete(account.id);
+    log(`[inbox] ${account.email} sync failed: ${msg}`);
     return out;
   } finally {
-    busy().delete(userId);
+    busy().delete(account.id);
   }
 }
 
-// The tick: every connected account that is due. `dueOnly` skips accounts synced less than an
+// One account's mailboxes (all of them, or just `accountId`), for 设置's "sync now".
+export async function syncUserMailboxes(db: DB, userId: string, deps: SyncDeps & { accountId?: number } = {}): Promise<SyncSummary[]> {
+  const rows = deps.accountId != null ? [getMailAccount(db, userId, deps.accountId)].filter((r): r is MailAccountRow => !!r) : listMailAccounts(db, userId);
+  const out: SyncSummary[] = [];
+  for (const a of rows) out.push(await syncMailbox(db, a, deps));
+  return out;
+}
+
+// The tick: every connected mailbox that is due. `dueOnly` skips ones synced less than an
 // interval ago, so the 15-minute timer and a manual "sync now" can coexist.
 export async function syncAllMailboxes(db: DB, deps: SyncDeps & { dueOnly?: boolean } = {}): Promise<SyncSummary[]> {
   const now = deps.now ? deps.now() : Date.now();
@@ -205,66 +218,63 @@ export async function syncAllMailboxes(db: DB, deps: SyncDeps & { dueOnly?: bool
       const last = Date.parse(`${a.syncedAt.replace(" ", "T")}Z`);
       if (Number.isFinite(last) && now - last < INBOX_SYNC_INTERVAL_MS - 30_000) continue;
     }
-    out.push(await syncMailbox(db, a.userId, deps));
+    out.push(await syncMailbox(db, a, deps));
   }
   return out;
 }
 
 // ---- connect / disconnect / status -------------------------------------------------------
 
-export class InboxConnectError extends Error {
-  code: "no_google" | "no_scope" | "no_refresh_token";
-  constructor(code: "no_google" | "no_scope" | "no_refresh_token") {
-    super(code);
-    this.name = "InboxConnectError";
-    this.code = code;
-  }
+// The callback half of the consent round-trip (src/inbox/oauth.ts): exchange the code, keep the
+// refresh token under (user, address), forget any cached access token for that mailbox.
+export async function completeGoogleConnect(
+  db: DB,
+  userId: string,
+  code: string,
+  opts: { redirectUri: string; fetcher?: typeof fetch; env?: Record<string, string | undefined> }
+): Promise<MailAccountRow> {
+  const creds = requireGoogleCredentials(opts.env);
+  const grant: ExchangedGrant = await exchangeCode(code, { ...creds, redirectUri: opts.redirectUri, fetcher: opts.fetcher });
+  const row = upsertMailAccount(db, { userId, email: grant.email, refreshToken: grant.refreshToken, scope: grant.scope });
+  tokenCache().delete(row.id);
+  logEvent(db, "inbox_connected", { userId, payload: { accountId: row.id, email: row.email } });
+  return row;
 }
 
-// After the Gmail link round-trip (设置 -> linkSocial with the gmail.readonly scope -> back), copy
-// the refresh token Better Auth stored on the google account row into mail_accounts. The login's
-// own token updates later never touch our copy.
-export function connectFromGoogleAccount(db: DB, userId: string): { email: string | null; scope: string | null } {
-  const row = db
-    .prepare('SELECT a.refreshToken as refresh_token, a.scope, u.email FROM account a JOIN "user" u ON u.id = a.userId WHERE a.userId = ? AND a.providerId = ? ORDER BY a.updatedAt DESC LIMIT 1')
-    .get(userId, "google") as { refresh_token: string | null; scope: string | null; email: string | null } | undefined;
-  if (!row) throw new InboxConnectError("no_google");
-  const scopes = (row.scope ?? "").split(/[,\s]+/).filter(Boolean);
-  if (!scopes.includes(GMAIL_SCOPE)) throw new InboxConnectError("no_scope");
-  if (!row.refresh_token) throw new InboxConnectError("no_refresh_token");
-  upsertMailAccount(db, { userId, email: row.email, refreshToken: row.refresh_token, scope: row.scope });
-  tokenCache().delete(userId);
-  logEvent(db, "inbox_connected", { userId, payload: { email: row.email } });
-  return { email: row.email, scope: row.scope };
-}
-
-export async function disconnectMailbox(db: DB, userId: string, deps: { fetcher?: typeof fetch } = {}): Promise<boolean> {
-  const account = getMailAccount(db, userId);
+export async function disconnectMailbox(db: DB, userId: string, accountId: number, deps: { fetcher?: typeof fetch } = {}): Promise<boolean> {
+  const account = getMailAccount(db, userId, accountId);
   if (!account) return false;
-  deleteMailAccount(db, userId);
-  tokenCache().delete(userId);
-  logEvent(db, "inbox_disconnected", { userId });
+  deleteMailAccount(db, userId, accountId);
+  tokenCache().delete(accountId);
+  logEvent(db, "inbox_disconnected", { userId, payload: { accountId, email: account.email } });
   await revokeToken(account.refreshToken, deps.fetcher ?? fetch);
   return true;
 }
 
-export interface InboxStatus {
-  connected: boolean;
-  email: string | null;
-  connectedAt: string | null;
+export interface MailboxStatus {
+  id: number;
+  email: string;
+  connectedAt: string;
   syncedAt: string | null; // UTC sqlite datetime
   lastError: string | null;
-  events: { total: number; matched: number; applied: number };
+  events: MailEventCounts;
+}
+
+export interface InboxStatus {
+  mailboxes: MailboxStatus[];
+  events: MailEventCounts;
 }
 
 export function inboxStatus(db: DB, userId: string): InboxStatus {
-  const a = getMailAccount(db, userId);
   return {
-    connected: !!a && a.enabled,
-    email: a?.email ?? null,
-    connectedAt: a?.connectedAt ?? null,
-    syncedAt: a?.syncedAt ?? null,
-    lastError: a?.lastError ?? null,
+    mailboxes: listMailAccounts(db, userId).map((a) => ({
+      id: a.id,
+      email: a.email,
+      connectedAt: a.connectedAt,
+      syncedAt: a.syncedAt,
+      lastError: a.lastError,
+      events: countMailEvents(db, userId, a.id),
+    })),
     events: countMailEvents(db, userId),
   };
 }

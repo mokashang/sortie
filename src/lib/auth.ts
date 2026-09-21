@@ -96,16 +96,7 @@ export function authPublicConfig(): AuthPublicConfig {
 export function buildAuth() {
   const env = process.env;
   const google = googleConfigured(env)
-    ? {
-        google: {
-          clientId: env.GOOGLE_CLIENT_ID as string,
-          clientSecret: env.GOOGLE_CLIENT_SECRET as string,
-          // 邮箱同步 (spec 2026-09-21 inbox-sync §3): Google only issues a refresh token with
-          // access_type=offline. Harmless for plain sign-in (the consent screen is unchanged); the
-          // Gmail link on 设置 adds the gmail.readonly scope and prompt=consent per call.
-          accessType: "offline" as const,
-        },
-      }
+    ? { google: { clientId: env.GOOGLE_CLIENT_ID as string, clientSecret: env.GOOGLE_CLIENT_SECRET as string } }
     : {};
   return betterAuth({
     appName: "Sortie",
