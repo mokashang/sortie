@@ -292,7 +292,7 @@ describe("answerChat with tools", () => {
     const r = await answerChat(db, U, "en", [{ role: "user", content: "apply to amazon" }], { backend, onDelta: (t) => deltas.push(t), toolDeps: deps });
     expect(r.text).toMatch(/could not finish/i);
     expect(deltas).toEqual([r.text]);
-    expect(n).toBe(5);
+    expect(n).toBe(7); // MAX_TOOL_ROUNDS tool calls, then one more turn that is cut off
 
     const bad: LlmBackend = {
       name: "bad",
@@ -300,5 +300,45 @@ describe("answerChat with tools", () => {
     };
     const r2 = await answerChat(db, U, "en", [{ role: "user", content: "x" }], { backend: bad, toolDeps: deps });
     expect(r2.text).toBe("Sorry, say that again?");
+  });
+});
+
+// 「上网找」 (find_online): borrows the chat model's web tools; only the subscription backend has them.
+import { findOnline, parseOnlinePostings } from "@/assistant/tools";
+
+describe("find_online", () => {
+  it("parses the JSON array the web step answers with and drops aggregators / junk", () => {
+    const text = 'Here you go:\n[{"url":"https://www.amazon.jobs/en/jobs/1/sde-intern","company":"Amazon","title":"SDE Intern – Jan 2027","location":"USA"},{"url":"https://www.linkedin.com/jobs/view/1","company":"Amazon","title":"x","location":null},{"url":"notaurl","company":"A","title":"B"},{"url":"https://boards.greenhouse.io/x/jobs/2","company":"","title":"B"}]';
+    expect(parseOnlinePostings(text)).toEqual([{ url: "https://www.amazon.jobs/en/jobs/1/sde-intern", company: "Amazon", title: "SDE Intern – Jan 2027", location: "USA" }]);
+    expect(parseOnlinePostings("no json here")).toEqual([]);
+    expect(parseAction('ACTION: {"tool":"find_online","query":"Amazon SDE intern winter 2027"}')).toEqual({ tool: "find_online", query: "Amazon SDE intern winter 2027" });
+  });
+
+  it("refuses without the subscription backend, and otherwise lists postings with their library state", async () => {
+    const { db, deps } = setup();
+    const codex: LlmBackend = { name: "codex", complete: async () => ({ text: "[]", backend: "codex" }) };
+    const refused = await findOnline(db, U, "amazon intern", { ...deps, chatBackend: codex });
+    expect(refused.event).toMatchObject({ tool: "find_online", ok: false, blocked: "no_web_tools" });
+
+    const known = seedJob(db, "Amazon", "SDE Intern – Jan 2027", { url: "https://www.amazon.jobs/en/jobs/1/sde-intern" });
+    const seen: LlmRequest[] = [];
+    const sub: LlmBackend = {
+      name: "subscription",
+      complete: async (req) => {
+        seen.push(req);
+        return {
+          text: '[{"url":"https://www.amazon.jobs/en/jobs/1/sde-intern","company":"Amazon","title":"SDE Intern – Jan 2027","location":"USA"},{"url":"https://www.amazon.jobs/en/jobs/2/sde-intern-may","company":"Amazon","title":"SDE Intern – May 2027","location":"USA"}]',
+          backend: "subscription",
+        };
+      },
+    };
+    const r = await findOnline(db, U, "Amazon SDE intern winter spring 2027", { ...deps, chatBackend: sub });
+    expect(seen[0]).toMatchObject({ bare: true, webTools: true, tier: "smart" });
+    expect(seen[0].prompt).toContain("Amazon SDE intern winter spring 2027");
+    expect(r.event).toMatchObject({ tool: "find_online", ok: true, count: 2 });
+    expect(r.observation).toContain(`already in the library as #${known}`);
+    expect(r.observation).toContain("https://www.amazon.jobs/en/jobs/2/sde-intern-may · not in the library — add_job");
+    const none = await findOnline(db, U, "x", { ...deps, chatBackend: { name: "subscription", complete: async () => ({ text: "[]", backend: "subscription" }) } });
+    expect(none.event).toMatchObject({ ok: true, count: 0 });
   });
 });

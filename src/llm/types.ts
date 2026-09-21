@@ -11,6 +11,10 @@ export interface LlmRequest {
   // repository memory and no MCP servers — it can only read what the prompt hands it. Backends
   // that are already isolated (codex exec, a direct API call) may ignore the flag.
   bare?: boolean;
+  // With bare: the model may use the backend's own web search / page fetch tools and nothing
+  // else — the chat's 「上网找」 step (spec 2026-09-18 §9). Backends without such tools ignore it;
+  // callers check the backend name first.
+  webTools?: boolean;
 }
 
 export interface LlmResult {

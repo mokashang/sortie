@@ -33,7 +33,7 @@ export const POST = withUser(async (req, { userId }) => {
           onDelta: (text) => send({ delta: text }),
           onEvent: (event) => send({ action: event }),
           // Scoring a posting the user asked for uses the global AI provider, like the pipeline.
-          toolDeps: { backend: getBackend() },
+          toolDeps: { backend: getBackend(), chatBackend: backend },
         });
         send({ done: true, text: r.text, backend: r.backend });
       } catch (e) {

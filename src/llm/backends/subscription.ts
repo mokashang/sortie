@@ -197,7 +197,11 @@ export class SubscriptionBackend implements LlmBackend {
     if (req.bare) {
       // Bare mode (LlmRequest.bare): our system prompt is the whole system prompt, no built-in
       // tools, and no settings / CLAUDE.md / skills from the user or the working directory.
-      args.push("--system-prompt", req.system ?? "", "--tools", "", "--setting-sources", "");
+      args.push("--system-prompt", req.system ?? "", "--setting-sources", "");
+      // 「上网找」 (find_online): the CLI's web search and page fetch are the only tools on — no
+      // shell, no file access — and the turn count is capped so a search cannot run away.
+      if (req.webTools) args.push("--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch", "WebFetch", "--max-turns", "8");
+      else args.push("--tools", "");
     } else if (req.system) {
       args.push("--append-system-prompt", req.system);
     }

@@ -173,7 +173,7 @@ describe("buildChatRequest", () => {
     });
     expect(req.bare).toBe(true);
     expect(req.tier).toBe("smart");
-    expect(req.system).toContain("exactly three things through TOOLS");
+    expect(req.system).toContain("exactly four things through TOOLS");
     expect(req.system).toContain("ACTION: {");
     expect(req.system).toContain("# Sortie");
     expect(req.system).toContain("待确认 To confirm");

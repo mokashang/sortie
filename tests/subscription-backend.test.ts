@@ -159,3 +159,26 @@ describe("SubscriptionBackend.stream", () => {
     expect((await be.stream({ prompt: "p" }, () => {})).text).toBe("Hel");
   });
 });
+
+describe("SubscriptionBackend web tools", () => {
+  it("turns on only WebSearch/WebFetch, pre-approved and turn-capped, when a bare request asks for them", async () => {
+    const seen: string[][] = [];
+    const be = new SubscriptionBackend({
+      runner: async (_bin, args) => {
+        seen.push(args);
+        return { stdout: JSON.stringify({ result: "[]" }), stderr: "", exitCode: 0 };
+      },
+    });
+    await be.complete({ prompt: "q", system: "rules", bare: true, webTools: true });
+    const args = seen[0];
+    const at = (flag: string) => args[args.indexOf(flag) + 1];
+    expect(at("--tools")).toBe("WebSearch,WebFetch");
+    expect(args.slice(args.indexOf("--allowedTools") + 1, args.indexOf("--allowedTools") + 3)).toEqual(["WebSearch", "WebFetch"]);
+    expect(at("--max-turns")).toBe("8");
+    expect(at("--setting-sources")).toBe("");
+    // without the flag, bare mode still has no tools at all
+    await be.complete({ prompt: "q", system: "rules", bare: true });
+    expect(seen[1][seen[1].indexOf("--tools") + 1]).toBe("");
+    expect(seen[1]).not.toContain("--allowedTools");
+  });
+});
