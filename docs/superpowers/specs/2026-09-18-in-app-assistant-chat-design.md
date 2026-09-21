@@ -112,3 +112,15 @@
 不是才流给用户,所以用户只看到最后的回答。每个工具的结果同时作为 `{"action":{…}}` 事件进流,抽屉在气泡下
 显示「已开始投递 · 任务 #N」(点了去投递页)或「已加入职位库」。红线不变:提交仍只能由 App 批准,
 发消息没有工具;工具只以当前账号执行。测试 `tests/assistant-tools.test.ts`。
+
+### 9.1 「上网找」(2026-09-21,用户追加:「你需要有能上网找的功能」)
+
+第四个工具 `find_online {query}`(`src/assistant/tools.ts` `findOnline`):借用聊天模型自己的联网能力——
+`LlmRequest.webTools`,subscription 后端在裸模式下把 `--tools ""` 换成 `--tools WebSearch,WebFetch
+--allowedTools WebSearch WebFetch --max-turns 8`(仍然 `--setting-sources ""`,没有 shell / 文件工具),
+单独一次补全:系统提示只许回 JSON 数组 `[{url,company,title,location}]`,只要官方招聘页(公司官网 / ATS,
+不要 LinkedIn / Indeed 等聚合站),偏向美国岗;`parseOnlinePostings` 过滤聚合站与坏链接,≤5 条。结果里每条标注
+「已在库 #N(状态)」或「不在库 → add_job」,模型再按用户意图 `add_job` → `apply`。只有 Claude 订阅有联网工具:
+聊天模型是 Codex / GPT 时工具直接回「需要把问答助手切到 Claude 订阅」。`MAX_TOOL_ROUNDS` 提到 6(库内搜 →
+上网找 → 入库 → 投 → 回答)。实测一次上网找约 12–60 秒,约 2 轮。规则:库里没有合适的、或用户明确要上网 /
+要别的季节的岗位时才用;绝不投用户没要的岗。

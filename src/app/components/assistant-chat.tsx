@@ -68,7 +68,7 @@ function saveTurns(turns: ChatTurn[]): void {
 
 // Reads the NDJSON answer stream: {"delta"} lines grow the bubble, {"done"} closes it, {"error"} marks it.
 async function streamAnswer(
-  history: { role: "user" | "assistant"; content: string }[],
+  history: { role: "user" | "assistant"; content: string; actions?: ToolEvent[] }[],
   onDelta: (text: string) => void,
   onAction: (event: ToolEvent) => void,
   signal: AbortSignal
@@ -141,7 +141,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     const history = base
       .filter((t) => t.status === "done" || t.role === "user")
       .slice(-SEND_TURNS)
-      .map((t) => ({ role: t.role, content: t.content }));
+      .map((t) => (t.actions?.length ? { role: t.role, content: t.content, actions: t.actions } : { role: t.role, content: t.content }));
     const id = newId();
     setTurns([...base, { id, role: "assistant", content: "", status: "streaming" }]);
     setBusy(true);

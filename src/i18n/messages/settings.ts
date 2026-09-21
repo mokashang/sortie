@@ -172,7 +172,7 @@ export const settings = defineMessages({
     },
     chat: {
       title: "问答助手",
-      description: "顶栏「问助手」里回答问题用的模型。它只读:看得到任务、卡片和队列的当前情况,不会替你操作。",
+      description: "顶栏「问助手」里回答问题用的模型。「上网找岗位」只有 Claude 订阅能做(它自带联网搜索)。",
       claude: "Claude 订阅",
       claudeDescription: "用本机 claude 命令行的登录,不需要 API key。",
       follow: "跟随 AI 提供方",
@@ -393,7 +393,7 @@ export const settings = defineMessages({
     },
     chat: {
       title: "Chat assistant",
-      description: "The model behind the top bar's Ask button. It is read-only: it sees the current tasks, cards and queue and never acts for you.",
+      description: "The model behind the top bar's Ask button. Looking postings up online works only with the Claude subscription (it has built-in web search).",
       claude: "Claude subscription",
       claudeDescription: "Uses the claude command line's login on this machine; no API key needed.",
       follow: "Follow the AI provider",

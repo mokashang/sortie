@@ -8,7 +8,7 @@ export const chat = defineMessages({
     openAria: "问助手:关于任务和功能的任何问题",
     openTitle: (shortcut: string) => `问助手 (${shortcut})`,
     title: "问助手",
-    subtitle: "看得到任务、待处理、待确认、内推和队列的当前情况;能帮你投某个岗位、按链接加岗位,其他都只回答不操作。",
+    subtitle: "看得到任务、待处理、待确认、内推和队列的当前情况;能帮你投某个岗位、上网找岗位、按链接加岗位,其他都只回答不操作。",
     emptyTitle: "有什么想问的?",
     emptyDescription: "关于某个任务跑到哪了、为什么没完成、某张卡怎么处理,或者任何功能怎么用,都可以直接问。",
     examples: ["助手现在在做什么?", "上一次投递任务为什么没完成?", "帮我投 Amazon 的 2027 summer intern", "自动投递开了会发生什么?"],
@@ -27,6 +27,7 @@ export const chat = defineMessages({
     tooManySteps: "这一步我没能完成,请换个说法再试一次。",
     actionApply: (id: number) => `已开始投递 · 任务 #${id}`,
     actionAdded: "已加入职位库",
+    actionFound: (n: number) => `上网找到 ${n} 条`,
     actionOpenApply: "去投递页",
   },
   en: {
@@ -34,7 +35,7 @@ export const chat = defineMessages({
     openAria: "Ask the assistant: any question about tasks and features",
     openTitle: (shortcut: string) => `Ask the assistant (${shortcut})`,
     title: "Ask the assistant",
-    subtitle: "Sees the current tasks, to-do cards, confirmations, referrals and queue; can apply to a posting for you or add one by link, and otherwise only answers.",
+    subtitle: "Sees the current tasks, to-do cards, confirmations, referrals and queue; can apply to a posting for you, look one up online or add one by link, and otherwise only answers.",
     emptyTitle: "What would you like to know?",
     emptyDescription: "Where a task got to, why it did not finish, what a card wants from you, or how any feature works — just ask.",
     examples: ["What is the assistant doing right now?", "Why did the last apply task not finish?", "Apply to Amazon's 2027 summer intern for me", "What happens when auto-apply is on?"],
@@ -53,6 +54,7 @@ export const chat = defineMessages({
     tooManySteps: "I could not finish that step; please try rephrasing.",
     actionApply: (id: number) => `Application started · task #${id}`,
     actionAdded: "Added to the library",
+    actionFound: (n: number) => (n === 1 ? "Found 1 posting online" : `Found ${n} postings online`),
     actionOpenApply: "Open Apply",
   },
 });

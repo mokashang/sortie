@@ -11,9 +11,9 @@ import { fetchJdText } from "@/scanner/jd-fetch";
 import { directionName } from "@/app/lib/labels";
 import { localFull } from "@/app/lib/time";
 
-// The three things the 问助手 chat can DO besides answering (spec 2026-09-18 §9): look a posting
-// up in the library, start a direct application to one, and add a posting the user hands it by
-// URL. Each is a plain function over the same code paths the pages use — a targeted apply run is
+// The things the 问助手 chat can DO besides answering (spec 2026-09-18 §9): look a posting up in
+// the library, look for one on the web, start a direct application to one, and add a posting the
+// user hands it by URL. Each is a plain function over the same code paths the pages use — a targeted apply run is
 // queued exactly like the 待处理 card's 「让助手再试一次」 — and every result is returned as a short
 // English observation the model turns into the answer. Nothing here submits or sends: the run
 // still ends on a 待确认 card (or the 自动投递 switch), and messages to people have no tool at all.
@@ -21,7 +21,8 @@ import { localFull } from "@/app/lib/time";
 export type ToolCall =
   | { tool: "search_jobs"; query: string }
   | { tool: "apply"; jobId: number; force?: boolean }
-  | { tool: "add_job"; url: string; company: string; title: string; location?: string | null };
+  | { tool: "add_job"; url: string; company: string; title: string; location?: string | null }
+  | { tool: "find_online"; query: string };
 
 export interface ToolEvent {
   tool: ToolCall["tool"];
@@ -32,6 +33,8 @@ export interface ToolEvent {
   runId?: number;
   merged?: boolean;
   blocked?: string;
+  // find_online: how many postings the web search returned
+  count?: number;
 }
 
 export interface ToolResult {
@@ -42,6 +45,8 @@ export interface ToolResult {
 export interface ToolDeps {
   // Scores a posting that has no match row yet (the global AI provider, like the pipeline).
   backend?: LlmBackend;
+  // The chat's own model, whose web tools 「上网找」 borrows (only the Claude subscription has them).
+  chatBackend?: LlmBackend;
   followup?: FollowupDeps;
   fetchJd?: (url: string) => Promise<string | null>;
   now?: () => number;
@@ -49,14 +54,26 @@ export interface ToolDeps {
 
 export const MAX_SEARCH_ROWS = 8;
 
-// Parses the single `ACTION: {...}` line the model may answer with. Null when the text is an
-// ordinary answer; throws on a malformed or unknown action so the loop can tell the model.
+// Where an `ACTION:` line starts in a model turn (at a line start), or -1. Models sometimes put
+// a sentence before the action line despite the rules (production 2026-09-20: "我就投这条…
+// ACTION: {…}"), so the action counts wherever the line is — the prose before it is dropped.
+export function actionIndex(text: string): number {
+  const m = text.match(/(^|\n)\s*ACTION:/);
+  return m ? (m.index ?? 0) + m[1].length : -1;
+}
+
+// Parses the `ACTION: {...}` line the model may answer with. Null when the text is an ordinary
+// answer; throws on a malformed or unknown action so the loop can tell the model.
 export function parseAction(text: string): ToolCall | null {
-  const m = text.trim().match(/^ACTION:\s*(\{[\s\S]*\})\s*$/);
-  if (!m) return null;
+  const at = actionIndex(text);
+  if (at < 0) return null;
+  const rest = text.slice(at).replace(/^\s*ACTION:\s*/, "");
+  const open = rest.indexOf("{");
+  const close = rest.lastIndexOf("}");
+  if (open < 0 || close < open) throw new Error("ACTION is not valid JSON");
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(m[1]);
+    raw = JSON.parse(rest.slice(open, close + 1));
   } catch {
     throw new Error("ACTION is not valid JSON");
   }
@@ -64,6 +81,9 @@ export function parseAction(text: string): ToolCall | null {
     case "search_jobs":
       if (typeof raw.query !== "string" || !raw.query.trim()) throw new Error("search_jobs needs a query");
       return { tool: "search_jobs", query: raw.query.trim().slice(0, 200) };
+    case "find_online":
+      if (typeof raw.query !== "string" || !raw.query.trim()) throw new Error("find_online needs a query");
+      return { tool: "find_online", query: raw.query.trim().slice(0, 300) };
     case "apply": {
       const id = Number(raw.jobId);
       if (!Number.isInteger(id) || id <= 0) throw new Error("apply needs a numeric jobId");
@@ -278,6 +298,77 @@ export async function addJob(db: DB, call: Extract<ToolCall, { tool: "add_job" }
   };
 }
 
+
+export interface OnlinePosting {
+  url: string;
+  company: string;
+  title: string;
+  location: string | null;
+}
+
+const FIND_SYSTEM = `You search the public web for job postings on behalf of a job-search app. Use WebSearch (and WebFetch when a result page must be checked). Only return postings whose url is the official application page (the company's careers site or its applicant system such as Greenhouse, Lever, Ashby, Workday, amazon.jobs) — never job aggregators, news, forums or LinkedIn. Prefer roles in the United States. Reply with ONLY a JSON array (no prose, no code fence) of up to 5 objects: {"url": string, "company": string, "title": string, "location": string|null}. If nothing fits, reply with [].`;
+
+// Parses the JSON array the web-search step answers with; tolerant of fences and prose around it.
+export function parseOnlinePostings(text: string): OnlinePosting[] {
+  const open = text.indexOf("[");
+  const close = text.lastIndexOf("]");
+  if (open < 0 || close < open) return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text.slice(open, close + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: OnlinePosting[] = [];
+  for (const item of raw) {
+    const o = item as Record<string, unknown>;
+    const url = typeof o?.url === "string" ? o.url.trim() : "";
+    const company = typeof o?.company === "string" ? o.company.trim() : "";
+    const title = typeof o?.title === "string" ? o.title.trim() : "";
+    if (!/^https?:\/\/\S+$/i.test(url) || !company || !title) continue;
+    if (/linkedin\.com|indeed\.com|glassdoor\.com|ziprecruiter\.com|simplyhired|levels\.fyi/i.test(url)) continue;
+    out.push({ url, company: company.slice(0, 200), title: title.slice(0, 300), location: typeof o.location === "string" ? o.location.slice(0, 300) : null });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+// 「上网找」: asks the chat's model — with its web tools switched on and nothing else — for the
+// official posting links that match, then says for each whether it is already in the library.
+// Only the Claude subscription backend has web tools; other providers get a plain refusal.
+export async function findOnline(db: DB, userId: string, query: string, deps: ToolDeps = {}): Promise<ToolResult> {
+  const be = deps.chatBackend;
+  if (!be || be.name !== "subscription") {
+    return {
+      observation: "find_online: searching the web needs the Claude subscription as the chat model (Settings → Chat assistant → Claude subscription); the current chat model has no web tools. Tell the user, and offer add_job if they can paste a link.",
+      event: { tool: "find_online", ok: false, blocked: "no_web_tools" },
+    };
+  }
+  let text: string;
+  try {
+    const r = await be.complete({ system: FIND_SYSTEM, prompt: `Find current job postings for: ${query}\nToday is ${new Date(deps.now?.() ?? Date.now()).toISOString().slice(0, 10)}.`, tier: "smart", bare: true, webTools: true, maxTokens: 1500 });
+    text = r.text;
+  } catch (e) {
+    return { observation: `find_online: the web search failed (${e instanceof Error ? e.message.slice(0, 160) : String(e)}). Tell the user and offer to try again or take a link.`, event: { tool: "find_online", ok: false, blocked: "error" } };
+  }
+  const found = parseOnlinePostings(text);
+  if (found.length === 0) {
+    return { observation: `find_online: no official posting found online for "${query}". Say so; the user can paste a link (add_job) or ask again with other words.`, event: { tool: "find_online", ok: true, count: 0 } };
+  }
+  const lines = found.map((p) => {
+    const row = db.prepare("SELECT j.id, a.status, a.needs_manual_reason, a.submitted_at FROM jobs j LEFT JOIN applications a ON a.job_id = j.id AND a.user_id = ? WHERE j.apply_url = ?").get(userId, p.url) as
+      | { id: number; status: string | null; needs_manual_reason: string | null; submitted_at: string | null }
+      | undefined;
+    const state = row ? `already in the library as #${row.id} (${describeState(row)}) — use apply with that jobId` : "not in the library — add_job with exactly these url/company/title/location, then apply";
+    return `- ${p.company} · ${p.title} · ${p.location ?? "?"} · ${p.url} · ${state}`;
+  });
+  return {
+    observation: [`find_online: ${found.length} official posting(s) found on the web:`, ...lines, "Pick the one that matches what the user asked (ask if several fit equally); never add or apply to a posting the user did not ask for."].join("\n"),
+    event: { tool: "find_online", ok: true, count: found.length },
+  };
+}
+
 export async function runTool(db: DB, userId: string, call: ToolCall, lang: Lang, deps: ToolDeps = {}): Promise<ToolResult> {
   switch (call.tool) {
     case "search_jobs": {
@@ -288,5 +379,7 @@ export async function runTool(db: DB, userId: string, call: ToolCall, lang: Lang
       return applyToJob(db, userId, call.jobId, call.force === true, lang, deps);
     case "add_job":
       return addJob(db, call, deps);
+    case "find_online":
+      return findOnline(db, userId, call.query, deps);
   }
 }
