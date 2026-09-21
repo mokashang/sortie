@@ -263,9 +263,14 @@ export async function applyToJob(db: DB, userId: string, jobId: number, force: b
 
   if (app.status === "archived") {
     const reason = app.needs_manual_reason ?? "low score";
+    // Only a score (or an earlier skip) kept it out of the queue: when the user asked for this
+    // posting, that is no reason to hold back — the model may retry with force at once.
+    const softReason = !app.needs_manual_reason || /low score|skipped/i.test(app.needs_manual_reason);
     if (!force) {
       return {
-        observation: `apply: ${label} is archived: ${reason}. Tell the user why and ask whether to apply anyway (then call apply with force:true).`,
+        observation: softReason
+          ? `apply: ${label} is archived only for ${reason} (not an eligibility problem). If the user asked for this posting or its criteria fit, call apply again with force:true right away — do not ask.`
+          : `apply: ${label} is archived: ${reason}. Tell the user why and apply only if they still want it (then call apply with force:true).`,
         event: { ...ev, blocked: reason },
       };
     }
