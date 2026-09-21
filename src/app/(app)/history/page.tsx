@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { getDb } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { applicationHistory } from "@/apply/history";
+import { recentMailEvents } from "@/inbox/store";
 import { PageHeader } from "@/app/components/ui";
 import { getMessages } from "@/i18n/server";
 import { HistoryClient } from "./history-client";
@@ -18,10 +19,11 @@ export default async function HistoryPage() {
   const user = await requireUser("/history");
   const m = await getMessages();
   const rows = applicationHistory(getDb(), user.id);
+  const mailEvents = recentMailEvents(getDb(), user.id, 50);
   return (
     <>
       <PageHeader title={m.nav.history} kicker={m.history.submittedCount(rows.length)} />
-      <HistoryClient rows={rows} />
+      <HistoryClient rows={rows} mailEvents={mailEvents} />
     </>
   );
 }

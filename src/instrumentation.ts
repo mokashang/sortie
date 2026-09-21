@@ -55,6 +55,13 @@ export async function register() {
     // Referral-conversation monitor: the route itself only acts at 09:xx / 18:xx local.
     fetch(`http://127.0.0.1:${port}/api/referral/tick`, { method: "POST", headers }).catch((e) => console.error("[referral tick]", e));
   }, 60_000);
+  // 邮箱同步 (spec 2026-09-21 inbox-sync): every 15 minutes, read new mail for each connected
+  // mailbox and file application results into 历史. The route is a no-op with nothing connected.
+  if (!process.env.INBOX_SYNC_DISABLED) {
+    setInterval(() => {
+      fetch(`http://127.0.0.1:${port}/api/inbox/tick`, { method: "POST", headers }).catch((e) => console.error("[inbox tick]", e));
+    }, 15 * 60_000);
+  }
   // Attended-session dispatcher: spawns the selected CLI agent for queued user_chrome runs
   // when no desktop session is heartbeating (see src/executor/attended.ts). Cheap when idle.
   if (!process.env.ATTENDED_DISPATCH_DISABLED) {
@@ -62,5 +69,5 @@ export async function register() {
       fetch(`http://127.0.0.1:${port}/api/executor/dispatch`, { method: "POST", headers }).catch((e) => console.error("[attended dispatch]", e));
     }, 10_000);
   }
-  console.log("[jobseeker] scheduler registered: scan tick every 60s, attended dispatch every 10s (in-process timers)");
+  console.log("[jobseeker] scheduler registered: scan tick every 60s, inbox sync every 15m, attended dispatch every 10s (in-process timers)");
 }

@@ -2,6 +2,7 @@
 // and the /history client component. Kept free of any db import so it can be bundled client-side.
 import type { Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
+import type { MailOutcome } from "@/inbox/classify";
 
 export const POST_SUBMIT_STAGES = [
   "submitted",
@@ -73,4 +74,15 @@ export interface HistoryRow {
   // 内推 (a referral was recorded for this application) vs 海投 — the /history 方式 column.
   applyMode: "referral" | "direct";
   referralPersonName: string | null;
+  // The latest mail 邮箱同步 filed against this application (spec 2026-09-21), for the row chip.
+  lastMail: HistoryMail | null;
+}
+
+export interface HistoryMail {
+  outcome: MailOutcome;
+  receivedAt: string; // local "YYYY-MM-DD HH:MM"
+  subject: string;
+  summary: string | null;
+  nextStep: string | null;
+  applied: boolean;
 }

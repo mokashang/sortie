@@ -183,6 +183,8 @@ export function purgeUserData(db: DB, userId: string): Record<string, number> {
     out.profiles = db.prepare("DELETE FROM profiles WHERE user_id = ?").run(userId).changes;
     out.api_tokens = db.prepare("DELETE FROM api_tokens WHERE user_id = ?").run(userId).changes;
     out.events = db.prepare("DELETE FROM events WHERE user_id = ?").run(userId).changes;
+    out.mail_events = db.prepare("DELETE FROM mail_events WHERE user_id = ?").run(userId).changes;
+    out.mail_accounts = db.prepare("DELETE FROM mail_accounts WHERE user_id = ?").run(userId).changes;
     db.prepare("DELETE FROM profile WHERE key LIKE ?").run(`%:${userId}`);
   })();
   return out;

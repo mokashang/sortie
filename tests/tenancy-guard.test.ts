@@ -6,7 +6,7 @@ import path from "path";
 // table in application code must name user_id explicitly. The column's DEFAULT ('legacy') exists
 // for migration and test seeding only — a forgotten user_id in src/ would silently file a row
 // under the unclaimed bucket, invisible to every account.
-const PER_USER = ["matches", "applications", "people", "outreach", "resumes", "experiences", "executor_runs", "profiles", "api_tokens"];
+const PER_USER = ["matches", "applications", "people", "outreach", "resumes", "experiences", "executor_runs", "profiles", "api_tokens", "mail_accounts", "mail_events"];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

@@ -9,6 +9,7 @@ import { SettingsClient, type LastTick } from "./settings-client";
 import { getAiProvider, providerStatuses } from "@/ai/config";
 import { getAutoSubmit } from "@/apply/auto-submit";
 import { getChatProvider } from "@/assistant/provider";
+import { inboxStatus } from "@/inbox/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,7 @@ export default async function SettingsPage() {
         ai={{ provider: getAiProvider(getDb()), providers: providerStatuses() }}
         autoSubmit={getAutoSubmit(getDb(), user.id)}
         chatProvider={getChatProvider(getDb(), user.id)}
+        inbox={inboxStatus(getDb(), user.id)}
       />
     </>
   );

@@ -24,7 +24,7 @@ describe("v11 → v12 migration", () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "v12-")), "db.sqlite");
     makeV11(file);
     const db = openDb(file);
-    expect(db.pragma("user_version", { simple: true })).toBe(16);
+    expect(db.pragma("user_version", { simple: true })).toBe(17);
     const rows = db.prepare("SELECT title, board_key, ats FROM jobs ORDER BY id").all();
     expect(rows[0]).toEqual({ title: "GPU Eng New Grad", board_key: "workday:nvidia.wd5/NVIDIAExternalCareerSite", ats: "workday" });
     expect(rows[1]).toEqual({ title: "SWE New Grad", board_key: null, ats: "greenhouse" });
