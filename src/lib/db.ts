@@ -23,7 +23,10 @@ function readSchema(): string {
   }
 }
 
-const SCHEMA_VERSION = 16;
+// v17 (2026-09-21): mail_accounts + mail_events (邮箱同步, spec 2026-09-21 inbox-sync). Both are
+// brand-new tables, so schema.sql's CREATE TABLE IF NOT EXISTS covers old and new dbs alike — no
+// migration step beyond the version bump.
+const SCHEMA_VERSION = 17;
 
 function columnsOf(db: DB, table: string): string[] {
   return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);

@@ -8,6 +8,7 @@ import { common } from "./common";
 import { dashboard } from "./dashboard";
 import { errors } from "./errors";
 import { history } from "./history";
+import { inbox } from "./inbox";
 import { labels } from "./labels";
 import { legal } from "./legal";
 import { mail } from "./mail";
@@ -52,6 +53,7 @@ function tree(l: Lang) {
     queue: queue[l],
     apply: apply[l],
     history: history[l],
+    inbox: inbox[l],
     network: network[l],
     profile: profile[l],
     dashboard: dashboard[l],

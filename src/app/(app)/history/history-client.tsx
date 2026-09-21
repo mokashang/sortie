@@ -1,7 +1,10 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { directionName } from "@/app/lib/labels";
+import { Mail } from "lucide-react";
+import { directionName, type Tone } from "@/app/lib/labels";
+import type { MailEventRow } from "@/inbox/store";
+import type { MailOutcome } from "@/inbox/classify";
 import { POST_SUBMIT_STAGES, stageLabels, type HistoryRow, type PostSubmitStage } from "@/apply/stages";
 import { postJson, errorMessage } from "@/app/lib/api";
 import { Chip, EmptyState, LinkButton, PromptDialog, Section, Segmented, Stat, StatStrip, Tabs, useToast } from "@/app/components/ui";
@@ -18,7 +21,81 @@ function nowLocal(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
+export function mailTone(outcome: MailOutcome): Tone {
+  switch (outcome) {
+    case "offer":
+      return "warn";
+    case "oa":
+    case "interview":
+      return "good";
+    case "rejected":
+      return "danger";
+    case "received":
+    case "other":
+      return "info";
+    default:
+      return "neutral";
+  }
+}
+
+// 邮件动态: what 邮箱同步 read, newest first, collapsed to a handful until expanded.
+function MailFeed({ events }: { events: MailEventRow[] }) {
+  const m = useMessages();
+  const [expanded, setExpanded] = useState(false);
+  if (events.length === 0) return null;
+  const shown = expanded ? events : events.slice(0, 6);
+  return (
+    <Section
+      title={m.inbox.history.feedTitle}
+      count={events.length}
+      description={m.inbox.history.feedDescription}
+      actions={
+        events.length > 6 ? (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? m.inbox.history.collapse : m.inbox.history.showAll(events.length)}
+          </button>
+        ) : null
+      }
+    >
+      <div className="history-list">
+        {shown.map((e) => (
+          <div key={e.id} className="history-row">
+            <span className="mono muted small history-time">{e.receivedAt.slice(5)}</span>
+            <div className="history-main">
+              <div className="row">
+                <Mail size={13} aria-hidden className="muted" />
+                <span className="serif strong">{e.company ?? e.from}</span>
+                <span className="truncate" style={{ maxWidth: 420 }} title={e.subject}>
+                  {e.subject}
+                </span>
+              </div>
+              <div className="row mt-1">
+                <Chip tone={mailTone(e.outcome)}>{m.inbox.outcome[e.outcome]}</Chip>
+                {e.applied ? <Chip outline>{m.inbox.history.applied}</Chip> : null}
+                {e.jobId == null ? <Chip outline>{m.inbox.history.unmatched}</Chip> : null}
+                {e.jobId != null && !e.applied && (e.outcome === "rejected" || e.outcome === "oa" || e.outcome === "interview" || e.outcome === "offer") ? (
+                  <Chip outline>{m.inbox.history.lowConfidence}</Chip>
+                ) : null}
+                {e.summary ? (
+                  <span className="muted small truncate" style={{ maxWidth: 420 }} title={e.summary}>
+                    {e.summary}
+                  </span>
+                ) : null}
+              </div>
+              {e.nextStep ? (
+                <div className="small mt-1">
+                  <span className="muted">{m.inbox.history.nextStep}:</span> {e.nextStep}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+export function HistoryClient({ rows: initial, mailEvents = [] }: { rows: HistoryRow[]; mailEvents?: MailEventRow[] }) {
   const m = useMessages();
   const lang = useLang();
   const STAGE = stageLabels(lang);
@@ -104,6 +181,8 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
 
       <HistorySankey rows={visible} />
 
+      <MailFeed events={mailEvents} />
+
       <Tabs
         ariaLabel={m.history.filters.track}
         value={direction}
@@ -148,6 +227,11 @@ export function HistoryClient({ rows: initial }: { rows: HistoryRow[] }) {
                       <Chip outline>{directionName(r.direction, lang)}</Chip>
                       {r.applyMode === "referral" ? <Chip tone="good">{m.history.row.referralVia(r.referralPersonName)}</Chip> : <Chip>{m.labels.mode.direct}</Chip>}
                       {r.resumeVersion ? <span className="muted xs mono">{m.history.row.resume(r.resumeVersion)}</span> : null}
+                      {r.lastMail ? (
+                        <Chip tone={mailTone(r.lastMail.outcome)} icon={<Mail size={11} />} title={[r.lastMail.subject, r.lastMail.summary, r.lastMail.nextStep].filter(Boolean).join(" · ")}>
+                          {m.inbox.history.chip(m.inbox.outcome[r.lastMail.outcome])}
+                        </Chip>
+                      ) : null}
                       {r.lastNote ? (
                         <span className="muted small truncate" style={{ maxWidth: 360 }} title={r.lastNote}>
                           {r.lastNote}

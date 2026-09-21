@@ -32,6 +32,22 @@ export const notify = defineMessages({
       title: (company: string) => `Sortie · 已自动投出 ${company}`,
       body: (jobTitle: string) => `${jobTitle} — 自动投递已开启,助手填好后直接提交了;记录在「历史」里。`,
     },
+    // 邮箱同步 (spec 2026-09-21): a mail moved an application's stage, or carries a next step.
+    inbox: {
+      changed: (company: string, stage: string) => `Sortie · ${company} → ${stage}`,
+      news: (company: string, outcome: string) => `Sortie · ${company} 来信:${outcome}`,
+      body: (jobTitle: string, summary: string, nextStep: string | null) =>
+        [jobTitle, summary, nextStep ? `下一步:${nextStep}` : ""].filter(Boolean).join(" — ") + " (来自邮箱,已记进「历史」)",
+      outcome: {
+        received: "已收到申请",
+        rejected: "被拒",
+        oa: "OA 邀请",
+        interview: "面试邀请",
+        offer: "Offer",
+        other: "有更新",
+        unrelated: "无关",
+      },
+    },
   },
   en: {
     todo: {
@@ -60,6 +76,21 @@ export const notify = defineMessages({
     autoSubmitted: {
       title: (company: string) => `Sortie · auto-submitted to ${company}`,
       body: (jobTitle: string) => `${jobTitle} — auto-apply is on, so the assistant submitted as soon as the form was filled; it is in History.`,
+    },
+    inbox: {
+      changed: (company: string, stage: string) => `Sortie · ${company} → ${stage}`,
+      news: (company: string, outcome: string) => `Sortie · mail from ${company}: ${outcome}`,
+      body: (jobTitle: string, summary: string, nextStep: string | null) =>
+        [jobTitle, summary, nextStep ? `Next step: ${nextStep}` : ""].filter(Boolean).join(" — ") + " (from your mailbox, recorded in History)",
+      outcome: {
+        received: "application received",
+        rejected: "rejected",
+        oa: "OA invite",
+        interview: "interview invite",
+        offer: "offer",
+        other: "update",
+        unrelated: "unrelated",
+      },
     },
   },
 });

@@ -1,4 +1,5 @@
 import { DB, logEvent } from "@/lib/db";
+import { latestMailByJob } from "@/inbox/store";
 
 // The post-submit half of the application lifecycle, owned by the /history page ("投递历史"):
 // everything that has actually been sent out (status reached 'submitted') and where it is now.
@@ -104,6 +105,7 @@ export function applicationHistory(db: DB, userId: string): HistoryRow[] {
        ORDER BY a.submitted_at DESC, a.job_id DESC`
     )
     .all(userId) as HistoryRawRow[];
+  const mailByJob = latestMailByJob(db, userId);
 
   return rows.map((r) => {
     let resumeVersion: string | null = null;
@@ -146,6 +148,10 @@ export function applicationHistory(db: DB, userId: string): HistoryRow[] {
       lastNote: r.last_note,
       applyMode: r.apply_mode,
       referralPersonName: r.referral_person_name,
+      lastMail: (() => {
+        const e = mailByJob.get(r.job_id);
+        return e ? { outcome: e.outcome, receivedAt: e.receivedAt, subject: e.subject, summary: e.summary, nextStep: e.nextStep, applied: e.applied } : null;
+      })(),
     };
   });
 }

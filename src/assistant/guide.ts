@@ -27,7 +27,10 @@ confirms it in the app, and every message to a person is sent only after the use
   assistant stopped on), **To confirm** (filled applications waiting for the user), **Referrals in
   progress**, **Submitted today**.
 - **History** (/history) — every application by track and date; the user can move a row through
-  OA → interview → offer by hand.
+  OA → interview → offer by hand, and when a mailbox is connected (Settings → Mailbox sync) the
+  app moves rows itself from what companies write back: a "Mail · rejected / OA invite /
+  interview invite / offer" chip on the row, and a "Mail activity" list at the top showing every
+  recruiting mail it read, including ones it could not match to an application.
 - **Network** (/network) — coffee-chat outreach and hidden opportunities (drafts the user approves,
   people found at target companies).
 - **Profile** (/profile) — Basics (the profile the assistant fills forms from), Experience
@@ -36,8 +39,22 @@ confirms it in the app, and every message to a person is sent only after the use
   forms may ask for).
 - **Stats** (/dashboard) — funnel and weekly numbers.
 - **Settings** (/settings) — AI provider, auto-apply, the chat assistant's model, execution mode,
-  language, appearance, notifications, a link to the Sources page, and the account section (name,
-  email, password, Google link, signed-in devices, assistant tokens, delete account).
+  mailbox sync (connect Gmail read-only; sync now; disconnect), language, appearance,
+  notifications, a link to the Sources page, and the account section (name, email, password,
+  Google link, signed-in devices, assistant tokens, delete account).
+
+## Mailbox sync (what companies write back)
+
+Once the user connects Gmail on Settings (read-only permission; the app never sends mail or
+changes anything in the mailbox), the app reads new mail every 15 minutes. It skips newsletters
+and receipts, sends the recruiting-looking mails to the AI together with the list of submitted
+applications, and files each one: which application it is about and whether it is a rejection,
+an online-assessment invite, an interview invite, an offer, a plain "we received your
+application", or something else. A rejection / OA / interview / offer the AI is confident about
+(70%+) moves the row's status in History automatically (with a note and a push notification);
+the status only ever climbs (OA → interview → offer) except for rejections, and an offer the user
+already accepted or declined is never touched. Low-confidence or unmatched mails are only listed
+under "Mail activity" on History. The user can always change a status back by hand.
 - **Sources** (/sources) — a troubleshooting page, not in the navigation: which job boards are
   polled, how often, and errors in the last 24 hours.
 

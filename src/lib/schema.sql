@@ -291,6 +291,48 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
 
+-- 邮箱同步 (spec 2026-09-21 inbox-sync §4). One connected mailbox per account: the Gmail refresh
+-- token the sync exchanges for access tokens itself (never the login's access token), plus the
+-- sync cursor. Rows are deleted on disconnect / account deletion; the token never leaves the server.
+CREATE TABLE IF NOT EXISTS mail_accounts (
+  user_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL DEFAULT 'google',
+  email TEXT,
+  refresh_token TEXT NOT NULL,
+  scope TEXT,
+  connected_at TEXT NOT NULL DEFAULT (datetime('now')),
+  synced_at TEXT,                  -- last successful sync (UTC)
+  watermark INTEGER,               -- unix seconds: only mail received after this is fetched
+  last_error TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1
+);
+
+-- Every mail the classifier looked at (after the free pre-filter): what it was, which submitted
+-- application it was matched to (job_id, NULL = none), the outcome read from it, and whether that
+-- outcome moved the application's stage. The 历史 page shows these; the body itself is not stored.
+CREATE TABLE IF NOT EXISTS mail_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,        -- Gmail message id
+  thread_id TEXT,
+  received_at TEXT NOT NULL,       -- UTC 'YYYY-MM-DD HH:MM:SS'
+  from_addr TEXT,
+  subject TEXT,
+  snippet TEXT,
+  job_id INTEGER,                  -- the matched application's job (applications.job_id for this user)
+  outcome TEXT NOT NULL,           -- received | rejected | oa | interview | offer | other | unrelated
+  confidence REAL,
+  summary TEXT,                    -- one line by the model
+  next_step TEXT,                  -- what the mail asks the user to do next, if anything
+  applied INTEGER NOT NULL DEFAULT 0,  -- 1 = this mail changed the application's stage
+  stage_from TEXT,
+  stage_to TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mail_events_user_job ON mail_events(user_id, job_id);
+CREATE INDEX IF NOT EXISTS idx_mail_events_user_received ON mail_events(user_id, received_at);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, at);
 CREATE INDEX IF NOT EXISTS idx_experiences_kind ON experiences(kind, sort_order);
