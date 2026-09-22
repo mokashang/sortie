@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db";
 import { getActor } from "@/lib/actor";
 import { authBaseUrl, authSecret } from "@/lib/auth";
 import { verifyState, CALLBACK_PATH, ConnectError } from "@/inbox/oauth";
-import { completeGoogleConnect, syncMailbox } from "@/inbox/sync";
+import { completeGoogleConnect, drainMailbox } from "@/inbox/sync";
 
 // Google sends the browser back here after consent. The state names the account that started
 // the flow and must match the session that arrives (a stranger cannot attach a mailbox to
@@ -26,7 +26,7 @@ export async function GET(req: Request): Promise<Response> {
   if (!code) return back({ inbox: "error", reason: "denied" });
   try {
     const row = await completeGoogleConnect(db, actor.userId, code, { redirectUri: `${authBaseUrl()}${CALLBACK_PATH}` });
-    await syncMailbox(db, row, {});
+    await drainMailbox(db, row, {});
     return back({ inbox: "connected", email: row.email });
   } catch (e) {
     const reason = e instanceof ConnectError ? e.code : "exchange";

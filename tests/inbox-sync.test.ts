@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { openDb, type DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
-import { completeGoogleConnect, describeSyncError, disconnectMailbox, inboxStatus, resetInboxCachesForTests, syncAllMailboxes, syncMailbox, syncUserMailboxes, MAX_MESSAGES_PER_SYNC, FETCH_GAP_MS } from "@/inbox/sync";
+import { completeGoogleConnect, describeSyncError, disconnectMailbox, drainMailbox, inboxStatus, resetInboxCachesForTests, syncAllMailboxes, syncMailbox, syncUserMailboxes, MAX_MESSAGES_PER_SYNC, FETCH_GAP_MS } from "@/inbox/sync";
 import { RETRY_DELAYS_MS } from "@/inbox/google";
 import { GMAIL_SCOPE } from "@/inbox/scope";
 import { getMailAccount, listMailAccounts, upsertMailAccount, recentMailEvents, countMailEvents } from "@/inbox/store";
@@ -166,6 +166,23 @@ describe("inbox/sync syncMailbox", () => {
     expect(second).toMatchObject({ fetched: 5, backlog: 0 });
     expect(getMailAccount(db, U, box.id)!.watermark).toBe(Math.floor((T0 - 60_000) / 1000));
     expect(countMailEvents(db, U).total).toBe(MAX_MESSAGES_PER_SYNC + 5);
+  });
+
+  it("drainMailbox repeats passes until the backlog is gone, within the pass budget", async () => {
+    const db = openDb(":memory:");
+    seedOwner(db);
+    seedJob(db, "Datadog", "SWE Intern");
+    const box = mailbox(db);
+    const many: FakeMail[] = Array.from({ length: MAX_MESSAGES_PER_SYNC * 2 + 3 }, (_, i) => ({ id: `m${i}`, from: "x@example.com", subject: `Newsletter ${i}`, text: "noise", atMs: T0 - (i + 1) * 60_000 }));
+    const { fetcher } = fakeGmail(many);
+    const deps = { fetcher, backend: fakeBackend(() => []), now: () => T0, log: () => {}, sleep: async () => {} };
+    const limited = await drainMailbox(db, box, { ...deps, maxPasses: 2 });
+    expect(limited).toMatchObject({ fetched: MAX_MESSAGES_PER_SYNC * 2, backlog: 3, error: null });
+    expect(getMailAccount(db, U, box.id)!.watermark).toBe(Math.floor(Date.parse("2026-09-02T10:00:00Z") / 1000));
+    const rest = await syncUserMailboxes(db, U, deps);
+    expect(rest[0]).toMatchObject({ fetched: 3, backlog: 0 });
+    expect(getMailAccount(db, U, box.id)!.watermark).toBe(Math.floor((T0 - 60_000) / 1000));
+    expect(countMailEvents(db, U).total).toBe(many.length);
   });
 
   it("retries a rate-limited fetch with backoff instead of failing the pass", async () => {

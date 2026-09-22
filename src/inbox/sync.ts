@@ -42,6 +42,10 @@ export const FIRST_SYNC_LOOKBACK_S = 30 * 24 * 3600;
 export const MAX_MESSAGES_PER_SYNC = 60;
 export const MAX_LISTED_PER_SYNC = 1000;
 export const FETCH_GAP_MS = 120;
+// A tick (or "sync now") repeats the pass while a backlog remains, up to this many times, so a
+// freshly connected mailbox is read in an hour rather than a day. Each pass stays inside the
+// per-minute quota on its own.
+export const MAX_PASSES_PER_RUN = 6;
 // Gmail's after: is whole seconds and the cursor is the newest mail seen, so re-read a little
 // overlap; anything already in mail_events is skipped by id, the rest is cheap to re-filter.
 const OVERLAP_S = 120;
@@ -240,17 +244,36 @@ export async function syncMailbox(db: DB, account: MailAccountRow, deps: SyncDep
   }
 }
 
+// Passes over one mailbox until its backlog is gone or the pass budget is spent; the summary
+// returned is the total of the passes (backlog = what is still left).
+export async function drainMailbox(db: DB, account: MailAccountRow, deps: SyncDeps & { maxPasses?: number } = {}): Promise<SyncSummary> {
+  const max = deps.maxPasses ?? MAX_PASSES_PER_RUN;
+  let total: SyncSummary | null = null;
+  let current = account;
+  for (let pass = 0; pass < max; pass++) {
+    const s = await syncMailbox(db, current, deps);
+    total = total
+      ? { ...s, fetched: total.fetched + s.fetched, candidates: total.candidates + s.candidates, matched: total.matched + s.matched, applied: total.applied + s.applied, notified: total.notified + s.notified }
+      : s;
+    if (s.error || s.backlog === 0) break;
+    const next = getMailAccount(db, account.userId, account.id);
+    if (!next) break;
+    current = next;
+  }
+  return total as SyncSummary;
+}
+
 // One account's mailboxes (all of them, or just `accountId`), for 设置's "sync now".
-export async function syncUserMailboxes(db: DB, userId: string, deps: SyncDeps & { accountId?: number } = {}): Promise<SyncSummary[]> {
+export async function syncUserMailboxes(db: DB, userId: string, deps: SyncDeps & { accountId?: number; maxPasses?: number } = {}): Promise<SyncSummary[]> {
   const rows = deps.accountId != null ? [getMailAccount(db, userId, deps.accountId)].filter((r): r is MailAccountRow => !!r) : listMailAccounts(db, userId);
   const out: SyncSummary[] = [];
-  for (const a of rows) out.push(await syncMailbox(db, a, deps));
+  for (const a of rows) out.push(await drainMailbox(db, a, deps));
   return out;
 }
 
 // The tick: every connected mailbox that is due. `dueOnly` skips ones synced less than an
 // interval ago, so the 15-minute timer and a manual "sync now" can coexist.
-export async function syncAllMailboxes(db: DB, deps: SyncDeps & { dueOnly?: boolean } = {}): Promise<SyncSummary[]> {
+export async function syncAllMailboxes(db: DB, deps: SyncDeps & { dueOnly?: boolean; maxPasses?: number } = {}): Promise<SyncSummary[]> {
   const now = deps.now ? deps.now() : Date.now();
   const out: SyncSummary[] = [];
   for (const a of listEnabledMailAccounts(db)) {
@@ -258,7 +281,7 @@ export async function syncAllMailboxes(db: DB, deps: SyncDeps & { dueOnly?: bool
       const last = Date.parse(`${a.syncedAt.replace(" ", "T")}Z`);
       if (Number.isFinite(last) && now - last < INBOX_SYNC_INTERVAL_MS - 30_000) continue;
     }
-    out.push(await syncMailbox(db, a, deps));
+    out.push(await drainMailbox(db, a, deps));
   }
   return out;
 }
