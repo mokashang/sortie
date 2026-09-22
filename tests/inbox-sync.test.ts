@@ -72,14 +72,16 @@ function fakeGmail(mails: FakeMail[], opts: { tokenError?: string; refreshTokens
   return { fetcher, urls };
 }
 
-function fakeBackend(answer: (ids: string[]) => unknown[]): LlmBackend & { calls: number } {
+// The model sees per-batch aliases (m1, m2, …), so answers are keyed by alias; `subjects` lets a
+// test decide by what the mail says rather than by id.
+function fakeBackend(answer: (ids: string[], subjects: string[]) => unknown[]): LlmBackend & { calls: number } {
   const be = {
     name: "fake",
     calls: 0,
     async complete(req: { prompt: string }) {
       be.calls++;
-      const ids = [...req.prompt.matchAll(/<mail id="([^"]+)">/g)].map((m) => m[1]);
-      return { text: JSON.stringify(answer(ids)), backend: "fake" };
+      const blocks = [...req.prompt.matchAll(/<mail id="([^"]+)">\nfrom: [^\n]*\nsubject: ([^\n]*)/g)];
+      return { text: JSON.stringify(answer(blocks.map((m) => m[1]), blocks.map((m) => m[2]))), backend: "fake" };
     },
   };
   return be;
@@ -107,9 +109,9 @@ describe("inbox/sync syncMailbox", () => {
       { id: "dd", from: "Datadog <no-reply@greenhouse.io>", subject: "Interview with Datadog", text: "We would like to schedule a phone screen.", atMs: T0 - 1800_000 },
       { id: "st", from: "Stripe Recruiting <recruiting@stripe.com>", subject: "Your Stripe application", text: "We will not be moving forward.", atMs: T0 - 600_000 },
     ]);
-    const backend = fakeBackend((ids) =>
-      ids.map((id) =>
-        id === "dd"
+    const backend = fakeBackend((ids, subjects) =>
+      ids.map((id, i) =>
+        subjects[i].includes("Datadog")
           ? { message_id: id, job_id: datadog, outcome: "interview", confidence: 0.9, summary: "Phone screen invite", next_step: "Pick a slot" }
           : { message_id: id, job_id: stripe, outcome: "rejected", confidence: 0.85, summary: "Declined", next_step: null }
       )

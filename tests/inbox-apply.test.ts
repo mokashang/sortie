@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { openDb, type DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
-import { applyMailResult, decideStage, inboxNotification, MIN_CONFIDENCE } from "@/inbox/apply";
+import { applyMailResult, decideStage, inboxNotification, mentionsCompany, MIN_CONFIDENCE, UNVERIFIED_CONFIDENCE } from "@/inbox/apply";
 import { recentMailEvents, latestMailByJob, countMailEvents, submittedApplications, earliestSubmissionUnix, upsertMailAccount } from "@/inbox/store";
 import { applicationHistory } from "@/apply/history";
 import type { ParsedMail } from "@/inbox/google";
@@ -122,6 +122,23 @@ describe("inbox/apply applyMailResult", () => {
     // a second sighting of the same message is a no-op
     applyMailResult(db, U, BOX, mail("m1"), { message_id: "m1", job_id: queued, outcome: "rejected", confidence: 0.9, summary: "Declined", next_step: null });
     expect(countMailEvents(db, U).total).toBe(2);
+  });
+
+  it("refuses to move a row when the mail never names the matched company (a swapped id or a guess)", () => {
+    const db = openDb(":memory:");
+    seedOwner(db);
+    expect(upsertMailAccount(db, { userId: U, email: "me@example.com", refreshToken: "rt", scope: null }).id).toBe(BOX);
+    const whatnot = seedJob(db, { company: "Whatnot", title: "SWE New Grad" });
+    const lensa = mail("lensa", { from: "Lensa 24 <lensa24@lensa.com>", subject: "Software Engineer - Intern jobs in Los Angeles", text: "jobs posted September 20" });
+    const a = applyMailResult(db, U, BOX, lensa, { message_id: "lensa", job_id: whatnot, outcome: "rejected", confidence: 0.95, summary: "Whatnot rejected the application.", next_step: null });
+    expect(a).toMatchObject({ jobId: whatnot, applied: false, notify: false });
+    expect(status(db, whatnot)).toBe("submitted");
+    expect(db.prepare("SELECT confidence FROM mail_events WHERE message_id = 'lensa'").get()).toEqual({ confidence: UNVERIFIED_CONFIDENCE });
+    // the real mail names the company in the sender and goes through
+    const real = mail("wn", { from: "Whatnot Hiring Team <no-reply@ashbyhq.com>", subject: "Follow-up from Whatnot", text: "we will not be moving forward" });
+    expect(applyMailResult(db, U, BOX, real, { message_id: "wn", job_id: whatnot, outcome: "rejected", confidence: 0.95, summary: "Declined", next_step: null }).applied).toBe(true);
+    expect(mentionsCompany({ from: "a@b.c", subject: "x", text: "Thanks from the Scale AI team" }, "Scale AI")).toBe(true);
+    expect(mentionsCompany({ from: "a@b.c", subject: "x", text: "nothing here" }, "Scale AI")).toBe(false);
   });
 
   it("does not touch an accepted offer, even for a confident rejection", () => {

@@ -189,7 +189,7 @@ export function companyPhrases(companies: string[]): string[] {
   return [...out];
 }
 
-function phraseRegex(phrase: string): RegExp {
+export function phraseRegex(phrase: string): RegExp {
   return new RegExp(`(^|[^a-z0-9])${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`, "i");
 }
 
