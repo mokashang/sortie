@@ -6,13 +6,25 @@ import type { Lang } from "@/i18n/lang";
 import type { ClassifyResult, MailOutcome } from "@/inbox/classify";
 import type { ParsedMail } from "@/inbox/google";
 import { insertMailEvent } from "@/inbox/store";
+import { companyPhrases, phraseRegex } from "@/inbox/filter";
 
 // What a classified mail does to the application (spec 2026-09-21 inbox-sync §2): the stage
 // only ever climbs, a rejection lands on anything short of an accepted/declined offer, and
 // low-confidence or informational mails are recorded without touching the row. Every change goes
 // through setStage, so it is an ordinary 'application_stage' event the user can reverse on 历史.
 
-export const MIN_CONFIDENCE = 0.7;
+// 0.8, not 0.7: the first production pass filed a LinkedIn "your application to …" status notice
+// as a rejection at exactly 0.7 with a summary that did not even claim a rejection.
+export const MIN_CONFIDENCE = 0.8;
+
+// A mail filed against an application must at least name that company somewhere (sender,
+// subject or body). It is the cheap guard against a swapped id or a guessed job_id: such a
+// result is kept as an unverified match (confidence capped below the bar) and never moves a row.
+export const UNVERIFIED_CONFIDENCE = 0.5;
+export function mentionsCompany(mail: { from: string; subject: string; text: string }, company: string): boolean {
+  const haystack = `${mail.from}\n${mail.subject}\n${mail.text}`;
+  return companyPhrases([company]).some((p) => phraseRegex(p).test(haystack));
+}
 
 const RANK: Record<"submitted" | "oa" | "interview" | "offer", number> = { submitted: 0, oa: 1, interview: 2, offer: 3 };
 
@@ -66,6 +78,8 @@ export function applyMailResult(db: DB, userId: string, accountId: number, mail:
       status = row.status;
     }
   }
+  const verified = jobId == null || (company != null && mentionsCompany(mail, company));
+  if (!verified) result = { ...result, confidence: Math.min(result.confidence, UNVERIFIED_CONFIDENCE) };
   const outcome: MailOutcome = jobId == null && result.outcome !== "unrelated" ? (result.outcome === "other" || result.outcome === "received" ? "unrelated" : result.outcome) : result.outcome;
   const target = jobId != null && status ? decideStage(status, outcome, result.confidence) : null;
   const summary = result.summary.trim();
