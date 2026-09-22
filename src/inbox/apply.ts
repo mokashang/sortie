@@ -21,6 +21,9 @@ export const MIN_CONFIDENCE = 0.8;
 // subject or body). It is the cheap guard against a swapped id or a guessed job_id: such a
 // result is kept as an unverified match (confidence capped below the bar) and never moves a row.
 export const UNVERIFIED_CONFIDENCE = 0.5;
+// How much older than the application's submission a mail may be and still count (clock skew,
+// a form submitted minutes after the ATS sent its first mail).
+export const EARLY_SLACK_MS = 6 * 3600 * 1000;
 export function mentionsCompany(mail: { from: string; subject: string; text: string }, company: string): boolean {
   const haystack = `${mail.from}\n${mail.subject}\n${mail.text}`;
   // Names too short or too generic for the pre-filter's phrase list ("C3 AI", "Box") are still
@@ -72,18 +75,25 @@ export function applyMailResult(db: DB, userId: string, accountId: number, mail:
   let company: string | null = null;
   let title: string | null = null;
   let status: string | null = null;
+  let submittedMs: number | null = null;
   if (result.job_id != null) {
     const row = db
-      .prepare("SELECT a.status, j.company, j.title FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.user_id = ? AND a.job_id = ?")
-      .get(userId, result.job_id) as { status: string; company: string; title: string } | undefined;
+      .prepare("SELECT a.status, a.submitted_at, j.company, j.title FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.user_id = ? AND a.job_id = ?")
+      .get(userId, result.job_id) as { status: string; submitted_at: string | null; company: string; title: string } | undefined;
     if (row && isPostSubmitStage(row.status)) {
       jobId = result.job_id;
       company = row.company;
       title = row.title;
       status = row.status;
+      submittedMs = row.submitted_at ? Date.parse(`${row.submitted_at.replace(" ", "T")}Z`) : null;
     }
   }
-  const verified = jobId == null || (company != null && mentionsCompany(mail, company));
+  // Two cheap sanity checks before a mail may move a row: it must name the company, and it must
+  // be newer than the application (a mail sent before the form was even submitted is about
+  // something else — 2026-09-21: pre-boarding mail from an earlier Amazon internship was filed
+  // as an offer on a fresh Amazon application).
+  const tooEarly = submittedMs != null && Number.isFinite(submittedMs) && mail.receivedAtMs < submittedMs - EARLY_SLACK_MS;
+  const verified = jobId == null || (company != null && mentionsCompany(mail, company) && !tooEarly);
   if (!verified) result = { ...result, confidence: Math.min(result.confidence, UNVERIFIED_CONFIDENCE) };
   const outcome: MailOutcome = jobId == null && result.outcome !== "unrelated" ? (result.outcome === "other" || result.outcome === "received" ? "unrelated" : result.outcome) : result.outcome;
   const target = jobId != null && status ? decideStage(status, outcome, result.confidence) : null;

@@ -144,6 +144,20 @@ describe("inbox/apply applyMailResult", () => {
     expect(mentionsCompany({ from: "no-reply@us.greenhouse-mail.io", subject: "Thank you for applying", text: "" }, "C3 AI")).toBe(false);
   });
 
+  it("refuses a mail older than the application it was matched to (an earlier job at the same company)", () => {
+    const db = openDb(":memory:");
+    seedOwner(db);
+    expect(upsertMailAccount(db, { userId: U, email: "me@example.com", refreshToken: "rt", scope: null }).id).toBe(BOX);
+    const amazon = seedJob(db, { company: "Amazon", title: "SDE I", submittedAt: "2026-09-21 20:00:00" });
+    const preboarding = mail("pb", { from: "Amazon <no-reply@amazon.com>", subject: "ACTION REQUIRED: Complete your pre-boarding tasks", text: "onboarding", receivedAtMs: Date.parse("2026-09-03T14:00:00Z") });
+    const a = applyMailResult(db, U, BOX, preboarding, { message_id: "pb", job_id: amazon, outcome: "offer", confidence: 0.85, summary: "Offer confirmed", next_step: null });
+    expect(a).toMatchObject({ jobId: amazon, applied: false });
+    expect(status(db, amazon)).toBe("submitted");
+    // a mail a few hours before the recorded submission is fine (ATS clocks, slow forms)
+    const ack = mail("ack", { from: "Amazon <no-reply@amazon.com>", subject: "Thanks for applying to Amazon", text: "received", receivedAtMs: Date.parse("2026-09-21T18:00:00Z") });
+    expect(applyMailResult(db, U, BOX, ack, { message_id: "ack", job_id: amazon, outcome: "rejected", confidence: 0.9, summary: "Declined", next_step: null }).applied).toBe(true);
+  });
+
   it("does not touch an accepted offer, even for a confident rejection", () => {
     const db = openDb(":memory:");
     seedOwner(db);
