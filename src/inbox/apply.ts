@@ -50,7 +50,7 @@ function utcOf(ms: number): string {
 
 // Records the mail and, when the rules say so, moves the application. The job the model named
 // must be one of this user's submitted applications — anything else is filed as unmatched.
-export function applyMailResult(db: DB, userId: string, mail: ParsedMail, result: ClassifyResult): AppliedMail {
+export function applyMailResult(db: DB, userId: string, accountId: number, mail: ParsedMail, result: ClassifyResult): AppliedMail {
   let jobId: number | null = null;
   let company: string | null = null;
   let title: string | null = null;
@@ -78,6 +78,7 @@ export function applyMailResult(db: DB, userId: string, mail: ParsedMail, result
     }
     return insertMailEvent(db, {
       userId,
+      accountId,
       messageId: mail.id,
       threadId: mail.threadId,
       receivedAt: utcOf(mail.receivedAtMs),

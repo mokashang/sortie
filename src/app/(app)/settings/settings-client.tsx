@@ -3,9 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, Bot, Database, ExternalLink, Globe, Languages, Mail, MessageCircleQuestionMark, Monitor, Moon, RefreshCw, Sun, Zap } from "lucide-react";
 import { postJson, errorMessage } from "@/app/lib/api";
-import { authClient, authErrorMessage } from "@/lib/auth-client";
-import { GMAIL_SCOPE } from "@/inbox/scope";
-import type { InboxStatus } from "@/inbox/sync";
+import type { InboxStatus, MailboxStatus } from "@/inbox/sync";
 import { getChannel, getTheme, setChannel, setTheme, type Channel, type Theme } from "@/app/lib/settings";
 import { relativeTime } from "@/app/lib/time";
 import { Button, Chip, ConfirmDialog, LinkButton, RadioCard, Section, Segmented, useToast } from "@/app/components/ui";
@@ -57,8 +55,9 @@ export function SettingsClient({
   const [chatProvider, setChatProvider] = useState<ChatProvider>(chatProviderInitial);
   const [savingChat, setSavingChat] = useState(false);
   const [inbox, setInbox] = useState<InboxStatus>(inboxInitial);
-  const [inboxBusy, setInboxBusy] = useState<"connect" | "sync" | "disconnect" | null>(null);
-  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  // What is in flight: "add" (leaving for Google), "sync:<id>" / "sync:all", "disconnect:<id>".
+  const [inboxBusy, setInboxBusy] = useState<string | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState<MailboxStatus | null>(null);
   const connectHandled = useRef(false);
   const { toast } = useToast();
   const router = useRouter();
@@ -68,47 +67,41 @@ export function SettingsClient({
     setThemeState(getTheme());
   }, []);
 
-  // Back from Google's consent page (linkSocial's callbackURL carries ?inbox=connected): adopt the
-  // token and run the first sync, then drop the query so a reload does not repeat it.
+  // Back from Google's consent page (the callback route redirects to /settings?inbox=connected
+  // &email=… or ?inbox=error&reason=…): show the outcome once, then drop the query.
   useEffect(() => {
-    if (connectHandled.current) return;
-    if (typeof window === "undefined" || new URLSearchParams(window.location.search).get("inbox") !== "connected") return;
+    if (connectHandled.current || typeof window === "undefined") return;
+    const q = new URLSearchParams(window.location.search);
+    const outcome = q.get("inbox");
+    if (!outcome) return;
     connectHandled.current = true;
-    setInboxBusy("connect");
-    postJson<{ status: InboxStatus }>("/api/inbox/connect")
-      .then((r) => {
-        setInbox(r.status);
-        toast({ title: m.inbox.settings.toast.connected, tone: "good" });
-      })
-      .catch((e) => toast({ title: m.inbox.settings.toast.connectFailed, description: errorMessage(e), tone: "danger" }))
-      .finally(() => {
-        setInboxBusy(null);
-        router.replace("/settings#inbox");
-      });
+    if (outcome === "connected") {
+      toast({ title: m.inbox.settings.toast.connected(q.get("email") ?? ""), tone: "good" });
+    } else {
+      const reason = (q.get("reason") ?? "exchange") as keyof typeof m.inbox.connectError;
+      toast({ title: m.inbox.settings.toast.connectFailed, description: m.inbox.connectError[reason] ?? m.inbox.connectError.exchange, tone: "danger" });
+    }
+    router.replace("/settings#inbox");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function connectInbox() {
-    setInboxBusy("connect");
-    const { error } = await authClient.linkSocial({
-      provider: "google",
-      scopes: [GMAIL_SCOPE],
-      callbackURL: "/settings?inbox=connected",
-      additionalParams: { prompt: "consent" },
-    });
-    if (error) {
-      setInboxBusy(null);
-      toast({ title: m.inbox.settings.toast.connectFailed, description: authErrorMessage(error), tone: "danger" });
-    }
+  function addMailbox() {
+    setInboxBusy("add");
+    window.location.assign("/api/inbox/google/start");
   }
 
-  async function syncInbox() {
-    setInboxBusy("sync");
+  async function syncInbox(accountId?: number) {
+    setInboxBusy(accountId != null ? `sync:${accountId}` : "sync:all");
     try {
-      const r = await postJson<{ ok: boolean; summary: { fetched: number; applied: number; error: string | null }; status: InboxStatus }>("/api/inbox/sync");
+      const r = await postJson<{ ok: boolean; summaries: { fetched: number; applied: number; error: string | null }[]; status: InboxStatus }>("/api/inbox/sync", accountId != null ? { accountId } : {});
       setInbox(r.status);
-      if (r.summary.error) toast({ title: m.inbox.settings.toast.syncFailed, description: r.summary.error, tone: "danger" });
-      else toast({ title: m.inbox.settings.toast.synced(r.summary.fetched, r.summary.applied), tone: "good" });
+      const failed = r.summaries.find((s) => s.error);
+      if (failed) toast({ title: m.inbox.settings.toast.syncFailed, description: failed.error ?? "", tone: "danger" });
+      else {
+        const fetched = r.summaries.reduce((n, s) => n + s.fetched, 0);
+        const applied = r.summaries.reduce((n, s) => n + s.applied, 0);
+        toast({ title: m.inbox.settings.toast.synced(fetched, applied), tone: "good" });
+      }
       router.refresh();
     } catch (e) {
       toast({ title: m.inbox.settings.toast.syncFailed, description: errorMessage(e), tone: "danger" });
@@ -117,12 +110,12 @@ export function SettingsClient({
     }
   }
 
-  async function disconnectInbox() {
-    setInboxBusy("disconnect");
+  async function disconnectInbox(box: MailboxStatus) {
+    setInboxBusy(`disconnect:${box.id}`);
     try {
-      const r = await postJson<{ status: InboxStatus }>("/api/inbox/disconnect");
+      const r = await postJson<{ status: InboxStatus }>("/api/inbox/disconnect", { accountId: box.id });
       setInbox(r.status);
-      setConfirmDisconnect(false);
+      setConfirmDisconnect(null);
       toast({ title: m.inbox.settings.toast.disconnected, tone: "neutral" });
     } catch (e) {
       toast({ title: m.inbox.settings.toast.disconnectFailed, description: errorMessage(e), tone: "danger" });
@@ -277,65 +270,69 @@ export function SettingsClient({
       </Section>
 
       <Section id="inbox" title={m.inbox.settings.title} description={m.inbox.settings.description}>
-        {inbox.connected ? (
-          <div className="col gap-2">
+        <div className="col gap-3">
+          {inbox.mailboxes.length === 0 ? (
             <div className="row">
               <Mail size={15} aria-hidden className="muted" />
-              <span>{inbox.email ? m.inbox.settings.account(inbox.email) : m.inbox.settings.connected}</span>
-              <Chip tone="good">{m.inbox.settings.connected}</Chip>
+              <span className="muted">{m.inbox.settings.none}</span>
             </div>
-            <div className="muted small">
-              {inbox.syncedAt ? m.inbox.settings.lastSync(relativeTime(inbox.syncedAt, lang)) : m.inbox.settings.neverSynced}
-              {" · "}
-              {m.inbox.settings.counts(inbox.events.total, inbox.events.matched, inbox.events.applied)}
-            </div>
-            {inbox.lastError ? (
-              <div className="small text-danger">
-                {m.inbox.settings.error(inbox.lastError)}
-                {inbox.lastError.startsWith("reconnect needed") ? <> {m.inbox.settings.reconnectHint}</> : null}
+          ) : (
+            inbox.mailboxes.map((box) => (
+              <div key={box.id} className="col gap-1">
+                <div className="row">
+                  <Mail size={15} aria-hidden className="muted" />
+                  <span className="strong">{box.email}</span>
+                  {box.lastError ? <Chip tone="danger">{m.inbox.settings.toast.syncFailed}</Chip> : null}
+                </div>
+                <div className="muted small">
+                  {box.syncedAt ? m.inbox.settings.lastSync(relativeTime(box.syncedAt, lang)) : m.inbox.settings.neverSynced}
+                  {" · "}
+                  {m.inbox.settings.counts(box.events.total, box.events.matched, box.events.applied)}
+                </div>
+                {box.lastError ? (
+                  <div className="small text-danger">
+                    {m.inbox.settings.error(box.lastError)}
+                    {box.lastError.startsWith("reconnect needed") ? <> {m.inbox.settings.reconnectHint}</> : null}
+                  </div>
+                ) : null}
+                <div className="row">
+                  <Button size="sm" onClick={() => void syncInbox(box.id)} loading={inboxBusy === `sync:${box.id}`} disabled={inboxBusy !== null} icon={<RefreshCw size={13} />}>
+                    {inboxBusy === `sync:${box.id}` ? m.inbox.settings.syncing : m.inbox.settings.syncNow}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmDisconnect(box)} disabled={inboxBusy !== null}>
+                    {m.inbox.settings.disconnect}
+                  </Button>
+                </div>
               </div>
-            ) : null}
-            <div className="row mt-1">
-              <Button size="sm" onClick={() => void syncInbox()} loading={inboxBusy === "sync"} disabled={inboxBusy !== null} icon={<RefreshCw size={13} />}>
-                {inboxBusy === "sync" ? m.inbox.settings.syncing : m.inbox.settings.syncNow}
+            ))
+          )}
+          {auth.googleEnabled ? (
+            <div className="row">
+              <Button size="sm" variant={inbox.mailboxes.length === 0 ? "primary" : "secondary"} onClick={addMailbox} loading={inboxBusy === "add"} disabled={inboxBusy !== null}>
+                {m.inbox.settings.add}
               </Button>
-              {inbox.lastError?.startsWith("reconnect needed") ? (
-                <Button size="sm" variant="ghost" onClick={() => void connectInbox()} loading={inboxBusy === "connect"} disabled={inboxBusy !== null}>
-                  {m.inbox.settings.connect}
+              {inbox.mailboxes.length > 1 ? (
+                <Button size="sm" variant="ghost" onClick={() => void syncInbox()} loading={inboxBusy === "sync:all"} disabled={inboxBusy !== null} icon={<RefreshCw size={13} />}>
+                  {m.inbox.settings.syncAll}
                 </Button>
               ) : null}
-              <Button size="sm" variant="ghost" onClick={() => setConfirmDisconnect(true)} disabled={inboxBusy !== null}>
-                {m.inbox.settings.disconnect}
-              </Button>
+              <span className="muted xs">{m.inbox.settings.addHint}</span>
             </div>
-          </div>
-        ) : (
-          <div className="col gap-2">
-            <div className="row">
-              <Mail size={15} aria-hidden className="muted" />
-              <span className="muted">{m.inbox.settings.notConnected}</span>
-            </div>
-            {auth.googleEnabled ? (
-              <div className="row">
-                <Button size="sm" variant="primary" onClick={() => void connectInbox()} loading={inboxBusy === "connect"} disabled={inboxBusy !== null}>
-                  {m.inbox.settings.connect}
-                </Button>
-                <span className="muted xs">{m.inbox.settings.connectHint}</span>
-              </div>
-            ) : (
-              <p className="muted small">{m.inbox.settings.needGoogle}</p>
-            )}
-          </div>
-        )}
+          ) : (
+            <p className="muted small">{m.inbox.settings.needGoogle}</p>
+          )}
+        </div>
         <ConfirmDialog
-          open={confirmDisconnect}
-          onClose={() => setConfirmDisconnect(false)}
-          onConfirm={() => void disconnectInbox()}
-          title={m.inbox.settings.disconnectConfirmTitle}
+          open={confirmDisconnect !== null}
+          onClose={() => setConfirmDisconnect(null)}
+          onConfirm={() => {
+            if (confirmDisconnect) void disconnectInbox(confirmDisconnect);
+          }}
+          title={confirmDisconnect ? m.inbox.settings.disconnectConfirmTitle(confirmDisconnect.email) : ""}
           description={m.inbox.settings.disconnectConfirmDescription}
           confirmLabel={m.inbox.settings.disconnect}
           danger
-          busy={inboxBusy === "disconnect"}
+          busy={confirmDisconnect !== null && inboxBusy === `disconnect:${confirmDisconnect.id}`}
         />
       </Section>
 

@@ -23,10 +23,32 @@ function readSchema(): string {
   }
 }
 
-// v17 (2026-09-21): mail_accounts + mail_events (邮箱同步, spec 2026-09-21 inbox-sync). Both are
-// brand-new tables, so schema.sql's CREATE TABLE IF NOT EXISTS covers old and new dbs alike — no
-// migration step beyond the version bump.
-const SCHEMA_VERSION = 17;
+// v17 (2026-09-21): mail_accounts + mail_events (邮箱同步, spec 2026-09-21 inbox-sync).
+// v18 (same day): several mailboxes per account — mail_accounts keyed by id with UNIQUE(user_id,
+// email), mail_events.account_id. See migrateV18.
+const SCHEMA_VERSION = 18;
+
+// v17 -> v18: the two mail tables are rebuilt in their new shape (the only production rows were one
+// mailbox and no events, hours old). Detected by the old primary key: v17's mail_accounts had no
+// `id` column. Re-runnable.
+export function migrateV18(db: DB, schema: string): boolean {
+  if (columnsOf(db, "mail_accounts").includes("id")) return false;
+  db.transaction(() => {
+    db.exec(tableDdl(schema, "mail_accounts").replace(/CREATE TABLE IF NOT EXISTS "?mail_accounts"? \(/, "CREATE TABLE mail_accounts__v18 ("));
+    db.exec(
+      `INSERT INTO mail_accounts__v18 (user_id, provider, email, refresh_token, scope, connected_at, synced_at, watermark, last_error, enabled)
+       SELECT user_id, provider, email, refresh_token, scope, connected_at, synced_at, watermark, last_error, enabled FROM mail_accounts WHERE email IS NOT NULL`
+    );
+    db.exec("DROP TABLE mail_accounts");
+    db.exec("ALTER TABLE mail_accounts__v18 RENAME TO mail_accounts");
+    if (!columnsOf(db, "mail_events").includes("account_id")) {
+      db.exec("DROP TABLE mail_events");
+      db.exec(tableDdl(schema, "mail_events"));
+    }
+  })();
+  db.exec(schema);
+  return true;
+}
 
 function columnsOf(db: DB, table: string): string[] {
   return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
@@ -216,9 +238,11 @@ export function openDb(file?: string): DB {
       // 已经出过高分岗的板块直接成为 core,不用等第二天凌晨的重算。
       retierAll(db);
     }
-    // v15 -> v16: accounts. Must stay last — the rebuild copies whatever columns the steps above
-    // have already added. See migrateV16.
+    // v15 -> v16: accounts. Must stay after every step above — the rebuild copies whatever
+    // columns they have already added. See migrateV16.
     migrateV16(db, schema);
+    // v17 -> v18: multi-mailbox 邮箱同步 tables (new tables, so nothing above depends on them).
+    migrateV18(db, schema);
   }
   // Tenant indexes (schema v16). Created here rather than in schema.sql for the same reason as
   // the job indexes below: schema.sql runs before an old db has gained user_id.

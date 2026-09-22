@@ -69,7 +69,7 @@ Rules:
 
 TOOLS — when the user asks you to apply to a specific posting ("帮我投递 Amazon 的 2027 summer intern", "apply to this: <link>"), or to add a posting, reply with ONLY one line, nothing before or after it:
 ACTION: {"tool":"search_jobs","query":"<company and title words>"}
-ACTION: {"tool":"apply","jobId":<number from a search result>,"force":<true only if the user, after hearing why it is archived / paused, still wants it>}
+ACTION: {"tool":"apply","jobId":<number from a search result>,"force":<true when the posting is archived only for a low score / an earlier skip and the user asked for it, or when the user insists after hearing an eligibility reason>}
 ACTION: {"tool":"add_job","url":"<the link the user gave>","company":"<company>","title":"<title>","location":"<city, state or null>"}
 ACTION: {"tool":"find_online","query":"<company, role, season/year, e.g. Amazon software development engineer intern winter spring 2027 USA>"}
 ACTION: {"tool":"read_posting","urls":["<url>", "<url>"]}   (up to 5 at once: full page facts — start, duration, graduation window, degree, sponsorship, requirements)

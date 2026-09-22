@@ -291,29 +291,34 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
 
--- 邮箱同步 (spec 2026-09-21 inbox-sync §4). One connected mailbox per account: the Gmail refresh
--- token the sync exchanges for access tokens itself (never the login's access token), plus the
--- sync cursor. Rows are deleted on disconnect / account deletion; the token never leaves the server.
+-- 邮箱同步 (spec 2026-09-21 inbox-sync §4, multi-mailbox since v18). Any number of connected Google
+-- mailboxes per account: the refresh token the sync exchanges for access tokens itself, plus the
+-- per-mailbox sync cursor. Rows are deleted on disconnect / account deletion; the token never
+-- leaves the server.
 CREATE TABLE IF NOT EXISTS mail_accounts (
-  user_id TEXT PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
   provider TEXT NOT NULL DEFAULT 'google',
-  email TEXT,
+  email TEXT NOT NULL,
   refresh_token TEXT NOT NULL,
   scope TEXT,
   connected_at TEXT NOT NULL DEFAULT (datetime('now')),
   synced_at TEXT,                  -- last successful sync (UTC)
   watermark INTEGER,               -- unix seconds: only mail received after this is fetched
   last_error TEXT,
-  enabled INTEGER NOT NULL DEFAULT 1
+  enabled INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (user_id, email)
 );
 
--- Every mail the classifier looked at (after the free pre-filter): what it was, which submitted
--- application it was matched to (job_id, NULL = none), the outcome read from it, and whether that
--- outcome moved the application's stage. The 历史 page shows these; the body itself is not stored.
+-- Every mail the classifier looked at (after the free pre-filter): which mailbox it came from,
+-- what it was, which submitted application it was matched to (job_id, NULL = none), the outcome
+-- read from it, and whether that outcome moved the application's stage. The 历史 page shows
+-- these; the body itself is not stored.
 CREATE TABLE IF NOT EXISTS mail_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,        -- Gmail message id
+  account_id INTEGER NOT NULL,     -- mail_accounts.id
+  message_id TEXT NOT NULL,        -- Gmail message id (unique per mailbox)
   thread_id TEXT,
   received_at TEXT NOT NULL,       -- UTC 'YYYY-MM-DD HH:MM:SS'
   from_addr TEXT,
@@ -328,7 +333,7 @@ CREATE TABLE IF NOT EXISTS mail_events (
   stage_from TEXT,
   stage_to TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE (user_id, message_id)
+  UNIQUE (account_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_mail_events_user_job ON mail_events(user_id, job_id);
 CREATE INDEX IF NOT EXISTS idx_mail_events_user_received ON mail_events(user_id, received_at);

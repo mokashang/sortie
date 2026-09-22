@@ -316,13 +316,13 @@ describe("v14 → v15 migration", () => {
     const runCols = (db.prepare("PRAGMA table_info(executor_runs)").all() as { name: string }[]).map((c) => c.name);
     expect(appCols).toContain("run_id");
     expect(runCols).toContain("outcome");
-    expect(db.pragma("user_version", { simple: true })).toBe(17);
+    expect(db.pragma("user_version", { simple: true })).toBe(18);
     // Pre-existing runs keep a null outcome (nothing was stamped for them) → still the plain 已完成.
     expect((db.prepare("SELECT outcome FROM executor_runs WHERE id = 1").get() as { outcome: string | null }).outcome).toBeNull();
     db.close();
 
     const again = openDb(tmpFile);
-    expect(again.pragma("user_version", { simple: true })).toBe(17);
+    expect(again.pragma("user_version", { simple: true })).toBe(18);
     again.close();
   });
 });

@@ -43,14 +43,14 @@ confirms it in the app, and every message to a person is sent only after the use
   forms may ask for).
 - **Stats** (/dashboard) — funnel and weekly numbers.
 - **Settings** (/settings) — AI provider, auto-apply, the chat assistant's model, execution mode,
-  mailbox sync (connect Gmail read-only; sync now; disconnect), language, appearance,
+  mailbox sync (add one or more Google mailboxes, read-only; sync; disconnect), language, appearance,
   notifications, a link to the Sources page, and the account section (name, email, password,
   Google link, signed-in devices, assistant tokens, delete account).
 
 ## Mailbox sync (what companies write back)
 
-Once the user connects Gmail on Settings (read-only permission; the app never sends mail or
-changes anything in the mailbox), the app reads new mail every 15 minutes. It skips newsletters
+Once the user adds a Google mailbox on Settings (any number of them — read-only permission; the
+app never sends mail or changes anything in a mailbox), the app reads new mail every 15 minutes. It skips newsletters
 and receipts, sends the recruiting-looking mails to the AI together with the list of submitted
 applications, and files each one: which application it is about and whether it is a rejection,
 an online-assessment invite, an interview invite, an offer, a plain "we received your

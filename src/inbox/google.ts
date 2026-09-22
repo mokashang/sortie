@@ -49,13 +49,28 @@ export async function refreshAccessToken(refreshToken: string, deps: GoogleDeps 
   return { accessToken: json.access_token, expiresInS: json.expires_in ?? 3600 };
 }
 
-async function api<T>(accessToken: string, path: string, fetcher: typeof fetch): Promise<T> {
-  const res = await fetcher(`${API}${path}`, { headers: { authorization: `Bearer ${accessToken}` } });
-  if (!res.ok) {
+// Gmail's per-user quota (250 units per second, 15 000 per minute; a full message get costs 5)
+// answers 429 or a 403 "rateLimitExceeded" when a sync fetches too fast. Those are retried with
+// exponential backoff; anything else is thrown as is. `sleep` is injectable for tests.
+export type Sleeper = (ms: number) => Promise<void>;
+export const defaultSleep: Sleeper = (ms) => new Promise((r) => setTimeout(r, ms));
+export const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
+
+export function isRateLimited(status: number, body: string): boolean {
+  return status === 429 || (status === 403 && /rateLimitExceeded|RATE_LIMIT_EXCEEDED|userRateLimitExceeded|Quota exceeded/i.test(body));
+}
+
+async function api<T>(accessToken: string, path: string, fetcher: typeof fetch, sleep: Sleeper = defaultSleep): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetcher(`${API}${path}`, { headers: { authorization: `Bearer ${accessToken}` } });
+    if (res.ok) return (await res.json()) as T;
     const text = await res.text().catch(() => "");
+    if (isRateLimited(res.status, text) && attempt < RETRY_DELAYS_MS.length) {
+      await sleep(RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
     throw new GmailError(`gmail ${path.split("?")[0]} -> ${res.status}${text ? `: ${text.replace(/\s+/g, " ").slice(0, 600)}` : ""}`, res.status);
   }
-  return (await res.json()) as T;
 }
 
 export interface MessageRef {
@@ -64,7 +79,7 @@ export interface MessageRef {
 }
 
 // Message ids matching a Gmail search query, newest first, at most `max` across pages.
-export async function listMessageIds(accessToken: string, query: string, opts: { max?: number; fetcher?: typeof fetch } = {}): Promise<MessageRef[]> {
+export async function listMessageIds(accessToken: string, query: string, opts: { max?: number; fetcher?: typeof fetch; sleep?: Sleeper } = {}): Promise<MessageRef[]> {
   const f = opts.fetcher ?? fetch;
   const max = opts.max ?? 200;
   const out: MessageRef[] = [];
@@ -73,7 +88,7 @@ export async function listMessageIds(accessToken: string, query: string, opts: {
     const pageSize = Math.min(100, max - out.length);
     const q = new URLSearchParams({ q: query, maxResults: String(pageSize) });
     if (pageToken) q.set("pageToken", pageToken);
-    const page = await api<{ messages?: MessageRef[]; nextPageToken?: string }>(accessToken, `/messages?${q}`, f);
+    const page = await api<{ messages?: MessageRef[]; nextPageToken?: string }>(accessToken, `/messages?${q}`, f, opts.sleep);
     for (const m of page.messages ?? []) out.push({ id: m.id, threadId: m.threadId });
     if (!page.nextPageToken || !(page.messages?.length)) break;
     pageToken = page.nextPageToken;
@@ -97,8 +112,8 @@ export interface GmailMessage {
   payload?: GmailPart;
 }
 
-export async function getMessage(accessToken: string, id: string, fetcher: typeof fetch = fetch): Promise<GmailMessage> {
-  return api<GmailMessage>(accessToken, `/messages/${encodeURIComponent(id)}?format=full`, fetcher);
+export async function getMessage(accessToken: string, id: string, fetcher: typeof fetch = fetch, sleep: Sleeper = defaultSleep): Promise<GmailMessage> {
+  return api<GmailMessage>(accessToken, `/messages/${encodeURIComponent(id)}?format=full`, fetcher, sleep);
 }
 
 export interface ParsedMail {
