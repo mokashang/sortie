@@ -103,12 +103,19 @@ export interface MailEventInput {
   snippet: string;
   jobId: number | null;
   outcome: MailOutcome;
-  confidence: number;
+  confidence: number | null; // null = never classified (dropped by the pre-filter, kept as "seen")
   summary: string;
   nextStep: string | null;
   applied: boolean;
   stageFrom: string | null;
   stageTo: string | null;
+}
+
+// Unix seconds of the newest mail ever recorded for a mailbox — where the cursor lands once a
+// backlog is drained (the draining pass itself only fetched the oldest part).
+export function newestSeenUnix(db: DB, accountId: number): number | null {
+  const r = db.prepare("SELECT CAST(strftime('%s', MAX(received_at)) AS INTEGER) as t FROM mail_events WHERE account_id = ?").get(accountId) as { t: number | null } | undefined;
+  return r?.t ?? null;
 }
 
 export function hasMailEvent(db: DB, accountId: number, messageId: string): boolean {
@@ -215,7 +222,8 @@ const EVENT_SELECT = `SELECT e.id, e.account_id, ma.email as mailbox, e.message_
   FROM mail_events e LEFT JOIN jobs j ON j.id = e.job_id LEFT JOIN mail_accounts ma ON ma.id = e.account_id`;
 
 // The 历史 page's 邮件动态 feed: newest first, unrelated mails left out (they are noise the user
-// did not ask to see; the count of them is still available via countMailEvents).
+// did not ask to see — including the ones the pre-filter dropped, which are stored as unrelated
+// with a null confidence purely so the sync never fetches them twice).
 export function recentMailEvents(db: DB, userId: string, limit = 30): MailEventRow[] {
   return (
     db.prepare(`${EVENT_SELECT} WHERE e.user_id = ? AND e.outcome != 'unrelated' ORDER BY e.received_at DESC, e.id DESC LIMIT ?`).all(userId, limit) as MailEventRaw[]

@@ -5,7 +5,8 @@ import os from "os";
 import path from "path";
 import { openDb, type DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
-import { completeGoogleConnect, describeSyncError, disconnectMailbox, inboxStatus, resetInboxCachesForTests, syncAllMailboxes, syncMailbox, syncUserMailboxes } from "@/inbox/sync";
+import { completeGoogleConnect, describeSyncError, disconnectMailbox, inboxStatus, resetInboxCachesForTests, syncAllMailboxes, syncMailbox, syncUserMailboxes, MAX_MESSAGES_PER_SYNC, FETCH_GAP_MS } from "@/inbox/sync";
+import { RETRY_DELAYS_MS } from "@/inbox/google";
 import { GMAIL_SCOPE } from "@/inbox/scope";
 import { getMailAccount, listMailAccounts, upsertMailAccount, recentMailEvents, countMailEvents } from "@/inbox/store";
 import type { LlmBackend } from "@/llm/types";
@@ -134,12 +135,54 @@ describe("inbox/sync syncMailbox", () => {
       ["st", "me@example.com"],
       ["dd", "me@example.com"],
     ]);
-    expect(inboxStatus(db, U)).toMatchObject({ events: { total: 2, matched: 2, applied: 2 }, mailboxes: [{ id: box.id, email: "me@example.com", events: { total: 2 } }] });
+    // the newsletter is stored as seen (unrelated, never classified) so it is not fetched again
+    expect(inboxStatus(db, U)).toMatchObject({ events: { total: 3, matched: 2, applied: 2 }, mailboxes: [{ id: box.id, email: "me@example.com", events: { total: 3 } }] });
+    expect(db.prepare("SELECT outcome, confidence FROM mail_events WHERE message_id = 'news'").get()).toEqual({ outcome: "unrelated", confidence: null });
 
     // Second pass: nothing new beyond the overlap, the seen ids are skipped, no model call.
     const s2 = await syncMailbox(db, getMailAccount(db, U, box.id)!, { fetcher, backend, now: () => T0 + 60_000, lang: "en", notifier: () => {}, log: () => {} });
-    expect(s2).toMatchObject({ fetched: 0, candidates: 0, applied: 0 });
+    expect(s2).toMatchObject({ fetched: 0, candidates: 0, applied: 0, backlog: 0 });
     expect(backend.calls).toBe(1);
+  });
+
+  it("drains a backlog over several passes without moving the cursor past unseen mail, pausing between fetches", async () => {
+    const db = openDb(":memory:");
+    seedOwner(db);
+    seedJob(db, "Datadog", "SWE Intern");
+    const box = mailbox(db);
+    const many: FakeMail[] = Array.from({ length: MAX_MESSAGES_PER_SYNC + 5 }, (_, i) => ({ id: `m${i}`, from: "x@example.com", subject: `Newsletter ${i}`, text: "noise", atMs: T0 - (i + 1) * 60_000 }));
+    const { fetcher } = fakeGmail(many);
+    const sleeps: number[] = [];
+    const deps = { fetcher, backend: fakeBackend(() => []), now: () => T0, log: () => {}, sleep: async (ms: number) => void sleeps.push(ms) };
+    const first = await syncMailbox(db, box, deps);
+    expect(first).toMatchObject({ fetched: MAX_MESSAGES_PER_SYNC, backlog: 5, error: null });
+    expect(sleeps.filter((ms) => ms === FETCH_GAP_MS)).toHaveLength(MAX_MESSAGES_PER_SYNC - 1);
+    // the cursor did not move: the five oldest are still unseen
+    const start = Math.floor(Date.parse("2026-09-02T10:00:00Z") / 1000);
+    expect(getMailAccount(db, U, box.id)!.watermark).toBe(start);
+    const second = await syncMailbox(db, getMailAccount(db, U, box.id)!, deps);
+    expect(second).toMatchObject({ fetched: 5, backlog: 0 });
+    expect(getMailAccount(db, U, box.id)!.watermark).toBe(Math.floor((T0 - 60_000) / 1000));
+    expect(countMailEvents(db, U).total).toBe(MAX_MESSAGES_PER_SYNC + 5);
+  });
+
+  it("retries a rate-limited fetch with backoff instead of failing the pass", async () => {
+    const db = openDb(":memory:");
+    seedOwner(db);
+    seedJob(db, "Datadog", "SWE Intern");
+    const box = mailbox(db);
+    const { fetcher: inner } = fakeGmail([{ id: "a", from: "x@greenhouse.io", subject: "Interview", text: "hi", atMs: T0 - 1000 }]);
+    let denials = 2;
+    const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("/messages/a") && denials-- > 0) {
+        return new Response(JSON.stringify({ error: { code: 403, message: "Quota exceeded for quota metric 'Total Query Cost'", errors: [{ reason: "rateLimitExceeded" }] } }), { status: 403 });
+      }
+      return inner(input, init);
+    }) as typeof fetch;
+    const sleeps: number[] = [];
+    const s = await syncMailbox(db, box, { fetcher, backend: fakeBackend((ids) => ids.map((id) => ({ message_id: id, job_id: null, outcome: "unrelated", confidence: 0.9, summary: "", next_step: null }))), now: () => T0, log: () => {}, sleep: async (ms) => void sleeps.push(ms) });
+    expect(s).toMatchObject({ fetched: 1, candidates: 1, error: null });
+    expect(sleeps).toEqual([RETRY_DELAYS_MS[0], RETRY_DELAYS_MS[1]]);
   });
 
   it("keeps two mailboxes apart: each has its own token, cursor and seen-message set", async () => {
@@ -159,6 +202,7 @@ describe("inbox/sync syncMailbox", () => {
     expect(countMailEvents(db, U)).toEqual({ total: 2, matched: 2, applied: 0 });
     expect(countMailEvents(db, U, a.id).total).toBe(1);
     expect(countMailEvents(db, U, b.id).total).toBe(1);
+    expect(getMailAccount(db, U, a.id)!.watermark).toBe(Math.floor((T0 - 1000) / 1000));
     // one mailbox only
     const only = await syncUserMailboxes(db, U, { fetcher, backend, now: () => T0 + 60_000, accountId: b.id, log: () => {} });
     expect(only.map((s) => s.email)).toEqual(["b@example.com"]);

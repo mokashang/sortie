@@ -5,7 +5,7 @@ import type { LlmBackend } from "@/llm/types";
 import { notify } from "@/lib/notify";
 import { serverLang } from "@/lib/prefs";
 import type { Lang } from "@/i18n/lang";
-import { GmailError, getMessage, listMessageIds, parseMessage, refreshAccessToken, revokeToken, type ParsedMail } from "@/inbox/google";
+import { GmailError, defaultSleep, getMessage, listMessageIds, parseMessage, refreshAccessToken, revokeToken, type ParsedMail, type Sleeper } from "@/inbox/google";
 import { isCandidateMail } from "@/inbox/filter";
 import { classifyMails, type ClassifyMail } from "@/inbox/classify";
 import { applyMailResult, inboxNotification, type AppliedMail } from "@/inbox/apply";
@@ -15,6 +15,8 @@ import {
   earliestSubmissionUnix,
   getMailAccount,
   hasMailEvent,
+  insertMailEvent,
+  newestSeenUnix,
   listEnabledMailAccounts,
   listMailAccounts,
   markSyncError,
@@ -34,7 +36,12 @@ import { exchangeCode, requireGoogleCredentials, type ExchangedGrant } from "@/i
 
 export const INBOX_SYNC_INTERVAL_MS = 15 * 60 * 1000;
 export const FIRST_SYNC_LOOKBACK_S = 30 * 24 * 3600;
-export const MAX_MESSAGES_PER_SYNC = 200;
+// How many full messages one pass fetches (each costs 5 quota units; Gmail allows 250 per user per
+// second and 15 000 per minute) and the pause between fetches. A backlog larger than this is
+// drained over several passes: the cursor stays put until every listed message has been seen.
+export const MAX_MESSAGES_PER_SYNC = 60;
+export const MAX_LISTED_PER_SYNC = 1000;
+export const FETCH_GAP_MS = 120;
 // Gmail's after: is whole seconds and the cursor is the newest mail seen, so re-read a little
 // overlap; anything already in mail_events is skipped by id, the rest is cheap to re-filter.
 const OVERLAP_S = 120;
@@ -47,6 +54,7 @@ export interface SyncDeps {
   notifier?: (title: string, body: string) => Promise<void> | void;
   lang?: Lang;
   log?: (line: string) => void;
+  sleep?: Sleeper;
 }
 
 export interface SyncSummary {
@@ -58,6 +66,7 @@ export interface SyncSummary {
   applied: number; // moved an application's stage
   notified: number;
   skipped: boolean; // nothing to match against (no submitted applications) — cursor advanced only
+  backlog: number; // listed-but-unfetched messages left for the next pass
   error: string | null;
 }
 
@@ -105,7 +114,7 @@ export function describeSyncError(e: unknown): string {
 
 export async function syncMailbox(db: DB, account: MailAccountRow, deps: SyncDeps = {}): Promise<SyncSummary> {
   const userId = account.userId;
-  const out: SyncSummary = { accountId: account.id, email: account.email, fetched: 0, candidates: 0, matched: 0, applied: 0, notified: 0, skipped: false, error: null };
+  const out: SyncSummary = { accountId: account.id, email: account.email, fetched: 0, candidates: 0, matched: 0, applied: 0, notified: 0, skipped: false, backlog: 0, error: null };
   if (!account.enabled) {
     out.error = "disabled";
     return out;
@@ -126,29 +135,60 @@ export async function syncMailbox(db: DB, account: MailAccountRow, deps: SyncDep
     }
     const token = await accessTokenFor(account, deps);
     const fetcher = deps.fetcher ?? fetch;
-    const refs = await listMessageIds(token, `after:${Math.max(0, since - OVERLAP_S)} ${GMAIL_QUERY_TAIL}`, { max: MAX_MESSAGES_PER_SYNC, fetcher });
-    const fresh = refs.filter((r) => !hasMailEvent(db, account.id, r.id));
+    const sleep = deps.sleep ?? defaultSleep;
+    const refs = await listMessageIds(token, `after:${Math.max(0, since - OVERLAP_S)} ${GMAIL_QUERY_TAIL}`, { max: MAX_LISTED_PER_SYNC, fetcher, sleep });
+    const unseen = refs.filter((r) => !hasMailEvent(db, account.id, r.id));
+    const fresh = unseen.slice(0, MAX_MESSAGES_PER_SYNC);
     out.fetched = fresh.length;
+    out.backlog = unseen.length - fresh.length;
+    // Gmail lists newest first, so a capped pass has seen the newest mail but not the oldest: the
+    // cursor may only move once nothing unseen is left behind it.
+    const advance = out.backlog === 0;
 
     const apps = submittedApplications(db, userId);
     let newest = since;
+    const fetchOne = async (id: string, i: number): Promise<ParsedMail> => {
+      if (i > 0) await sleep(FETCH_GAP_MS);
+      const m = parseMessage(await getMessage(token, id, fetcher, sleep));
+      newest = Math.max(newest, Math.floor(m.receivedAtMs / 1000));
+      return m;
+    };
+    // A mail the pre-filter drops is still recorded (outcome unrelated, confidence null) so the
+    // next pass does not fetch it again; the 历史 feed hides unrelated rows.
+    const recordSeen = (m: ParsedMail) =>
+      insertMailEvent(db, {
+        userId,
+        accountId: account.id,
+        messageId: m.id,
+        threadId: m.threadId,
+        receivedAt: new Date(m.receivedAtMs).toISOString().slice(0, 19).replace("T", " "),
+        from: m.from,
+        subject: m.subject,
+        snippet: m.snippet,
+        jobId: null,
+        outcome: "unrelated",
+        confidence: null,
+        summary: "",
+        nextStep: null,
+        applied: false,
+        stageFrom: null,
+        stageTo: null,
+      });
+
     if (apps.length === 0) {
-      // Nothing to file against yet: advance the cursor past what is there and stop.
+      // Nothing to file against yet: mark what is there as seen and stop.
       out.skipped = true;
-      for (const r of fresh) {
-        const m = parseMessage(await getMessage(token, r.id, fetcher));
-        newest = Math.max(newest, Math.floor(m.receivedAtMs / 1000));
-      }
-      markSynced(db, account.id, Math.max(newest, since));
+      for (const [i, r] of fresh.entries()) recordSeen(await fetchOne(r.id, i));
+      markSynced(db, account.id, advance ? Math.max(newest, since, newestSeenUnix(db, account.id) ?? 0) : since);
       return out;
     }
 
     const companies = [...new Set(apps.map((a) => a.company))];
     const parsed: ParsedMail[] = [];
-    for (const r of fresh) {
-      const m = parseMessage(await getMessage(token, r.id, fetcher));
-      newest = Math.max(newest, Math.floor(m.receivedAtMs / 1000));
+    for (const [i, r] of fresh.entries()) {
+      const m = await fetchOne(r.id, i);
       if (isCandidateMail(m, companies).keep) parsed.push(m);
+      else recordSeen(m);
     }
     out.candidates = parsed.length;
 
@@ -184,9 +224,9 @@ export async function syncMailbox(db: DB, account: MailAccountRow, deps: SyncDep
         }
       }
     }
-    markSynced(db, account.id, Math.max(newest, since));
-    logEvent(db, "inbox_sync", { userId, payload: { accountId: account.id, email: account.email, fetched: out.fetched, candidates: out.candidates, matched: out.matched, applied: out.applied } });
-    log(`[inbox] ${account.email}: ${out.fetched} new, ${out.candidates} classified, ${out.matched} matched, ${out.applied} stage changes`);
+    markSynced(db, account.id, advance ? Math.max(newest, since, newestSeenUnix(db, account.id) ?? 0) : since);
+    logEvent(db, "inbox_sync", { userId, payload: { accountId: account.id, email: account.email, fetched: out.fetched, candidates: out.candidates, matched: out.matched, applied: out.applied, backlog: out.backlog } });
+    log(`[inbox] ${account.email}: ${out.fetched} new, ${out.candidates} classified, ${out.matched} matched, ${out.applied} stage changes${out.backlog ? `, ${out.backlog} left for the next pass` : ""}`);
     return out;
   } catch (e) {
     const msg = describeSyncError(e);
