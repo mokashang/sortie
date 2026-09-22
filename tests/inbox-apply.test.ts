@@ -139,6 +139,9 @@ describe("inbox/apply applyMailResult", () => {
     expect(applyMailResult(db, U, BOX, real, { message_id: "wn", job_id: whatnot, outcome: "rejected", confidence: 0.95, summary: "Declined", next_step: null }).applied).toBe(true);
     expect(mentionsCompany({ from: "a@b.c", subject: "x", text: "Thanks from the Scale AI team" }, "Scale AI")).toBe(true);
     expect(mentionsCompany({ from: "a@b.c", subject: "x", text: "nothing here" }, "Scale AI")).toBe(false);
+    // a name the phrase list drops as too short / generic is still matched whole (production: C3 AI's OA invite)
+    expect(mentionsCompany({ from: "no-reply@us.greenhouse-mail.io", subject: "Thank you for applying to C3 AI", text: "" }, "C3 AI")).toBe(true);
+    expect(mentionsCompany({ from: "no-reply@us.greenhouse-mail.io", subject: "Thank you for applying", text: "" }, "C3 AI")).toBe(false);
   });
 
   it("does not touch an accepted offer, even for a confident rejection", () => {

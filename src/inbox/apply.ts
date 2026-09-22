@@ -6,7 +6,7 @@ import type { Lang } from "@/i18n/lang";
 import type { ClassifyResult, MailOutcome } from "@/inbox/classify";
 import type { ParsedMail } from "@/inbox/google";
 import { insertMailEvent } from "@/inbox/store";
-import { companyPhrases, phraseRegex } from "@/inbox/filter";
+import { companyPhrases, normalizeName, phraseRegex } from "@/inbox/filter";
 
 // What a classified mail does to the application (spec 2026-09-21 inbox-sync §2): the stage
 // only ever climbs, a rejection lands on anything short of an accepted/declined offer, and
@@ -23,7 +23,12 @@ export const MIN_CONFIDENCE = 0.8;
 export const UNVERIFIED_CONFIDENCE = 0.5;
 export function mentionsCompany(mail: { from: string; subject: string; text: string }, company: string): boolean {
   const haystack = `${mail.from}\n${mail.subject}\n${mail.text}`;
-  return companyPhrases([company]).some((p) => phraseRegex(p).test(haystack));
+  // Names too short or too generic for the pre-filter's phrase list ("C3 AI", "Box") are still
+  // checked as their whole normalized name — "c3 ai" is exactly what such a mail says.
+  const phrases = companyPhrases([company]);
+  const whole = normalizeName(company);
+  if (phrases.length === 0 && whole) phrases.push(whole);
+  return phrases.some((p) => phraseRegex(p).test(haystack));
 }
 
 const RANK: Record<"submitted" | "oa" | "interview" | "offer", number> = { submitted: 0, oa: 1, interview: 2, offer: 3 };
