@@ -41,3 +41,22 @@ export function effectiveMode(db: DB, userId: string, jobId: number): ApplyMode 
   if (!row) throw new Error(`effectiveMode: no application+match for job ${jobId}`);
   return row.mode as ApplyMode;
 }
+
+// The /queue selection bar: the same override applied to many rows in one transaction. Rows that
+// are no longer 'matched' (already taken by a batch) or that belong to someone else are skipped,
+// not errors — the user selected them from a list that may be a few seconds stale.
+export function setApplyModeBulk(db: DB, userId: string, jobIds: number[], mode: ApplyMode | null): { changed: number; skipped: number } {
+  if (mode !== null && !isApplyMode(mode)) {
+    throw new Error(`setApplyModeBulk: invalid mode '${String(mode)}' (must be referral, direct or null)`);
+  }
+  const ids = Array.from(new Set(jobIds.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0)));
+  if (ids.length === 0) return { changed: 0, skipped: 0 };
+  const update = db.prepare("UPDATE applications SET apply_mode = ? WHERE user_id = ? AND job_id = ? AND status = 'matched'");
+  const run = db.transaction((list: number[]) => {
+    let changed = 0;
+    for (const id of list) changed += update.run(mode, userId, id).changes;
+    return changed;
+  });
+  const changed = run(ids);
+  return { changed, skipped: ids.length - changed };
+}

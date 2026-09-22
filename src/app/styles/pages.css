@@ -347,6 +347,63 @@ td.company {
   pointer-events: none;
 }
 
+/* Multi-select: a checkbox column on the track tabs, a select-all box in the toolbar and a
+   sticky bar at the bottom while something is ticked. */
+.job-row.is-selectable {
+  grid-template-columns: 22px 44px minmax(0, 1fr) auto;
+  gap: 10px 14px;
+}
+
+.job-row.is-selected {
+  background: var(--surface);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.job-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.job-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.job-toolbar .job-check-all {
+  margin-left: 10px;
+  margin-right: -2px;
+}
+
+.select-bar {
+  position: sticky;
+  bottom: var(--s-4);
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--s-4);
+  padding: 8px 10px 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-3);
+  animation: rise var(--dur-slow) var(--ease-out);
+}
+
+.select-bar-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
 .detail-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
@@ -400,6 +457,18 @@ td.company {
   .job-row {
     grid-template-columns: 40px minmax(0, 1fr);
     padding: 10px 6px;
+  }
+
+  .job-row.is-selectable {
+    grid-template-columns: 22px 40px minmax(0, 1fr);
+  }
+
+  .job-row.is-selectable .job-side {
+    grid-column: 3;
+  }
+
+  .select-bar {
+    bottom: calc(var(--tabbar-h) + 12px);
   }
 
   .job-side {

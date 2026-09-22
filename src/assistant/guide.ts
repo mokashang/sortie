@@ -20,8 +20,12 @@ confirms it in the app, and every message to a person is sent only after the use
   numbers, and the top of the queue for the main track.
 - **Jobs** (/queue) — the scored queue, one tab per track (direction), search (?q=), sort, a
   referral / direct filter, per-row menu (pin, change mode, skip — undoable), a detail panel with
-  the score reasons, eligibility, referral suggestion and the job description. The last tab "All
-  jobs" is the raw library of everything ever ingested.
+  the score reasons, eligibility, referral suggestion and the job description. Each row on a track
+  tab has a checkbox (shift-click for a range, the toolbar box selects the page, the x key ticks the
+  focused row); with rows selected a bar at the bottom switches them all to "find a referral",
+  "apply directly" or back to "follow suggestion" in one click — the way to apply directly to jobs
+  the assistant marked for referral when there is no time to network, or the reverse. The last tab
+  "All jobs" is the raw library of everything ever ingested.
 - **Apply** (/apply) — the assistant card, the "this run's plan" stepper (per track: how many
   to find a referral for, how many to apply to directly), then sub-tabs: **To-do** (cards the
   assistant stopped on), **To confirm** (filled applications waiting for the user), **Referrals in

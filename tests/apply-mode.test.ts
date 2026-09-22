@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
-import { EFFECTIVE_MODE_SQL, setApplyMode, effectiveMode } from "@/apply/mode";
+import { EFFECTIVE_MODE_SQL, setApplyMode, setApplyModeBulk, effectiveMode } from "@/apply/mode";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
@@ -55,5 +55,23 @@ describe("apply/mode", () => {
     const seeking = seed(db, { status: "referral_seeking" });
     expect(() => setApplyMode(db, U, seeking, "direct")).toThrow(/must be 'matched'/);
     expect(() => setApplyMode(db, U, id, "bogus" as never)).toThrow(/invalid mode/);
+  });
+
+  it("setApplyModeBulk overrides every selected 'matched' row at once and counts the rest as skipped", () => {
+    const db = openDb(":memory:");
+    const a = seed(db, { referralFit: 1 });
+    const b = seed(db, { referralFit: 1 });
+    const taken = seed(db, { referralFit: 1, status: "referral_seeking" });
+    expect(setApplyModeBulk(db, U, [a, b, taken, 99999, a], "direct")).toEqual({ changed: 2, skipped: 2 });
+    expect(effectiveMode(db, U, a)).toBe("direct");
+    expect(effectiveMode(db, U, b)).toBe("direct");
+    expect(effectiveMode(db, U, taken)).toBe("referral");
+    // Another tenant's rows are invisible to the bulk call.
+    expect(setApplyModeBulk(db, "someone-else", [a, b], "referral")).toEqual({ changed: 0, skipped: 2 });
+    expect(effectiveMode(db, U, a)).toBe("direct");
+    expect(setApplyModeBulk(db, U, [a, b], null)).toEqual({ changed: 2, skipped: 0 });
+    expect(effectiveMode(db, U, a)).toBe("referral");
+    expect(setApplyModeBulk(db, U, [], "direct")).toEqual({ changed: 0, skipped: 0 });
+    expect(() => setApplyModeBulk(db, U, [a], "bogus" as never)).toThrow(/invalid mode/);
   });
 });
