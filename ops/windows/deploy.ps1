@@ -58,13 +58,43 @@ function Get-Json($url) {
 if (-not $Force) {
   $attended = Get-Json "$Base/api/executor/dispatch"
   $status = Get-Json "$Base/api/executor/status"
-  $spawnAlive = [bool]($attended -and $attended.spawn -and $attended.spawn.alive)
+  $spawn = $null
+  if ($attended) { $spawn = $attended.spawn }
+  $spawnAlive = [bool]($spawn -and $spawn.alive)
   $running = @()
   if ($status -and $status.runs) {
     $running = @($status.runs | Where-Object { $_.channel -eq "user_chrome" -and $_.status -eq "running" })
   }
   if ($spawnAlive -or $running.Count -gt 0) {
-    Write-Host "Refusing to deploy: attended work in progress (spawned session alive: $spawnAlive; running user_chrome runs: $($running.Count))." -ForegroundColor Yellow
+    # Say what is holding the deploy, so a stale record can be told from real work (2026-09-22:
+    # the guard refused all evening on a session that had nothing to do). The server's own view:
+    # GET /api/executor/dispatch -> spawn.busy (runs / forms it filled awaiting the user / stale
+    # cards from earlier sessions) and spawn.idleSec (reaped at 15 min).
+    Write-Host "Refusing to deploy: attended work in progress." -ForegroundColor Yellow
+    if ($spawnAlive) {
+      $reach = "reachable"
+      if (-not $spawn.reachable) { $reach = "NOT reachable from the current server process (it restarted after the spawn)" }
+      $idle = "not idle"
+      if ($null -ne $spawn.idleSec) { $idle = "idle for $([math]::Round($spawn.idleSec / 60)) min (the dispatcher reaps it at 15)" }
+      Write-Host "  spawned session: pid $($spawn.pid), started for run #$($spawn.runId) at $($spawn.startedAt); $reach; $idle" -ForegroundColor Yellow
+      $b = $spawn.busy
+      if ($b) {
+        $runs = @($b.runs)
+        $runsText = "none"
+        if ($runs.Count -gt 0) { $runsText = ($runs | ForEach-Object { "#$($_.id) $($_.kind) $($_.status)" }) -join ", " }
+        $w = $b.waiting
+        $held = [int]$w.awaiting_confirm + [int]$w.needs_info + [int]$w.prepared
+        Write-Host "    holding it: runs running/queued: $runsText; forms it filled awaiting the user: awaiting_confirm $($w.awaiting_confirm), needs_info $($w.needs_info), prepared $($w.prepared)" -ForegroundColor Yellow
+        if ([int]$b.stale -gt 0) { Write-Host "    (plus $($b.stale) waiting card(s) left by earlier sessions; those do not hold it)" -ForegroundColor DarkYellow }
+        if ($runs.Count -eq 0 -and $held -eq 0) {
+          Write-Host "    nothing is holding it: it is reaped 15 min after going idle. Re-run then, or with -Force." -ForegroundColor Yellow
+        }
+      }
+    }
+    if ($running.Count -gt 0) {
+      $ids = ($running | ForEach-Object { "#$($_.id) $($_.kind)" }) -join ", "
+      Write-Host "  running user_chrome runs: $ids" -ForegroundColor Yellow
+    }
     Write-Host "Wait for it to finish, or re-run with -Force." -ForegroundColor Yellow
     exit 2
   }

@@ -37,8 +37,8 @@ import { buildAttendedAgentLaunch } from "@/ai/runtime";
 // claude-in-chrome session only sees its own tab group, so a session that is replaced has to
 // refill (runs #72/#73 on 2026-09-14), which is exactly what this avoids. The child is reaped only
 // when it exited, when it is unreachable (this process restarted) and there is work to tell it
-// about, or when it has been idle — nothing running, queued, or awaiting the user — for
-// IDLE_REAP_MS. There is no maximum age.
+// about, or when it has been idle — nothing running or queued, and no form *it* filled awaiting
+// the user (attendedBusyDetail) — for IDLE_REAP_MS. There is no maximum age.
 //
 // Accounts (spec 2026-09-13 accounts §4): heartbeats are per user (a session belongs to one
 // account); the dispatcher only serves the box's OWNER — the Chrome on this machine is theirs.
@@ -397,15 +397,52 @@ export function notifyAttendedSession(db: DB, line: string, deps: AttendedDeps =
 // application the user has not decided on, a form waiting on the user's answers (needs_info),
 // or one it was just handed the answers for (prepared) — each of those is an open tab only this
 // session can see, so it must not be reaped while any exists.
-function attendedBusy(db: DB, userId: string): boolean {
+//
+// "This session" is the point (2026-09-22): a waiting row is an open tab only in the session
+// that filled it, and it outlives that session — a 待处理 card can sit for days. Counting every
+// waiting row of the account kept each *later* session busy forever: eight needs_info cards from
+// 09-18/19 held the session spawned for run #182 for two hours after its run ended (idleSince
+// never set, deploy.ps1 refusing all evening), and would have held every session after it. So a
+// row counts only when the run that took it (applications.run_id) was claimed after this
+// session started; rows left behind by earlier sessions are reported as `stale` for the
+// operator and keep nothing alive (the followup / stranded-approval paths re-queue them as
+// targeted runs when the user acts on them).
+export interface AttendedBusy {
+  // The owner's user_chrome runs that are running or queued.
+  runs: { id: number; kind: string; status: string }[];
+  // Waiting rows whose open tab lives in this session (taken by a run it claimed).
+  waiting: { awaiting_confirm: number; needs_info: number; prepared: number };
+  // Waiting rows left behind by earlier sessions (their tabs are gone). Informational.
+  stale: number;
+}
+export function isBusy(b: AttendedBusy): boolean {
+  return b.runs.length > 0 || b.waiting.awaiting_confirm + b.waiting.needs_info + b.waiting.prepared > 0;
+}
+// ISO → SQLite datetime('now') form (UTC, whole seconds, floored) so it compares as text against
+// executor_runs.claimed_at. Flooring also absorbs the ~1 ms by which SQLite's clock can trail.
+function sqliteTime(iso: string): string {
+  const t = Date.parse(iso);
+  return (Number.isNaN(t) ? new Date(0) : new Date(t)).toISOString().slice(0, 19).replace("T", " ");
+}
+export function attendedBusyDetail(db: DB, userId: string, spawn: Pick<SpawnRecord, "startedAt"> | null): AttendedBusy {
   const runs = db
-    .prepare("SELECT COUNT(*) n FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status IN ('running','queued')")
-    .get(userId) as { n: number };
-  if (runs.n > 0) return true;
-  const waiting = db
-    .prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status IN ('awaiting_confirm','needs_info','prepared')")
-    .get(userId) as { n: number };
-  return waiting.n > 0;
+    .prepare("SELECT id, kind, status FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status IN ('running','queued') ORDER BY id")
+    .all(userId) as { id: number; kind: string; status: string }[];
+  const waiting = { awaiting_confirm: 0, needs_info: 0, prepared: 0 };
+  let stale = 0;
+  const since = spawn ? sqliteTime(spawn.startedAt) : null;
+  const rows = db
+    .prepare(
+      `SELECT a.status, r.claimed_at, r.channel, COUNT(*) n FROM applications a LEFT JOIN executor_runs r ON r.id = a.run_id
+       WHERE a.user_id = ? AND a.status IN ('awaiting_confirm','needs_info','prepared') GROUP BY a.status, r.claimed_at, r.channel`
+    )
+    .all(userId) as { status: keyof typeof waiting; claimed_at: string | null; channel: string | null; n: number }[];
+  for (const row of rows) {
+    const mine = since != null && row.channel === "user_chrome" && row.claimed_at != null && row.claimed_at >= since;
+    if (mine) waiting[row.status] += row.n;
+    else stale += row.n;
+  }
+  return { runs, waiting, stale };
 }
 
 function runningRun(db: DB, userId: string): { id: number; log_path: string | null } | null {
@@ -457,6 +494,8 @@ export interface DispatchResult {
   decision: Decision;
   spawned?: SpawnRecord;
   notified?: boolean;
+  // What the spawned session (if any) was judged on this tick.
+  busy?: AttendedBusy;
 }
 
 // One dispatcher tick (POST /api/executor/dispatch, every 10s from instrumentation.ts). Serves
@@ -469,11 +508,14 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
   const queued = owner ? nextQueuedRun(db, owner) : null;
   const spawnRec = currentSpawn(db);
   let spawnInput: DecideInput["spawn"] = null;
+  let busy: AttendedBusy | undefined;
   if (spawnRec) {
     const alive = isAlive(spawnRec.pid);
-    const busy = owner ? attendedBusy(db, owner) : false;
+    // Idleness is judged from the database alone (never from the terminal handle), so a record
+    // that outlived a server restart is still aged and reaped like any other.
+    busy = owner ? attendedBusyDetail(db, owner, spawnRec) : { runs: [], waiting: { awaiting_confirm: 0, needs_info: 0, prepared: 0 }, stale: 0 };
     let idleSince = spawnRec.idleSince ?? null;
-    if (busy) idleSince = null;
+    if (isBusy(busy)) idleSince = null;
     else if (!idleSince) idleSince = now.toISOString();
     if (idleSince !== (spawnRec.idleSince ?? null)) writeKey(db, SPAWN_KEY, { ...spawnRec, idleSince });
     spawnInput = {
@@ -502,14 +544,14 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
     writeKey(db, SPAWN_KEY, null);
     clearNotices();
     console.log(`[attended] reaped child ${decision.pid}: ${decision.reason}`);
-    return { decision };
+    return { decision, busy };
   }
   if (decision.action === "notify") {
     const line = queuedRunNotice(decision.runId, queued?.kind ?? "apply");
     const notified = (deps.write ?? writeToAttended)(decision.pid, line);
     if (notified) markNotice(`run:${decision.runId}`, now.getTime());
     console.log(`[attended] ${notified ? "told" : "could not tell"} child ${decision.pid} about run #${decision.runId}`);
-    return { decision, notified };
+    return { decision, notified, busy };
   }
   if (decision.action === "nudge") {
     const quietMin = Math.round((running && runningMtime != null ? now.getTime() - runningMtime : 0) / 60_000);
@@ -517,27 +559,39 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
     // Marked either way so an unwritable terminal is not retried every 10 s.
     markNotice(`stall:${decision.runId}`, now.getTime());
     console.log(`[attended] ${notified ? "nudged" : "could not nudge"} child ${decision.pid}: ${decision.reason}`);
-    return { decision, notified };
+    return { decision, notified, busy };
   }
   if (decision.action === "spawn") {
     const spawned = spawnAttendedSession(db, decision.runId, deps);
     console.log(`[attended] spawned ${deps.aiProvider ?? getAiProvider(db)} assistant (pid ${spawned.pid}) for run #${decision.runId}: ${decision.reason}`);
     return { decision, spawned };
   }
-  return { decision };
+  return { decision, busy };
 }
 
 export interface AttendedStatus {
   heartbeat: (Heartbeat & { ageSec: number }) | null;
-  spawn: (SpawnRecord & { alive: boolean; reachable: boolean }) | null;
+  // idleSec: how long the session has had nothing to do (null while busy, as last judged by the
+  // dispatcher tick); busy: what is holding it — so an operator (deploy.ps1's guard) can tell a
+  // stale record from real work.
+  spawn: (SpawnRecord & { alive: boolean; reachable: boolean; idleSec: number | null; busy: AttendedBusy }) | null;
 }
 export function attendedStatus(db: DB, userId: string, deps: AttendedDeps = {}): AttendedStatus {
   const now = (deps.now ?? (() => new Date()))();
   const hb = lastHeartbeat(db, userId);
   const sp = currentSpawn(db);
   const alive = sp ? (deps.isAlive ?? defaultIsAlive)(sp.pid) : false;
+  const idleAt = sp?.idleSince ? Date.parse(sp.idleSince) : NaN;
   return {
     heartbeat: hb ? { ...hb, ageSec: Math.round(Math.max(0, now.getTime() - Date.parse(hb.at)) / 1000) } : null,
-    spawn: sp ? { ...sp, alive, reachable: alive && (deps.reachable ?? isAttendedReachable)(sp.pid) } : null,
+    spawn: sp
+      ? {
+          ...sp,
+          alive,
+          reachable: alive && (deps.reachable ?? isAttendedReachable)(sp.pid),
+          idleSec: Number.isNaN(idleAt) ? null : Math.round(Math.max(0, now.getTime() - idleAt) / 1000),
+          busy: attendedBusyDetail(db, userId, sp),
+        }
+      : null,
   };
 }

@@ -14,6 +14,7 @@ import {
   ATTENDED_ALLOWED_TOOLS,
   buildAttendedPrompt,
   attendedStatus,
+  attendedBusyDetail,
   attendedSpawnModeFromEnv,
   HEARTBEAT_STALE_MS,
   IDLE_REAP_MS,
@@ -183,10 +184,11 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     const jobId = db
       .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at) VALUES (?,?,?,?,?,?,?)")
       .run("fp-1", "Acme", "SWE", "https://acme.example/apply", "greenhouse", "manual", "2026-01-01 00:00:00").lastInsertRowid as number;
-    // A form waiting on the user's answers is an open tab too: it keeps the session just the same.
-    db.prepare("INSERT INTO applications (job_id, status) VALUES (?, 'needs_info')").run(jobId);
+    // A form waiting on the user's answers is an open tab too: it keeps the session just the same
+    // — provided it is a form *this* session's run took (run_id), see the stale-cards test below.
+    db.prepare("INSERT INTO applications (job_id, status, run_id) VALUES (?, 'needs_info', ?)").run(jobId, run.id);
     const typed: string[] = [];
-    let clock = new Date();
+    let clock = new Date("2026-09-06T10:00:00Z");
     const deps = {
       now: () => clock,
       isAlive: () => true,
@@ -240,6 +242,152 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(killed).toEqual([5]);
     expect(notifyAttendedSession(db, "x", deps)).toBe(false);
     expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+  });
+
+  it("waiting cards left by earlier sessions do not hold a new session (run #182, 2026-09-22); its own do", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const job = (fp: string) =>
+      db
+        .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at) VALUES (?,?,?,?,?,?,?)")
+        .run(fp, "Acme", "SWE", "https://acme.example/" + fp, "greenhouse", "manual", "2026-01-01 00:00:00").lastInsertRowid as number;
+    // An earlier session (days ago) reported two forms as needs_info and one awaiting_confirm,
+    // then finished its run and was reaped. The cards are still on /apply; the tabs are gone.
+    const old = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    claimNextRun(db, U, "user_chrome");
+    finishRun(db, U, old.id, "done", "old segment");
+    db.prepare("UPDATE executor_runs SET claimed_at = '2026-09-01 00:00:00' WHERE id = ?").run(old.id);
+    for (const [fp, status] of [["a", "needs_info"], ["b", "needs_info"], ["c", "awaiting_confirm"]] as const)
+      db.prepare("INSERT INTO applications (job_id, status, run_id) VALUES (?, ?, ?)").run(job(fp), status, old.id);
+
+    // A new run (a referral check, say) spawns a fresh session.
+    const run = startExecutor(db, U, "referral_check", {}, { logDir }, "user_chrome");
+    const killed: number[] = [];
+    let clock = new Date("2026-09-21T18:00:00Z");
+    const deps = {
+      now: () => clock,
+      isAlive: () => true,
+      reachable: () => true,
+      write: () => true,
+      spawnExpect: () => ({ pid: 28236 }),
+      kill: (pid: number) => {
+        killed.push(pid);
+      },
+      claudeBin: "/fake/claude",
+      logDir,
+      cwd: "/fake",
+      platform: "darwin" as const,
+    };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    finishRun(db, U, run.id, "done", "checked 3 people");
+
+    // Its run is over and it filled nothing: it is idle from this tick on, whatever the old cards say.
+    const tick = dispatchAttended(db, deps);
+    expect(tick.decision.action).toBe("none");
+    expect(tick.busy).toEqual({ runs: [], waiting: { awaiting_confirm: 0, needs_info: 0, prepared: 0 }, stale: 3 });
+    expect(currentSpawn(db)?.idleSince).toBe(clock.toISOString());
+    clock = new Date(clock.getTime() + IDLE_REAP_MS - 1);
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    clock = new Date(clock.getTime() + 1);
+    expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "reap", pid: 28236 });
+    expect(killed).toEqual([28236]);
+    expect(currentSpawn(db)).toBeNull();
+
+    // A form taken by a run this session claimed is its own open tab: that one holds it.
+    const run2 = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    const mine = job("d");
+    db.prepare("INSERT INTO applications (job_id, status, run_id) VALUES (?, 'needs_info', ?)").run(mine, run2.id);
+    finishRun(db, U, run2.id, "done", "one form waits on the user");
+    clock = new Date(clock.getTime() + 3 * 24 * 3600_000);
+    const held = dispatchAttended(db, deps);
+    expect(held.decision.action).toBe("none");
+    expect(held.busy).toMatchObject({ runs: [], waiting: { awaiting_confirm: 0, needs_info: 1, prepared: 0 }, stale: 3 });
+    expect(currentSpawn(db)?.idleSince ?? null).toBeNull();
+    // The user answers (prepared), the session fills and reports (awaiting_confirm): still its tab.
+    db.prepare("UPDATE applications SET status = 'prepared' WHERE job_id = ?").run(mine);
+    expect(dispatchAttended(db, deps).busy?.waiting.prepared).toBe(1);
+    db.prepare("UPDATE applications SET status = 'awaiting_confirm' WHERE job_id = ?").run(mine);
+    clock = new Date(clock.getTime() + 3 * 24 * 3600_000);
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    // Submitted: nothing left, and the idle clock starts now.
+    db.prepare("UPDATE applications SET status = 'submitted' WHERE job_id = ?").run(mine);
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    clock = new Date(clock.getTime() + IDLE_REAP_MS);
+    expect(dispatchAttended(db, deps).decision.action).toBe("reap");
+
+    // The status endpoint (deploy.ps1's guard) shows the same picture.
+    expect(attendedBusyDetail(db, U, null)).toMatchObject({ runs: [], waiting: { awaiting_confirm: 0, needs_info: 0, prepared: 0 }, stale: 3 });
+  });
+
+  it("a session whose terminal handle was lost to a server restart is still aged from the database and reaped once idle", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    const killed: number[] = [];
+    let reachable = true;
+    let clock = new Date("2026-09-21T18:00:00Z");
+    const deps = {
+      now: () => clock,
+      isAlive: () => true,
+      reachable: () => reachable,
+      write: () => true,
+      spawnExpect: () => ({ pid: 5 }),
+      kill: (pid: number) => {
+        killed.push(pid);
+      },
+      claudeBin: "/fake/claude",
+      logDir,
+      cwd: "/fake",
+      platform: "darwin" as const,
+    };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    // Deploy restarts the server mid-run: the pty handle is gone, the child is not.
+    reachable = false;
+    clock = new Date(clock.getTime() + 2 * IDLE_REAP_MS);
+    // A live run keeps it, reachable or not, for as long as it takes.
+    const mid = dispatchAttended(db, deps);
+    expect(mid.decision.action).toBe("none");
+    expect(mid.busy?.runs).toMatchObject([{ id: run.id, status: "running" }]);
+    expect(currentSpawn(db)?.idleSince ?? null).toBeNull();
+    finishRun(db, U, run.id, "done", "ok");
+    // Idle from here — tracked in the spawn record, not in this process's memory.
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    const idleSince = currentSpawn(db)?.idleSince;
+    expect(idleSince).toBe(clock.toISOString());
+    // Another restart in between changes nothing: the record carries the idle clock.
+    clearNotices();
+    clock = new Date(clock.getTime() + IDLE_REAP_MS - 1);
+    expect(dispatchAttended(db, deps).decision.action).toBe("none");
+    expect(currentSpawn(db)?.idleSince).toBe(idleSince);
+    clock = new Date(clock.getTime() + 1);
+    expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "reap", pid: 5 });
+    expect(killed).toEqual([5]);
+    expect(currentSpawn(db)).toBeNull();
+    const st = attendedStatus(db, U, deps);
+    expect(st.spawn).toBeNull();
+  });
+
+  it("attendedStatus tells the operator what holds the session and how long it has idled", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    let clock = new Date("2026-09-21T18:00:00Z");
+    const deps = { now: () => clock, isAlive: () => true, reachable: () => false, spawnExpect: () => ({ pid: 5 }), kill: () => {}, claudeBin: "/fake/claude", logDir, cwd: "/fake", platform: "darwin" as const };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    const busy = attendedStatus(db, U, deps).spawn;
+    expect(busy).toMatchObject({ pid: 5, alive: true, reachable: false, idleSec: null, busy: { runs: [{ id: run.id, kind: "apply", status: "running" }] } });
+    finishRun(db, U, run.id, "done", "ok");
+    dispatchAttended(db, deps);
+    clock = new Date(clock.getTime() + 7 * 60_000);
+    expect(attendedStatus(db, U, deps).spawn).toMatchObject({ idleSec: 420, busy: { runs: [], stale: 0 } });
   });
 
   it("closes out the running run of a child that died, so nothing waits 20 minutes for a stale log", () => {
