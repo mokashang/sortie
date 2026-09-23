@@ -3,7 +3,8 @@ import { openDb, DB } from "@/lib/db";
 import { parseProfile, saveProfile, getProfileData } from "@/lib/profile";
 import { createExperience } from "@/resume/experiences";
 import { reportFill, reportSubmitted, confirmStatus } from "@/apply/queue";
-import { getAutoSubmit, setAutoSubmit, autoApproveIfEnabled } from "@/apply/auto-submit";
+import { getAutoSubmit, setAutoSubmit, autoApproveIfEnabled, autoApproveOutreachIfEnabled } from "@/apply/auto-submit";
+import { reportSent } from "@/network/gate";
 import { autoAnswerPending, buildAutoAnswerPrompt, parseAutoAnswers } from "@/apply/auto-answer";
 import type { LlmBackend, LlmRequest } from "@/llm/types";
 
@@ -108,6 +109,38 @@ describe("自动投递 switch", () => {
     expect(confirmStatus(db, U, jobId).decision).toBeNull();
     expect(autoApproveIfEnabled(db, U, jobId)).toBe(false);
     expect(() => reportSubmitted(db, U, jobId)).toThrow(/red line/);
+  });
+});
+
+describe("自动投递 switch — referral outreach", () => {
+  function seedDraft(db: DB): number {
+    const jobId = seedJob(db, "referral_seeking");
+    const pid = db.prepare("INSERT INTO people (user_id, name) VALUES (?, 'P')").run(U).lastInsertRowid;
+    const oid = db
+      .prepare("INSERT INTO outreach (user_id, person_id, playbook, channel, draft, status) VALUES (?,?,'referral','linkedin','hi','draft')")
+      .run(U, pid).lastInsertRowid as number;
+    db.prepare("INSERT INTO outreach_jobs (outreach_id, job_id) VALUES (?,?)").run(oid, jobId);
+    return oid;
+  }
+
+  it("off: a drafted referral message stays a draft and reportSent refuses", () => {
+    const db = openDb(":memory:");
+    const oid = seedDraft(db);
+    expect(autoApproveOutreachIfEnabled(db, U, oid)).toBe(false);
+    expect((db.prepare("SELECT status FROM outreach WHERE id = ?").get(oid) as { status: string }).status).toBe("draft");
+    expect(() => reportSent(db, U, oid, "hi")).toThrow(/red line/);
+  });
+
+  it("on: the draft is approved on the spot (pending_send) so the session can send it", () => {
+    const db = openDb(":memory:");
+    setAutoSubmit(db, U, true);
+    const oid = seedDraft(db);
+    expect(autoApproveOutreachIfEnabled(db, U, oid)).toBe(true);
+    expect((db.prepare("SELECT status FROM outreach WHERE id = ?").get(oid) as { status: string }).status).toBe("pending_send");
+    reportSent(db, U, oid, "hi");
+    expect((db.prepare("SELECT status FROM outreach WHERE id = ?").get(oid) as { status: string }).status).toBe("sent");
+    // Idempotent: a second call on an already-approved row is a no-op, not an error.
+    expect(autoApproveOutreachIfEnabled(db, U, oid)).toBe(false);
   });
 });
 

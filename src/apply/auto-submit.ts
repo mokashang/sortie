@@ -1,5 +1,6 @@
 import type { DB } from "@/lib/db";
 import { decide } from "@/apply/queue";
+import { approveOutreach } from "@/network/gate";
 
 // 自动投递 (2026-09-17): a per-account switch on 设置 that lets a filled application skip the
 // user's confirmation. The user asked for it so a plan keeps moving while they are busy or
@@ -9,8 +10,10 @@ import { decide } from "@/apply/queue";
 // 'approved' on an awaiting_confirm row. The switch only makes the App itself grant that
 // approval the moment the assistant reports awaiting_confirm — the assistant never gets to skip
 // the report, and every re-report still voids the earlier approval (a re-fill is re-approved
-// only because the switch is still on at that moment). Outreach messages (referral / coffee
-// chat) are not covered: a message to a person always waits for the user.
+// only because the switch is still on at that moment). Referral outreach (2026-09-22, user
+// request) is covered the same way: a job-linked draft is approved the moment the App has
+// written it, so the session sends it without a 内推待批 card. Coffee-chat outreach from 人脉
+// is not: those are the user's own conversations and still wait for their approval.
 //
 // Stored in the key/value `profile` table like ai_provider, one key per account, so no schema
 // bump is needed and the setting survives a profile re-import.
@@ -36,6 +39,20 @@ export function setAutoSubmit(db: DB, userId: string, enabled: boolean): void {
     autoSubmitKey(userId),
     JSON.stringify(enabled === true)
   );
+}
+
+// Called right after the App drafted a referral outreach (POST /api/referral/outreach). With the
+// switch on, grants the approval the user would give on the 内推进行中 card (draft ->
+// pending_send) and returns true so the response tells the session to send now. reportSent's own
+// red line (pending_send only) is untouched. Never throws.
+export function autoApproveOutreachIfEnabled(db: DB, userId: string, outreachId: number): boolean {
+  if (!getAutoSubmit(db, userId)) return false;
+  try {
+    approveOutreach(db, userId, outreachId);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Called right after a successful awaiting_confirm report. When the switch is on, grants the

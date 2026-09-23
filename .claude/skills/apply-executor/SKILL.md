@@ -266,8 +266,10 @@ short, per company:
    first hello and never opens with the referral ask). You never write or shorten a message
    yourself; the user edits/approves on /apply (one 全部批准 per card), where the card shows your
    `notes` next to the draft so they can check the line about them is true.
-5. Poll `GET /api/referral/pending?outreachId=<id>` for each outreach every 5s (≤30 min, heartbeat
-   log every ≤5 min). `pending_send` → 1st degree: DM `draft`; 2nd/3rd degree: Connect → Add a
+5. **Read the outreach response first**: `"autoApproved": true` (status already `pending_send`)
+   means the user's 自动投递 (auto-apply) switch is on and the App approved the draft itself —
+   skip the polling and send right away. Otherwise poll `GET /api/referral/pending?outreachId=<id>`
+   for each outreach every 5s (≤30 min, heartbeat log every ≤5 min). `pending_send` → 1st degree: DM `draft`; 2nd/3rd degree: Connect → Add a
    note → `draft_note`. Read the dialog first: it shows the real cap (`0/200`) and "N personalized
    invitations remaining for this month". Cap smaller than the note → `POST /api/referral/shorten
    {"outreachId":<id>,"max":<cap>}` and use the returned `draftNote` (the App compresses; you

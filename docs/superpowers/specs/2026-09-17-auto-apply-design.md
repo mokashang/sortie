@@ -17,7 +17,7 @@
 - 重新回报 awaiting_confirm 仍然清空批准;开关开着才会再次自动批准。
 - 自动作答**只用用户自己的事实**(档案、标准答案、经历表)。答不出来的(GPA、高中、档案里没有的数字)
   返回 null,留在卡上;绝不编造。签证 / 工作授权按事实原样答,不往好听处靠。
-- 发给人的消息(内推 / coffee chat)**不受开关影响**,永远要用户批准。
+- **内推消息(2026-09-22 追加)**:`POST /api/referral/outreach` 起草完成后 App 直接 `approveOutreach`(draft → pending_send),响应带 `autoApproved:true` 与 `status:'pending_send'`,会话不轮询立刻发送;`reportSent` 红线(仅 pending_send)不变;LinkedIn 每月邀请额度、200 字符上限的现场检查不变。人脉页的 coffee chat 消息**不受开关影响**,永远要用户批准。
 - 会话该报 needs_info 的照报,不因为开关开着就少问或自己编——判断能不能替答是 App 的事。
 
 ## 3. 数据
