@@ -263,6 +263,81 @@ describe("requeueStrandedApprovals", () => {
   });
 });
 
+// 2026-09-24: seven approved referral messages sat at pending_send for two days — the check
+// above only counted applications, and a bare resume run that hit the per-run invite cap left
+// the rest for a "next task" nothing queued.
+describe("requeueStrandedApprovals with approved referral messages", () => {
+  const start = () => vi.fn(() => ({ id: 77, pid: null, logPath: "/tmp/run-77.log" }));
+  const userChrome = () => "user_chrome" as const;
+
+  function seedOutreach(db: DB, status: string, threadLog: object[] = []): number {
+    const jobId = seedAwaitingConfirm(db);
+    db.prepare("UPDATE applications SET status = 'referral_seeking' WHERE job_id = ?").run(jobId);
+    const pid = db.prepare("INSERT INTO people (name) VALUES ('P')").run().lastInsertRowid as number;
+    return db
+      .prepare("INSERT INTO outreach (person_id, job_id, playbook, channel, draft, status, thread_log) VALUES (?, ?, 'referral', 'linkedin', 'hi', ?, ?)")
+      .run(pid, jobId, status, JSON.stringify(threadLog)).lastInsertRowid as number;
+  }
+
+  function seedRunAt(db: DB, status: string, options: object, startedAt: string, endedAt: string): void {
+    db.prepare("INSERT INTO executor_runs (user_id, kind, status, channel, options, started_at, ended_at) VALUES (?, 'apply', ?, 'user_chrome', ?, ?, ?)").run(
+      U,
+      status,
+      JSON.stringify(options),
+      startedAt,
+      endedAt
+    );
+  }
+
+  it("queues a resume run for a message approved while a targeted run was on", () => {
+    const db = openDb(":memory:");
+    seedOutreach(db, "pending_send");
+    seedApplyRun(db, "done", { jobIds: [1], mode: "direct" });
+    const startExecutor = start();
+
+    const result = requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor, attendedReachable: () => true });
+
+    expect(result).toEqual({ autoStarted: true, runId: 77, channel: "user_chrome" });
+    expect(startExecutor).toHaveBeenCalledWith(db, U, "apply", { resume: true }, {}, "user_chrome");
+  });
+
+  it("keeps going after a bare resume run that sent some and hit the per-run cap", () => {
+    const db = openDb(":memory:");
+    seedOutreach(db, "sent", [{ at: "2026-09-23T01:30:00.000Z", dir: "sent", text: "hi" }]);
+    seedOutreach(db, "pending_send");
+    seedRunAt(db, "done", { resume: true }, "2026-09-23 01:26:00", "2026-09-23 01:41:08");
+    const startExecutor = start();
+
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor }).autoStarted).toBe(true);
+  });
+
+  it("stops after a bare resume run that sent nothing", () => {
+    const db = openDb(":memory:");
+    seedOutreach(db, "sent", [{ at: "2026-09-20T01:30:00.000Z", dir: "sent", text: "hi" }]); // before the run
+    seedOutreach(db, "pending_send");
+    seedRunAt(db, "done", { resume: true }, "2026-09-23 01:26:00", "2026-09-23 01:41:08");
+    const startExecutor = start();
+
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor })).toEqual({ autoStarted: false });
+    expect(startExecutor).not.toHaveBeenCalled();
+  });
+
+  it("ignores drafts, coffee-chat messages and runs the user stopped", () => {
+    const db = openDb(":memory:");
+    seedOutreach(db, "draft");
+    const pid = db.prepare("INSERT INTO people (name) VALUES ('Q')").run().lastInsertRowid as number;
+    db.prepare("INSERT INTO outreach (person_id, playbook, channel, draft, status) VALUES (?, 'coffee_chat', 'linkedin', 'hi', 'pending_send')").run(pid);
+    seedApplyRun(db, "done", { jobIds: [1], mode: "direct" });
+    const startExecutor = start();
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor })).toEqual({ autoStarted: false });
+
+    seedOutreach(db, "pending_send");
+    seedApplyRun(db, "stopped", { plan: [{ direction: "swe_general", count: 5, mode: "referral" }] });
+    expect(requeueStrandedApprovals(db, U, { hasLiveOrQueuedRun: () => false, lastRunChannel: userChrome, startExecutor })).toEqual({ autoStarted: false });
+    expect(startExecutor).not.toHaveBeenCalled();
+  });
+});
+
 // 2026-09-17: the session that filled a form stays alive at its prompt with the tab open, and
 // the App types approvals/rejections straight into its terminal. Queueing a run is now only the
 // fallback for when no such session is reachable.

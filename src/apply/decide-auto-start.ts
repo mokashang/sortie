@@ -5,6 +5,7 @@ import { resumePausedChainIfReady } from "@/apply/continue";
 import { isAttendedSessionReachable, notifyAttendedSession } from "@/executor/attended";
 import { approvedNotice, rejectedNotice } from "@/executor/attended-session";
 import { queueTargetedRun } from "@/apply/followup";
+import { JOB_LINKED_SQL } from "@/network/crm";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
 // named export on route.ts) because Next's typed-routes checker only tolerates the recognized
@@ -113,10 +114,10 @@ export function isBareResumeRun(options: unknown): boolean {
   return o.resume === true && !hasPlan && !hasJobs;
 }
 
-function lastApplyRun(db: DB, userId: string): { status: string; options: unknown } | null {
+function lastApplyRun(db: DB, userId: string): { status: string; options: unknown; startedAt: string; endedAt: string | null } | null {
   const row = db
-    .prepare("SELECT status, options FROM executor_runs WHERE user_id = ? AND kind = 'apply' ORDER BY id DESC LIMIT 1")
-    .get(userId) as { status: string; options: string } | undefined;
+    .prepare("SELECT status, options, started_at, ended_at FROM executor_runs WHERE user_id = ? AND kind = 'apply' ORDER BY id DESC LIMIT 1")
+    .get(userId) as { status: string; options: string; started_at: string; ended_at: string | null } | undefined;
   if (!row) return null;
   let options: unknown = {};
   try {
@@ -124,7 +125,33 @@ function lastApplyRun(db: DB, userId: string): { status: string; options: unknow
   } catch {
     options = {};
   }
-  return { status: row.status, options };
+  return { status: row.status, options, startedAt: row.started_at, endedAt: row.ended_at };
+}
+
+// Approved referral messages (job-linked LinkedIn outreach at pending_send). Only an apply run's
+// resume phase sends these (CLAUDE.md §3.10.f), and unlike an application approval nothing types
+// them into the attended session — so they strand exactly like approvals do.
+function strandedOutreach(db: DB, userId: string): number {
+  return (
+    db
+      .prepare(`SELECT COUNT(*) n FROM outreach o WHERE o.user_id = ? AND o.status = 'pending_send' AND o.channel = 'linkedin' AND ${JOB_LINKED_SQL}`)
+      .get(userId) as { n: number }
+  ).n;
+}
+
+// How many referral messages were reported sent while the run was on (thread_log 'sent' entries
+// stamped inside its window).
+function outreachSentDuring(db: DB, userId: string, startedAt: string, endedAt: string | null): number {
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) n FROM outreach o, json_each(o.thread_log) t
+         WHERE o.user_id = ? AND json_extract(t.value, '$.dir') = 'sent'
+           AND datetime(json_extract(t.value, '$.at')) >= datetime(?)
+           AND datetime(json_extract(t.value, '$.at')) <= datetime(COALESCE(?, 'now'))`
+      )
+      .get(userId, startedAt, endedAt) as { n: number }
+  ).n;
 }
 
 // The mirror image of the approve-time auto-start above: an approval that lands while a
@@ -135,24 +162,41 @@ function lastApplyRun(db: DB, userId: string): { status: string; options: unknow
 // card promised 助手会接着提交. Called when a run ends (the finish route) and from the dispatcher
 // tick (which also covers reaped runs), this queues a resume run once nothing is live or queued.
 //
+// Approved referral messages count too (2026-09-24): seven sat at pending_send for two days —
+// approved while targeted run #206 was on (so the approve-time auto-start stood down), then this
+// check only looked at applications; and bare resume run #205 stopped at the 10-invites-per-run
+// cap promising "the next task sends the rest", which nothing ever queued.
+//
 // Bounded on purpose — at most one such run per real run: nothing is queued when the account's
 // latest apply run is itself a bare resume run (it either already handled the approvals or
 // failed, and re-queueing would spawn a session every few minutes until something changed) or
-// was stopped by the user (a stop must not restart itself ten seconds later). In those cases the
-// user restarts from the App; the failed/stopped task is on the assistant card. Never throws.
+// was stopped by the user (a stop must not restart itself ten seconds later). The one exception
+// is a bare resume run that sent referral messages and still left some approved: that is the
+// per-run send cap, not a failure, so the next one goes on — the chain ends at the first run that
+// sends nothing. In those cases the user restarts from the App; the failed/stopped task is on the
+// assistant card. Never throws.
 export function requeueStrandedApprovals(db: DB, userId: string, deps: DecideAutoStartDeps = {}): DecideAutoStartResult {
   const checkLiveOrQueued = deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun;
   try {
     if (checkLiveOrQueued(db, userId, "apply")) return { autoStarted: false };
-    // A reachable attended session was told about each approval as it happened and still holds
-    // the tabs; queueing a run would only make a second session refill the same forms.
-    if ((deps.attendedReachable ?? (() => isAttendedSessionReachable(db)))()) return { autoStarted: false };
+    const approvals = (
+      db
+        .prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status = 'awaiting_confirm' AND confirm_decision = 'approved'")
+        .get(userId) as { n: number }
+    ).n;
+    const outreach = strandedOutreach(db, userId);
+    if (approvals === 0 && outreach === 0) return { autoStarted: false };
+    // A reachable attended session was told about each application approval as it happened and
+    // still holds the tabs; queueing a run would only make a second session refill the same
+    // forms. Approved messages are never typed into it, so they still need the run (which the
+    // dispatcher then hands to that same session).
+    if (outreach === 0 && (deps.attendedReachable ?? (() => isAttendedSessionReachable(db)))()) return { autoStarted: false };
     const last = lastApplyRun(db, userId);
-    if (last && (last.status === "stopped" || isBareResumeRun(last.options))) return { autoStarted: false };
-    const stranded = db
-      .prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status = 'awaiting_confirm' AND confirm_decision = 'approved'")
-      .get(userId) as { n: number };
-    if (stranded.n === 0) return { autoStarted: false };
+    if (last?.status === "stopped") return { autoStarted: false };
+    if (last && isBareResumeRun(last.options)) {
+      const capped = outreach > 0 && outreachSentDuring(db, userId, last.startedAt, last.endedAt) > 0;
+      if (!capped) return { autoStarted: false };
+    }
     // A parked 接力 chain gets first claim on the session: its next segment starts with the
     // resume phase, so it submits the approvals itself.
     const resumed = resumePausedChainIfReady(db, userId, deps);
