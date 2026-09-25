@@ -75,9 +75,20 @@ export const apply = defineMessages({
       missingRequired: "还有必填项没填。",
       login: {
         paused: "已暂停 · 登完自动继续",
-        instructions: "在你的求职 Chrome 里登录或注册一次就够了,Chrome 会记住会话;助手不会替你输入密码。登完点下面的按钮,这些岗位会自动继续。",
-        open: "打开登录页",
+        instructions: "在你的求职 Chrome 里登录或注册一次就够了(Chrome 会弹出邮箱和建议的强密码,点一下就行),之后 Chrome 会记住会话;助手不会替你输入密码。登完点下面的按钮,这些岗位会自动继续。",
+        open: "在求职 Chrome 里打开",
+        openHere: "在这个浏览器打开",
         done: "我登好了,继续",
+        opened: (n: number) => (n === 1 ? "已在求职 Chrome 里打开登录页" : `已在求职 Chrome 里打开 ${n} 个登录页`),
+        openedDescription: "在常开机的求职 Chrome 里挨个登录或注册,弄完回来点「全部登好了」。",
+        openFailed: "没能打开求职 Chrome",
+      },
+      loginAll: {
+        title: (sites: number, jobs: number) => `${sites} 个网站等你登录 · 共 ${jobs} 个岗位`,
+        description: "一次把这些登录页全部在求职 Chrome 里打开,挨个点 Chrome 推荐的邮箱和密码,最后点一下「全部登好了」,所有岗位一起继续。",
+        openAll: "全部去登录",
+        doneAll: "全部登好了",
+        released: (n: number) => `已放行 ${n} 个岗位`,
       },
       manual: {
         openApplyPage: "打开申请页",
@@ -284,9 +295,20 @@ export const apply = defineMessages({
       login: {
         paused: "Paused · continues automatically once signed in",
         instructions:
-          "Sign in or register once in your job-search Chrome — Chrome remembers the session, and the assistant never types your password. Press the button below once you're signed in and these jobs continue automatically.",
-        open: "Open sign-in page",
+          "Sign in or register once in your job-search Chrome (Chrome offers your email and a suggested strong password — one click each). Chrome remembers the session, and the assistant never types your password. Press the button below once you're signed in and these jobs continue automatically.",
+        open: "Open in job-search Chrome",
+        openHere: "Open in this browser",
         done: "I'm signed in, continue",
+        opened: (n: number) => (n === 1 ? "Sign-in page opened in your job-search Chrome" : `${n} sign-in pages opened in your job-search Chrome`),
+        openedDescription: "Sign in or register in each tab of the job-search Chrome on the always-on machine, then come back and press “All signed in”.",
+        openFailed: "Could not open the job-search Chrome",
+      },
+      loginAll: {
+        title: (sites: number, jobs: number) => `${sites} sites waiting for you to sign in · ${jobs === 1 ? "1 job" : `${jobs} jobs`}`,
+        description: "Open every sign-in page in your job-search Chrome at once, click Chrome's suggested email and password in each, then press “All signed in” once — every job continues together.",
+        openAll: "Open all sign-in pages",
+        doneAll: "All signed in",
+        released: (n: number) => (n === 1 ? "1 job released" : `${n} jobs released`),
       },
       manual: {
         openApplyPage: "Open application page",

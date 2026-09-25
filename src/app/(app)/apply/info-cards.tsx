@@ -49,6 +49,8 @@ type Continued = { status?: string; autoStarted?: boolean };
 const MULTI_SEP = "; ";
 const kindOf = (q: Question): Kind => q.kind ?? "text";
 const isExternal = (url: string) => /^https?:\/\//i.test(url);
+// One card per site: www.foo.com and foo.com share a session (siteKey in src/apply/queue.ts).
+const loginKey = (item: Question, jobId: number) => (item.host ? item.host.toLowerCase().replace(/^www\./, "") : item.url ?? `job-${jobId}`);
 
 // What the card turns into: a login wall groups every job on that site into one card; something
 // only the user can finish is a short "do it yourself" card; everything else is a small form.
@@ -214,6 +216,30 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     });
   }
 
+  // Opens sign-in pages as tabs of the job-search Chrome on the always-on machine (where the
+  // assistant fills forms), not in whatever browser this page is viewed from.
+  async function openLogins(hosts: string[], key: string) {
+    await run(key, async () => {
+      try {
+        const j = await postJson<{ opened: number }>("/api/apply/login-open", { hosts });
+        toast({ title: m.apply.todo.login.opened(j.opened), description: m.apply.todo.login.openedDescription, tone: "good" });
+      } catch (e) {
+        toast({ title: m.apply.todo.login.openFailed, description: errorMessage(e), tone: "danger" });
+      }
+    });
+  }
+
+  async function loginAllDone(hosts: string[]) {
+    await run("login-all-done", async () => {
+      try {
+        const j = await postJson<Continued & { jobIds?: number[] }>("/api/apply/login-done", { hosts });
+        toast({ title: m.apply.todo.loginAll.released(j.jobIds?.length ?? 0), description: continueText(j, m), tone: "good" });
+      } catch (e) {
+        toast({ title: m.apply.todo.releaseFailed, description: errorMessage(e), tone: "danger" });
+      }
+    });
+  }
+
   async function retry(row: InfoRow) {
     await run(`retry-${row.jobId}`, async () => {
       try {
@@ -274,7 +300,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   for (const row of rows) {
     if (cardKind(row) !== "login") continue;
     const item = row.questions.find((q) => kindOf(q) === "login")!;
-    const host = item.host ?? item.url ?? `job-${row.jobId}`;
+    const host = loginKey(item, row.jobId);
     const g = loginGroups.get(host);
     if (g) g.rows.push(row);
     else {
@@ -289,7 +315,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
 
     if (kind === "login") {
       const item = row.questions.find((q) => kindOf(q) === "login")!;
-      const host = item.host ?? item.url ?? `job-${row.jobId}`;
+      const host = loginKey(item, row.jobId);
       if (seenLogin.has(host)) return [];
       seenLogin.add(host);
       const group = loginGroups.get(host)!;
@@ -323,14 +349,19 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
             ))}
           </ul>
           <div className="row mt-4">
-            {group.item.url ? (
-              <LinkButton href={group.item.url} external icon={<ExternalLink size={14} />}>
+            {group.item.host ? (
+              <Button icon={<ExternalLink size={14} />} onClick={() => openLogins([group.item.host!], `open-${host}`)} loading={busyKey === `open-${host}`} disabled={busyKey !== null && busyKey !== `open-${host}`}>
                 {m.apply.todo.login.open}
-              </LinkButton>
+              </Button>
             ) : null}
             <Button variant="primary" icon={<Check size={14} />} onClick={() => loginDone(host, group.rows.length)} loading={busy} disabled={busyKey !== null && !busy}>
               {m.apply.todo.login.done}
             </Button>
+            {group.item.url ? (
+              <LinkButton href={group.item.url} external size="sm" variant="ghost">
+                {m.apply.todo.login.openHere}
+              </LinkButton>
+            ) : null}
           </div>
         </Card>,
       ];
@@ -525,13 +556,35 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     ];
   });
 
-  if (compact) return rows.length === 0 ? null : <div className="col gap-3">{cards}</div>;
+  // Two or more sites to sign in to: one bar that opens them all and releases them all.
+  const loginHosts = orderedKeys.map((k) => loginGroups.get(k)!.item.host).filter((h): h is string => !!h);
+  const loginJobs = orderedKeys.reduce((n, k) => n + loginGroups.get(k)!.rows.length, 0);
+  const loginAll =
+    loginHosts.length >= 2 ? (
+      <Card key="login-all" tone="warn" className="todo-card">
+        <div className="confirm-title">
+          <span className="serif strong">{m.apply.todo.loginAll.title(loginHosts.length, loginJobs)}</span>
+        </div>
+        <p className="muted small mt-2">{m.apply.todo.loginAll.description}</p>
+        <div className="row mt-3">
+          <Button icon={<ExternalLink size={14} />} onClick={() => openLogins(loginHosts, "open-all")} loading={busyKey === "open-all"} disabled={busyKey !== null && busyKey !== "open-all"}>
+            {m.apply.todo.loginAll.openAll}
+          </Button>
+          <Button variant="primary" icon={<Check size={14} />} onClick={() => loginAllDone(loginHosts)} loading={busyKey === "login-all-done"} disabled={busyKey !== null && busyKey !== "login-all-done"}>
+            {m.apply.todo.loginAll.doneAll}
+          </Button>
+        </div>
+      </Card>
+    ) : null;
+  const allCards = loginAll ? [loginAll, ...cards] : cards;
+
+  if (compact) return rows.length === 0 ? null : <div className="col gap-3">{allCards}</div>;
 
   if (rows.length === 0) return <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />;
 
   return (
     <>
-      <div className="col gap-3">{cards}</div>
+      <div className="col gap-3">{allCards}</div>
       <p className="muted xs mt-3">
         <MessageSquare size={12} aria-hidden /> {m.apply.todo.footnote}
       </p>

@@ -2,7 +2,7 @@ import type { Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
 import { serverLang } from "@/lib/prefs";
 import { DB, logEvent } from "@/lib/db";
-import { InfoQuestion, infoKind, manualItem, MULTI_ANSWER_SEP } from "@/apply/queue";
+import { InfoQuestion, infoKind, manualItem, MULTI_ANSWER_SEP, siteKey } from "@/apply/queue";
 
 // The 待处理 list (spec 2026-09-13-todo-list-design): everything the assistant stopped on that
 // only the user can move. Each application carries its to-do items on pending_questions
@@ -195,14 +195,15 @@ export interface ResolveLoginResult {
 // again: the item is removed, rows with nothing else left are cleared (reason + items) for the
 // caller to re-queue, rows that still carry other items keep waiting on those.
 export function resolveLogin(db: DB, userId: string, host: string): ResolveLoginResult {
-  const h = host.trim().toLowerCase();
-  if (!h) throw new Error("resolveLogin: host is required");
-  const rows = db
-    .prepare(
-      `SELECT job_id, pending_questions FROM applications
-       WHERE user_id = ? AND status = 'matched' AND needs_manual_reason IS NOT NULL AND pending_questions LIKE '%"login"%'`
-    )
-    .all(userId) as { job_id: number; pending_questions: string }[];
+  return resolveLogins(db, userId, [host]);
+}
+
+// 「全部登好了」: the same for every site at once (www.foo.com and foo.com count as one site).
+export function resolveLogins(db: DB, userId: string, hosts: string[]): ResolveLoginResult {
+  const keys = new Set(hosts.map(siteKey).filter(Boolean));
+  if (keys.size === 0) throw new Error("resolveLogin: host is required");
+  const h = [...keys].join(",");
+  const rows = pausedLoginRows(db, userId);
   const cleared: number[] = [];
   let touched = 0;
   db.transaction(() => {
@@ -213,7 +214,7 @@ export function resolveLogin(db: DB, userId: string, host: string): ResolveLogin
       } catch {
         continue;
       }
-      const remaining = items.filter((q) => !(infoKind(q) === "login" && (q.host ?? "").toLowerCase() === h));
+      const remaining = items.filter((q) => !(infoKind(q) === "login" && keys.has(siteKey(q.host))));
       if (remaining.length === items.length) continue;
       touched++;
       if (remaining.length === 0) {
@@ -231,6 +232,48 @@ export function resolveLogin(db: DB, userId: string, host: string): ResolveLogin
   })();
   logEvent(db, "application_login_done", { userId, payload: { host: h, jobIds: cleared, touched } });
   return { jobIds: cleared, touched };
+}
+
+function pausedLoginRows(db: DB, userId: string): { job_id: number; pending_questions: string }[] {
+  return db
+    .prepare(
+      `SELECT job_id, pending_questions FROM applications
+       WHERE user_id = ? AND status = 'matched' AND needs_manual_reason IS NOT NULL AND pending_questions LIKE '%"login"%'`
+    )
+    .all(userId) as { job_id: number; pending_questions: string }[];
+}
+
+export interface LoginWall {
+  host: string;
+  url: string; // the sign-in / registration page to open (https://<host> when the item had none)
+  label: string;
+  jobs: number;
+}
+
+// Every site this account still has to sign in to, one entry per site, with the page to open —
+// what 「全部去登录」 opens in the job-search Chrome.
+export function listLoginWalls(db: DB, userId: string): LoginWall[] {
+  const bySite = new Map<string, LoginWall>();
+  for (const r of pausedLoginRows(db, userId)) {
+    let items: InfoQuestion[] = [];
+    try {
+      items = JSON.parse(r.pending_questions);
+    } catch {
+      continue;
+    }
+    for (const q of items) {
+      if (infoKind(q) !== "login" || !q.host) continue;
+      const key = siteKey(q.host);
+      const wall = bySite.get(key);
+      if (wall) {
+        wall.jobs++;
+        continue;
+      }
+      const url = q.url && /^https?:\/\//i.test(q.url) ? q.url : `https://${q.host}`;
+      bySite.set(key, { host: q.host, url, label: q.label, jobs: 1 });
+    }
+  }
+  return [...bySite.values()];
 }
 
 // The notification the App pushes when the executor reports to-do items — one line the user can

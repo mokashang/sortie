@@ -143,7 +143,7 @@ export function takeNextApplication(
       continue; // paused row now fails the needs_manual_reason IS NULL filter — try the next one.
     }
 
-    const wall = loginWalls.get(hostOf(row.apply_url));
+    const wall = loginWalls.get(siteKey(hostOf(row.apply_url)));
     if (wall) {
       parkWithItems(db, userId, row.job_id, [wall], wall.label);
       continue; // same site, same wall — it joins the existing 「登录一次」 card instead of being tried again.
@@ -261,6 +261,11 @@ export function hostOf(url: string | null | undefined): string {
   }
 }
 
+// One key per site for login walls: www.foo.com and foo.com share a session (and a card).
+export function siteKey(host: string | null | undefined): string {
+  return (host ?? "").trim().toLowerCase().replace(/^www\./, "");
+}
+
 // Executor reports are unvalidated JSON: keep only items with a usable key + label, drop unknown
 // kinds back to text, and derive a login item's host from its url when the executor left it out.
 export function normalizeQuestions(input: unknown): InfoQuestion[] {
@@ -281,8 +286,12 @@ export function normalizeQuestions(input: unknown): InfoQuestion[] {
     if (typeof raw.url === "string" && raw.url) q.url = raw.url;
     if (typeof raw.accept === "string" && raw.accept) q.accept = raw.accept;
     if (kind === "login") {
-      const host = typeof raw.host === "string" && raw.host.trim() ? raw.host.trim() : hostOf(q.url);
-      if (host) q.host = host.toLowerCase();
+      let host = typeof raw.host === "string" && raw.host.trim() ? raw.host.trim().toLowerCase() : hostOf(q.url);
+      // A LinkedIn posting's applyUrl is linkedin.com, but the wall is on the company site the
+      // session navigated to — keying it on LinkedIn would pause every LinkedIn-sourced job.
+      const urlHost = hostOf(q.url);
+      if (siteKey(host) === "linkedin.com" && urlHost && siteKey(urlHost) !== "linkedin.com") host = urlHost;
+      if (host) q.host = host;
     }
     out.push(q);
   }
@@ -322,7 +331,7 @@ export function openLoginWalls(db: DB, userId: string): Map<string, InfoQuestion
     } catch {
       continue;
     }
-    for (const q of items) if (infoKind(q) === "login" && q.host && !walls.has(q.host)) walls.set(q.host, q);
+    for (const q of items) if (infoKind(q) === "login" && q.host && !walls.has(siteKey(q.host))) walls.set(siteKey(q.host), q);
   }
   return walls;
 }

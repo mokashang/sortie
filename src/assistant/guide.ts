@@ -133,9 +133,12 @@ the card automatically continues the work — there is no dead end:
   answer it on the card; answers are remembered as standard answers. "Skip this job" archives it.
 - **Upload a file** — the form wants a transcript / portfolio / cover letter: upload once, it is
   kept under Profile → Files for every later form.
-- **Sign in once** — a login wall or a "create candidate account" step: the assistant never types
-  passwords or creates accounts. The user signs in once in the job-search Chrome and presses
-  "I'm signed in"; every paused job on that site re-queues.
+- **Sign in once** — a login wall or a "create candidate account" step: the assistant first looks
+  for a guest route or the same posting on an account-free board; it never types passwords, clicks
+  Chrome's suggested password or creates accounts. The user signs in once in the job-search Chrome
+  and presses "I'm signed in"; every paused job on that site re-queues. With two or more sites
+  waiting, a bar on top has "Open all sign-in pages" (opens every sign-in page as tabs of the
+  job-search Chrome on the always-on machine) and "All signed in" (releases them all at once).
 - **Do it here** — a captcha or 2-step verification in the tab the assistant left open: do it,
   press Done, the assistant continues.
 - **Finish yourself** — something only a person can do (a video, a test format the browser

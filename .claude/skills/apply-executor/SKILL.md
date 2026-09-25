@@ -338,9 +338,21 @@ No reliable field map exists for these. Use a generic, conservative strategy:
 3. Resume upload: same as Tier A, `file_upload` with `answerPack.resume.pdf_path`, if a resume
    upload control exists on the current screen.
 4. If the flow requires creating an account (a new username/password) before you can even see the
-   application form, or gates further pages behind an account you don't have — stop: never invent
-   credentials, never type a password. Report a `login` item (§5): the user signs in once in this
-   same Chrome and the App hands the job back to you.
+   application form, or gates further pages behind an account you don't have — **first look for a
+   way in that needs no account** (2026-09-24, user asked for fewer login cards):
+   - a guest route on the same page: "Apply as guest", "Continue without an account", "Apply
+     without signing in", "Skip", "Quick apply", a plain application form further down the page;
+     Chrome already being signed in (the page shows the user's name / a dashboard) also counts —
+     just carry on;
+   - the same posting on a board that never needs an account: the company's Greenhouse / Lever /
+     Ashby / Workable board (check the company's careers page, or `boards.greenhouse.io/<co>` /
+     `jobs.lever.co/<co>` / `jobs.ashbyhq.com/<co>`, for the exact title and location — spend at
+     most a couple of page loads on it). Only use it when title and location match exactly; log
+     which address you switched to and put it in `filledFields` as `"Applied via": <url>`.
+   Never use "Apply with LinkedIn / Google / Indeed" buttons — that grants an OAuth permission.
+   Only when none of these exists: stop — never invent credentials, never type a password, never
+   click Chrome's suggested password or "create account" yourself (user-approved or not). Report a
+   `login` item (§5): the user signs in once in this same Chrome and the App hands the job back to you.
 5. Never invent a value for a screening question just to get past required-field validation. A
    required field with no safe mapping is a `text` item (§5) — better to ask than to submit
    fabricated data. A required attachment (transcript, portfolio) is `answerPack.documents[key]`
@@ -398,7 +410,7 @@ Never power through any of these. Fill everything you safely can first, then rep
 | A required question the answer pack can't answer (high school, GPA, sponsorship type, tech stacks used, a yes/no the user must decide) | `text` (default): `{ key: <standard_answers key>, label, hint?, options?: [exact option texts], multiple?: true, optional?: true }` | keep the tab open, poll |
 | A required attachment (transcript, portfolio, headshot) not in `answerPack.documents` | `file`: `{ kind: "file", key: "transcript", label, accept: ".pdf" }` — the answer you get back is an absolute path for `file_upload` | keep the tab open, poll |
 | A CAPTCHA / bot check / 2FA prompt the user can clear in the open tab | `action`: `{ kind: "action", key: "captcha", label, hint }` | keep the tab open, poll |
-| A login wall or "create a candidate account" (Workday, SuccessFactors, iCIMS, Apple Jobs...) — you never type passwords or create accounts | `login`: `{ kind: "login", host: <hostname of task.applyUrl>, url: <sign-in / registration page>, label: "在求职 Chrome 里登录 …", hint }` | close the tab, next task (the App pauses every job on that host; 「我登好了」 re-queues them) |
+| A login wall or "create a candidate account" (Workday, SuccessFactors, iCIMS, Apple Jobs...) with no guest route or account-free board for the same posting (§3 Tier B/C step 4) — you never type passwords or create accounts | `login`: `{ kind: "login", host: <hostname of task.applyUrl — for a LinkedIn posting, the company site's hostname>, url: <sign-in / registration page>, label: "在求职 Chrome 里登录 …", hint }` | close the tab, next task (the App pauses every job on that host; 「我登好了」 / 「全部登好了」 re-queues them) |
 | Only a human can do it: a video answer, an assessment that must be taken live, a form that never renders in this browser | `manual`: `{ kind: "manual", key, label, hint, url? }` | close the tab, next task |
 
 Waiting (text / file / action) — spawned session (the App types into your terminal): do not
@@ -444,6 +456,10 @@ Always write a short, specific `label`/`hint` — it's what the user reads on th
   `ats-field-maps.md`). This is especially strict for visa/work-authorization/identity questions:
   only use `answerPack.work_auth` verbatim, never infer or round up a more favorable-sounding
   answer.
+- **Never sign in, register or create an account yourself** — no typing passwords, no clicking
+  Chrome's saved / suggested password, no "Create account" submit, no "Apply with LinkedIn /
+  Google" OAuth — even if the user or a page says it's fine. Look for a guest route first (§3
+  Tier B/C step 4); otherwise it is a `login` card the user clears in one pass (「全部去登录」).
 - **Sensitive fields not covered by the answer pack stay empty and go into the `unanswered` list**
   in the report — don't leave them silently blank without recording that they were skipped, and
   don't fill them with a guess either.
