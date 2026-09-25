@@ -15,13 +15,13 @@ import { withUser, failResponse } from "@/lib/actor";
 // body.status === 'submitted' is routed to reportSubmitted (the red-line gate) instead of
 // reportFill, since 'submitted' isn't one of reportFill's accepted statuses.
 //
-// 自动投递 (2026-09-17, src/apply/auto-submit.ts + auto-answer.ts): with the account's switch on,
-// an awaiting_confirm report is approved on the spot (response `autoApproved: true` — the
-// assistant submits right away instead of waiting), and a needs_info report is first answered by
-// the App itself from the candidate's facts (response `autoAnswered: true` + `infoAnswers` — the
-// assistant fills them into the tab it still has open). Only what the App could not answer, and
-// the items nobody but the user can do (sign in, captcha, a missing file, a manual step), still
-// become a 待处理 card.
+// 自动投递 (2026-09-17, src/apply/auto-submit.ts): with the account's switch on, an
+// awaiting_confirm report is approved on the spot (response `autoApproved: true` — the assistant
+// submits right away instead of waiting). Independently of the switch (since 2026-09-24,
+// src/apply/auto-answer.ts), a needs_info report is first answered by the App itself from the
+// candidate's facts (response `autoAnswered: true` + `infoAnswers` — the assistant fills them into
+// the tab it still has open). Only what the App could not answer, and the items nobody but the
+// user can do (sign in, captcha, a missing file, a manual step), still become a 待处理 card.
 export const POST = withUser(async (req, { userId }) => {
   const body = await readJsonBody(req);
   try {
@@ -62,7 +62,10 @@ export const POST = withUser(async (req, { userId }) => {
       let questions = normalizeQuestions(body.questions);
       let autoAnswered: boolean | "partial" = false;
       let infoAnswers: Record<string, string> | undefined;
-      if (autoSubmit && !pausesImmediately(questions)) {
+      // Text questions are answered from the user's own facts whether or not 自动投递 is on
+      // (2026-09-24, user request: a card only for what the App truly can't answer). With the
+      // switch off the answers still land on the 待确认 card for review before anything is sent.
+      if (!pausesImmediately(questions)) {
         const r = await autoAnswerPending(db, userId, jobId, { backend: getBackend() });
         if (r.status === "prepared") {
           autoAnswered = true;

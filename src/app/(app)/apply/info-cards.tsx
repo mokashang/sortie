@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, ExternalLink, MessageSquare, RotateCcw, Trash, UserCheck } from "lucide-react";
 import { directionName, documentLabel, labelOf } from "@/app/lib/labels";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
-import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Select, Tooltip, useToast } from "@/app/components/ui";
+import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Select, Textarea, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
 import { useLang, useMessages } from "@/i18n/client";
 import type { Messages } from "@/i18n/messages";
@@ -47,6 +47,7 @@ type Draft = { value: string; onlyOnce: boolean; fileName?: string };
 type Continued = { status?: string; autoStarted?: boolean };
 
 const MULTI_SEP = "; ";
+const noteKey = { job: (jobId: number) => `job-${jobId}`, login: (host: string) => `login-${host}` };
 const kindOf = (q: Question): Kind => q.kind ?? "text";
 const isExternal = (url: string) => /^https?:\/\//i.test(url);
 
@@ -121,6 +122,11 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   const [docs, setDocs] = useState<DocumentRow[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Record<string, Draft>>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  // Every card has a free-text message to the assistant ("it's in my Google Drive"), keyed by
+  // noteKey — sent with the card's action and handed to the assistant as custom.assistant_note.
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const noteOf = (key: string) => (notes[key] ?? "").trim();
+  const clearNote = (key: string) => setNotes((prev) => ({ ...prev, [key]: "" }));
   const { data: overview, refresh: refreshOverview } = useOverview();
   const { toast } = useToast();
   const applyRunning = overview?.assistant?.kind === "apply" && overview?.assistant?.status === "running";
@@ -194,7 +200,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
           const d = draft(row.jobId, q.key);
           answers[q.key] = { value: d.value, remember: kind === "text" && !d.onlyOnce };
         }
-        const j = await postJson<Continued>("/api/apply/answer-info", { jobId: row.jobId, answers });
+        const note = noteOf(noteKey.job(row.jobId));
+        const j = await postJson<Continued>("/api/apply/answer-info", { jobId: row.jobId, answers, note: note || undefined });
+        clearNote(noteKey.job(row.jobId));
         toast({ title: m.apply.todo.submitted(row.company), description: continueText(j, m), tone: "good" });
       } catch (e) {
         toast({ title: m.apply.todo.submitFailed, description: errorMessage(e), tone: "danger" });
@@ -205,7 +213,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   async function loginDone(host: string, count: number) {
     await run(`login-${host}`, async () => {
       try {
-        const j = await postJson<Continued & { jobIds?: number[] }>("/api/apply/login-done", { host });
+        const note = noteOf(noteKey.login(host));
+        const j = await postJson<Continued & { jobIds?: number[] }>("/api/apply/login-done", { host, note: note || undefined });
+        clearNote(noteKey.login(host));
         const n = j.jobIds?.length ?? count;
         toast({ title: m.apply.todo.releasedHost(host, n), description: continueText(j, m), tone: "good" });
       } catch (e) {
@@ -217,7 +227,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   async function retry(row: InfoRow) {
     await run(`retry-${row.jobId}`, async () => {
       try {
-        const j = await postJson<Continued>("/api/apply/unpark", { jobId: row.jobId });
+        const note = noteOf(noteKey.job(row.jobId));
+        const j = await postJson<Continued>("/api/apply/unpark", { jobId: row.jobId, note: note || undefined });
+        clearNote(noteKey.job(row.jobId));
         toast({ title: m.apply.todo.handedBack(row.company), description: continueText(j, m), tone: "good" });
       } catch (e) {
         toast({ title: m.apply.todo.retryFailed, description: errorMessage(e), tone: "danger" });
@@ -261,6 +273,21 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       }
     });
   }
+
+  const noteField = (key: string, placeholder: string, hint: string) => (
+    <Field htmlFor={`note-${key}`} label={m.apply.todo.note.label} hint={hint} className="mt-3">
+      <Textarea
+        id={`note-${key}`}
+        rows={2}
+        autoGrow
+        maxLength={2000}
+        value={notes[key] ?? ""}
+        placeholder={placeholder}
+        onChange={(e) => setNotes((prev) => ({ ...prev, [key]: e.target.value }))}
+        style={{ maxWidth: 640 }}
+      />
+    </Field>
+  );
 
   const skipButton = (row: InfoRow) => (
     <Button size="sm" variant="ghost" icon={<Trash size={13} />} onClick={() => skip(row)} loading={busyKey === `skip-${row.jobId}`} disabled={busyKey !== null && busyKey !== `skip-${row.jobId}`}>
@@ -322,6 +349,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
               </li>
             ))}
           </ul>
+          {noteField(noteKey.login(host), m.apply.todo.note.placeholderLogin, m.apply.todo.note.retryHint)}
           <div className="row mt-4">
             {group.item.url ? (
               <LinkButton href={group.item.url} external icon={<ExternalLink size={14} />}>
@@ -352,6 +380,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
               </div>
             ))}
           </div>
+          {noteField(noteKey.job(row.jobId), m.apply.todo.note.placeholderManual, m.apply.todo.note.retryHint)}
           <div className="row mt-4">
             {url ? (
               <LinkButton href={url} external={isExternal(url)} icon={<ExternalLink size={14} />}>
@@ -371,7 +400,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     }
 
     const answerable = row.questions.filter((q) => kindOf(q) !== "login" && kindOf(q) !== "manual");
-    const missing = answerable.some((q) => !q.optional && !draft(row.jobId, q.key).value.trim());
+    const hasNote = noteOf(noteKey.job(row.jobId)).length > 0;
+    const missing = !hasNote && answerable.some((q) => !q.optional && !draft(row.jobId, q.key).value.trim());
+    const noteOnly = hasNote && answerable.every((q) => !draft(row.jobId, q.key).value.trim());
     const kinds = new Set(answerable.map(kindOf));
     const kindLabel = kinds.has("file") ? labelOf(m.labels.infoKind, "file") : kinds.has("action") ? labelOf(m.labels.infoKind, "action") : labelOf(m.labels.infoKind, "text");
     return [
@@ -509,9 +540,11 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
           })}
         </div>
 
+        {noteField(noteKey.job(row.jobId), kinds.has("file") ? m.apply.todo.note.placeholderFile : m.apply.todo.note.placeholderText, m.apply.todo.note.formHint)}
+
         <div className="row mt-4">
           <Button variant="primary" onClick={() => submit(row)} loading={busyKey === `submit-${row.jobId}`} disabled={missing || (busyKey !== null && busyKey !== `submit-${row.jobId}`)}>
-            {m.apply.todo.submitButton}
+            {noteOnly ? m.apply.todo.note.sendNote : m.apply.todo.submitButton}
           </Button>
           {row.status !== "needs_info" || !applyRunning ? (
             <Button variant="ghost" size="sm" icon={<RotateCcw size={13} />} onClick={() => retry(row)} loading={busyKey === `retry-${row.jobId}`} disabled={busyKey !== null && busyKey !== `retry-${row.jobId}`}>

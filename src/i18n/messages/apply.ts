@@ -73,6 +73,16 @@ export const apply = defineMessages({
       submitButton: "提交答案,继续投递",
       retryForm: "让助手重新来",
       missingRequired: "还有必填项没填。",
+      note: {
+        label: "给助手留言",
+        formHint: "不方便上传或不想答?告诉助手去哪找、怎么处理;留了言,上面的必填项可以空着。",
+        retryHint: "可选,会带进助手的下一次尝试。",
+        placeholderFile: "比如:成绩单在我 Google Drive 的 Transcripts 文件夹里",
+        placeholderText: "比如:这题按我档案里的实习经历写就行",
+        placeholderManual: "比如:视频题是选答的,跳过它接着填",
+        placeholderLogin: "比如:用页面上的「Sign in with Google」登录",
+        sendNote: "只留言,让助手处理",
+      },
       login: {
         paused: "已暂停 · 登完自动继续",
         instructions: "在你的求职 Chrome 里登录或注册一次就够了,Chrome 会记住会话;助手不会替你输入密码。登完点下面的按钮,这些岗位会自动继续。",
@@ -281,6 +291,16 @@ export const apply = defineMessages({
       submitButton: "Send answers and continue applying",
       retryForm: "Have the assistant start over",
       missingRequired: "Some required fields are still empty.",
+      note: {
+        label: "Message to the assistant",
+        formHint: "Can't upload it or would rather not answer? Tell the assistant where to find it or how to handle it; with a message, required fields above can stay empty.",
+        retryHint: "Optional; passed on to the assistant's next try.",
+        placeholderFile: "e.g. My transcript is in the Transcripts folder of my Google Drive",
+        placeholderText: "e.g. Answer this from the internship on my profile",
+        placeholderManual: "e.g. The video question is optional, skip it and keep going",
+        placeholderLogin: "e.g. Use the Sign in with Google button on the page",
+        sendNote: "Just send the message",
+      },
       login: {
         paused: "Paused · continues automatically once signed in",
         instructions:

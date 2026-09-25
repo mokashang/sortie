@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
 import { parseProfile } from "@/lib/profile";
-import { takeNextApplication, reportFill, confirmStatus } from "@/apply/queue";
-import { pendingInfo, answerInfo, needsInfoNotification } from "@/apply/info";
+import { takeNextApplication, reportFill, confirmStatus, unpark } from "@/apply/queue";
+import { pendingInfo, answerInfo, needsInfoNotification, resolveLogin, ASSISTANT_NOTE_KEY } from "@/apply/info";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
@@ -157,5 +157,50 @@ describe("needs_info round trip (executor asks -> user answers on /apply -> exec
     expect(n.title).toContain("2 项");
     expect(n.body).toContain("High School Name");
     expect(n.body).toContain("待处理");
+  });
+});
+
+describe("the card's message to the assistant (assistant_note, 2026-09-24)", () => {
+  const FILE_Q = [{ kind: "file" as const, key: "transcript", label: "Transcript", accept: ".pdf" }];
+
+  it("a note lets required items stay blank; it reaches the executor in infoAnswers and is never remembered", () => {
+    const db = openDb(":memory:");
+    const jobId = seed(db);
+    reportFill(db, U, { jobId, status: "needs_info", questions: [...FILE_Q, ...QUESTIONS] });
+    const persisted: Record<string, string>[] = [];
+    const r = answerInfo(db, U, jobId, { high_school: { value: "Chengdu No.7" } }, (x) => persisted.push(x), {
+      note: "  transcript is in my Google Drive, Transcripts folder  ",
+    });
+    expect(r.status).toBe("prepared");
+    expect(persisted).toEqual([{ high_school: "Chengdu No.7" }]);
+    expect(confirmStatus(db, U, jobId).infoAnswers).toEqual({
+      high_school: "Chengdu No.7",
+      [ASSISTANT_NOTE_KEY]: "transcript is in my Google Drive, Transcripts folder",
+    });
+  });
+
+  it("without a note the same blanks are still refused", () => {
+    const db = openDb(":memory:");
+    const jobId = seed(db);
+    reportFill(db, U, { jobId, status: "needs_info", questions: FILE_Q });
+    expect(() => answerInfo(db, U, jobId, {}, () => {})).toThrow(/missing answer/);
+    expect(() => answerInfo(db, U, jobId, {}, () => {}, { note: "   " })).toThrow(/missing answer/);
+  });
+
+  it("retry and 我登好了 carry the note into the next take's answer pack", () => {
+    const db = openDb(":memory:");
+    const a = seed(db);
+    reportFill(db, U, { jobId: a, status: "needs_info", questions: [{ kind: "manual", key: "video", label: "Record a video" }] });
+    unpark(db, U, a, "the video question is optional, skip it");
+    expect(JSON.parse(app(db, a).info_answers as string)).toEqual({ [ASSISTANT_NOTE_KEY]: "the video question is optional, skip it" });
+
+    const b = seed(db);
+    reportFill(db, U, { jobId: b, status: "needs_info", questions: [{ kind: "login", key: "login", host: "jobs.example.com", label: "Sign in" }] });
+    const res = resolveLogin(db, U, "jobs.example.com", "use Sign in with Google");
+    expect(res.jobIds).toEqual([b]);
+    expect(JSON.parse(app(db, b).info_answers as string)).toEqual({ [ASSISTANT_NOTE_KEY]: "use Sign in with Google" });
+    // A blank note leaves an earlier one alone.
+    unpark(db, U, a, "");
+    expect(JSON.parse(app(db, a).info_answers as string)[ASSISTANT_NOTE_KEY]).toBe("the video question is optional, skip it");
   });
 });

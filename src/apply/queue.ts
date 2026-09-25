@@ -750,11 +750,39 @@ export function confirmStatus(
   return { decision: row.confirm_decision, status: row.status, infoAnswers };
 }
 
+// A card-level message from the user to the assistant (2026-09-24, user request: a file card must
+// not be upload-or-nothing — "it's in my Google Drive", "I put it at E:\docs", "use the Google
+// sign-in", "the video question is optional"). Stored on the application's info_answers under
+// this key, so it reaches the assistant both ways answers do: infoAnswers on the pending poll
+// (the session still on the tab) and answerPack.custom on a fresh take. It is an instruction to
+// the assistant, never a form answer and never remembered into standard answers. With a note,
+// required items may be left blank — the assistant resolves them the way the note says, or asks
+// again if it can't.
+export const ASSISTANT_NOTE_KEY = "assistant_note";
+
+// Merge the user's note into a row's info_answers (a blank note leaves an earlier one alone).
+export function saveAssistantNote(db: DB, userId: string, jobId: number, note: string | null | undefined): void {
+  const text = (note ?? "").trim();
+  if (!text) return;
+  const row = db.prepare("SELECT info_answers FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
+    | { info_answers: string | null }
+    | undefined;
+  if (!row) return;
+  let answers: Record<string, string> = {};
+  try {
+    answers = row.info_answers ? JSON.parse(row.info_answers) : {};
+  } catch {
+    answers = {};
+  }
+  answers[ASSISTANT_NOTE_KEY] = text.slice(0, 2000);
+  db.prepare("UPDATE applications SET info_answers = ? WHERE user_id = ? AND job_id = ?").run(JSON.stringify(answers), userId, jobId);
+}
+
 // Clears a parked application's needs_manual_reason so it re-enters takeNextApplication's pool —
 // e.g. the job was parked for "no resume generated for direction 'quant'" and the user has since
 // gone to Studio and generated one. Only valid from status='matched'; anything else (submitted,
 // still awaiting_confirm, etc.) has nothing meaningful to "retry".
-export function unpark(db: DB, userId: string, jobId: number): void {
+export function unpark(db: DB, userId: string, jobId: number, note?: string): void {
   const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as
     | { status: string }
     | undefined;
@@ -768,6 +796,7 @@ export function unpark(db: DB, userId: string, jobId: number): void {
   // The to-do items go too: the next take starts clean and the executor re-derives whatever it
   // still needs under the current protocol.
   db.prepare("UPDATE applications SET status = 'matched', needs_manual_reason = NULL, pending_questions = NULL WHERE user_id = ? AND job_id = ?").run(userId, jobId);
+  saveAssistantNote(db, userId, jobId, note);
 }
 
 // Sentinel used wherever a NULL matches.direction needs a display/routing string — the

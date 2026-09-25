@@ -2,7 +2,8 @@ import type { Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
 import { serverLang } from "@/lib/prefs";
 import { DB, logEvent } from "@/lib/db";
-import { InfoQuestion, infoKind, manualItem, MULTI_ANSWER_SEP } from "@/apply/queue";
+import { InfoQuestion, infoKind, manualItem, MULTI_ANSWER_SEP, ASSISTANT_NOTE_KEY, saveAssistantNote } from "@/apply/queue";
+export { ASSISTANT_NOTE_KEY, saveAssistantNote };
 
 // The 待处理 list (spec 2026-09-13-todo-list-design): everything the assistant stopped on that
 // only the user can move. Each application carries its to-do items on pending_questions
@@ -106,6 +107,9 @@ export interface AnswerInfoOpts {
   // 'needs_info' row must not be handed back to a dead executor: it is re-queued like a paused
   // row instead. Default true (the executor is still polling and continues on 'prepared').
   executorWaiting?: boolean;
+  // The user's message to the assistant (ASSISTANT_NOTE_KEY). When present, required items may be
+  // left blank: the note says how the assistant should resolve them.
+  note?: string;
 }
 
 export function answerInfo(
@@ -133,6 +137,7 @@ export function answerInfo(
     throw new Error(`answerInfo: job ${jobId} has corrupt pending_questions`);
   }
 
+  const note = (opts.note ?? "").trim().slice(0, 2000);
   const all: Record<string, string> = {};
   const remembered: Record<string, string> = {};
   for (const q of questions) {
@@ -142,6 +147,7 @@ export function answerInfo(
     let value = typeof a?.value === "string" ? a.value.trim() : "";
     if (!value) {
       if (q.optional) continue; // left blank on purpose — the executor skips this field
+      if (note) continue; // the user's note tells the assistant how to get this one
       throw new Error(`answerInfo: missing answer for '${q.key}'`);
     }
     if (kind === "text" && q.options && q.options.length > 0) {
@@ -168,7 +174,8 @@ export function answerInfo(
   } catch {
     existing = {};
   }
-  const merged = { ...existing, ...all };
+  const merged: Record<string, string> = { ...existing, ...all };
+  if (note) merged[ASSISTANT_NOTE_KEY] = note;
 
   if (Object.keys(remembered).length > 0) persist(remembered);
 
@@ -180,7 +187,7 @@ export function answerInfo(
     userId,
     entity: "application",
     entityId: jobId,
-    payload: { keys: Object.keys(all), remembered: Object.keys(remembered), from: row.status, to: nextStatus },
+    payload: { keys: Object.keys(all), remembered: Object.keys(remembered), note: note.length > 0, from: row.status, to: nextStatus },
   });
   return { remembered, status: nextStatus };
 }
@@ -194,7 +201,7 @@ export interface ResolveLoginResult {
 // their own Chrome, so every paused application whose login item points at that host can go
 // again: the item is removed, rows with nothing else left are cleared (reason + items) for the
 // caller to re-queue, rows that still carry other items keep waiting on those.
-export function resolveLogin(db: DB, userId: string, host: string): ResolveLoginResult {
+export function resolveLogin(db: DB, userId: string, host: string, note?: string): ResolveLoginResult {
   const h = host.trim().toLowerCase();
   if (!h) throw new Error("resolveLogin: host is required");
   const rows = db
@@ -216,6 +223,7 @@ export function resolveLogin(db: DB, userId: string, host: string): ResolveLogin
       const remaining = items.filter((q) => !(infoKind(q) === "login" && (q.host ?? "").toLowerCase() === h));
       if (remaining.length === items.length) continue;
       touched++;
+      saveAssistantNote(db, userId, r.job_id, note);
       if (remaining.length === 0) {
         db.prepare("UPDATE applications SET needs_manual_reason = NULL, pending_questions = NULL WHERE user_id = ? AND job_id = ?").run(userId, r.job_id);
         cleared.push(r.job_id);

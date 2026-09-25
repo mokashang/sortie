@@ -182,6 +182,29 @@ describe("auto-answer", () => {
     expect(parseAutoAnswers(JSON.stringify([{ key: "langs", answer: "Python; Java" }]), qs)).toEqual({});
   });
 
+  it("an essay-length answer fills this form but is not remembered as a standard answer", async () => {
+    const db = openDb(":memory:");
+    seedProfile(db);
+    const jobId = seedJob(db);
+    reportFill(db, U, {
+      jobId,
+      status: "needs_info",
+      questions: [
+        { key: "why_us", label: "Why do you want to work here?" },
+        { key: "relocate", label: "Willing to relocate?", options: ["Yes", "No"] },
+      ],
+    });
+    const essay = "I built a CUDA kernel tuner with a Python harness that beat the cuBLAS baseline 3x. ".repeat(4).trim();
+    const backend = fakeBackend(JSON.stringify([{ key: "why_us", answer: essay }, { key: "relocate", answer: "Yes" }]));
+    const r = await autoAnswerPending(db, U, jobId, { backend });
+    expect(r.status).toBe("prepared");
+    const row = db.prepare("SELECT info_answers FROM applications WHERE job_id = ?").get(jobId) as { info_answers: string };
+    expect(JSON.parse(row.info_answers)).toEqual({ why_us: essay, relocate: "Yes" });
+    const saved = (getProfileData(db, U)?.standard_answers ?? {}) as Record<string, string>;
+    expect(saved.relocate).toBe("Yes");
+    expect(saved.why_us).toBeUndefined();
+  });
+
   it("answers every open text item: the row moves to prepared with the answers, remembered as standard answers", async () => {
     const db = openDb(":memory:");
     seedProfile(db);

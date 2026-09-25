@@ -100,7 +100,7 @@ export function queuedRunNotice(runId: number, kind: string): string {
 // answers are on the App, the tab is the session's own.
 export function answeredNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} answered job ${jobId}${who ? ` (${who})` : ""}: the user answered your questions. GET /api/apply/pending?jobId=${jobId} returns them in infoAnswers; go back to the tab you kept open for it, fill them in, read the form back and POST /api/apply/report {jobId, status:'awaiting_confirm', filledFields}. If that tab is gone, POST /api/apply/next {"jobIds":[${jobId}],"mode":"direct"} and fill it afresh. ${CARRY_ON}`;
+  return `${NOTICE_PREFIX} answered job ${jobId}${who ? ` (${who})` : ""}: the user answered your questions. GET /api/apply/pending?jobId=${jobId} returns them in infoAnswers (infoAnswers.assistant_note, if present, is the user's own message to you about this job, e.g. where to find a file: follow it for any item left blank, and if you truly cannot, report needs_info again with a hint saying what you tried); go back to the tab you kept open for it, fill them in, read the form back and POST /api/apply/report {jobId, status:'awaiting_confirm', filledFields}. If that tab is gone, POST /api/apply/next {"jobIds":[${jobId}],"mode":"direct"} and fill it afresh. ${CARRY_ON}`;
 }
 export function stoppedRunNotice(runId: number): string {
   return `${NOTICE_PREFIX} run ${runId} stopped by the user: stop working on it now (do not submit anything for it), leave its tabs as they are, and wait for the next line.`;

@@ -138,8 +138,12 @@ the card automatically continues the work — there is no dead end:
   "I'm signed in"; every paused job on that site re-queues.
 - **Do it here** — a captcha or 2-step verification in the tab the assistant left open: do it,
   press Done, the assistant continues.
-- **Finish yourself** — something only a person can do (a video, a test format the browser
-  can't complete): "I applied myself" records it, or skip.
+- **Finish yourself** — something only the user can do: it needs them in person (their own
+  video or voice, a live interview, a webcam-proctored test, ID verification), the assessment
+  explicitly forbids AI help, or the form never renders in the browser. "I applied myself"
+  records it, or skip. Take-home tasks, coding exercises, reports and writing samples are NOT
+  cards: the assistant does them from the user's real experience and they show up on the To
+  confirm card for review.
 - **Assistant error** — a tool failure: "Let the assistant try again".
 - A rejected fill also becomes a card (the note goes to the next attempt).
 Cards from a waiting assistant time out after 30 minutes; the card stays and re-queues once

@@ -190,13 +190,12 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
      CAPTCHA, a video question): `{ "jobId": task.jobId, "status": "needs_info", "questions": [...] }`
      with typed items — see §5 for exactly which kind to use and whether you keep the tab open.
      There is no "needs a human" bucket any more: every stop becomes a 待处理 card with a button
-     that hands the job back to you. **Read the response**: with auto-apply on, the App first
-     tries to answer `text` items itself from the user's profile, standard answers and experience
-     bank. `{ "autoAnswered": true, "infoAnswers": {...} }` = every open item is answered — do not
+     that hands the job back to you. **Read the response**: whether or not auto-apply is on
+     (since 2026-09-24), the App first tries to answer `text` items itself from the user's
+     profile, standard answers and experience bank. `{ "autoAnswered": true, "infoAnswers": {...} }` = every open item is answered — do not
      move on: fill `infoAnswers` into this same tab right away, read the form back and report
      `awaiting_confirm`. `"autoAnswered": "partial"` or `false` = the keys in `remaining` still wait
-     for the user (a card exists) — carry on as usual. Ask exactly as you would without the
-     switch; the App decides what it can answer for the user.
+     for the user (a card exists) — carry on as usual.
    - Hard no on the live page (explicit no-sponsorship, citizens/clearance-only, PhD-only):
      `{ "jobId", "status": "needs_manual", "reason", "eligibility": {...} }` (§3 in CLAUDE.md, or
      `"archive": true`): the App archives it and every still-queued duplicate (same company +
@@ -395,11 +394,11 @@ Never power through any of these. Fill everything you safely can first, then rep
 
 | Situation | Item | Then |
 | --- | --- | --- |
-| A required question the answer pack can't answer (high school, GPA, sponsorship type, tech stacks used, a yes/no the user must decide) | `text` (default): `{ key: <standard_answers key>, label, hint?, options?: [exact option texts], multiple?: true, optional?: true }` | keep the tab open, poll |
+| A required question asking for a personal fact the answer pack truly lacks (high school, GPA, an ID number). Preference / willingness / start-date / "have you used X" questions are NOT this: answer them yourself from `answerPack.custom` and `answerPack.experiences` (the user wants a card only when you are really stuck; the App also re-answers any text item from the profile before a card appears) | `text` (default): `{ key: <standard_answers key>, label, hint?, options?: [exact option texts], multiple?: true, optional?: true }` | keep the tab open, poll |
 | A required attachment (transcript, portfolio, headshot) not in `answerPack.documents` | `file`: `{ kind: "file", key: "transcript", label, accept: ".pdf" }` — the answer you get back is an absolute path for `file_upload` | keep the tab open, poll |
 | A CAPTCHA / bot check / 2FA prompt the user can clear in the open tab | `action`: `{ kind: "action", key: "captcha", label, hint }` | keep the tab open, poll |
 | A login wall or "create a candidate account" (Workday, SuccessFactors, iCIMS, Apple Jobs...) — you never type passwords or create accounts | `login`: `{ kind: "login", host: <hostname of task.applyUrl>, url: <sign-in / registration page>, label: "在求职 Chrome 里登录 …", hint }` | close the tab, next task (the App pauses every job on that host; 「我登好了」 re-queues them) |
-| Only a human can do it: a video answer, an assessment that must be taken live, a form that never renders in this browser | `manual`: `{ kind: "manual", key, label, hint, url? }` | close the tab, next task |
+| Truly only the user can do it — and only these three: (1) it needs the user in person: recording their own video or voice, a live interview, a proctored test with webcam / screen monitoring, ID or face verification; (2) an assessment whose page explicitly forbids AI or outside help (doing it for them would be cheating and can get them blacklisted); (3) a form that never renders in this browser | `manual`: `{ kind: "manual", key, label, hint, url? }` | close the tab, next task |
 
 Waiting (text / file / action) — spawned session (the App types into your terminal): do not
 poll; keep the tab, take the next task, and act on `[Sortie] answered job <id>` when it comes
@@ -423,6 +422,32 @@ letters are not missing answers either: draft them from `answerPack.experiences`
 facts only, put the text in `filledFields`, and the user reviews it on the confirmation card. If
 `answerPack.custom.rejection_note` is present the user rejected your previous fill of this job
 for that reason — it's an instruction to you, not a form answer.
+
+**Assessments, take-homes and writing tasks are yours to finish** (2026-09-24, the user's
+call — they are not a reason to stop). A coding exercise, take-home assignment, case study,
+written report, writing sample or situational / personality questionnaire that the
+application asks for: do it. Write code in the page's editor and run the sample tests; write
+prose only from `answerPack.experiences` and the profile facts (never invent experience or
+results); when a file is due, generate it under `data/generated/<jobId>/` (PDF, Markdown,
+a zip of code) and `file_upload` it. Timed ones too — log a line before you start. Put the
+work (or the file path plus a summary) in `filledFields` and report `awaiting_confirm` as
+usual; submitting still waits for the App's approval. Only the three cases in the `manual`
+row above are a card; a login wall, a captcha, a personal fact the profile lacks or a file
+found nowhere are their own items. Everything else: do it.
+
+**The user's message (`assistant_note`).** Every 待处理 card has a free-text box, and what the
+user writes there comes back as `infoAnswers.assistant_note` (the session still on the tab) or
+`answerPack.custom.assistant_note` (a fresh take). It's the user telling you how to get past the
+stop — "my transcript is in the Transcripts folder of my Google Drive", "it's at
+E:\docs\transcript.pdf", "use Sign in with Google", "the video question is optional". With a note
+the user may have left the card's items blank on purpose: resolve those the way the note says.
+For a file in Google Drive, first look for a "Google Drive" option on the form's own upload
+widget; otherwise open drive.google.com in a new tab of the user's Chrome, find and download the
+file, point that tab at about:blank (never close it), and `file_upload` it from the Downloads
+folder. For a local path, check the file exists, then `file_upload` it. The note is an
+instruction, never a form answer, and never overrides the red lines (no passwords, no account
+creation, no Submit without approval). If you truly can't do what it says, report `needs_info`
+again for that item with a `hint` saying what you tried.
 
 Always write a short, specific `label`/`hint` — it's what the user reads on the card, so
 "在打开的标签页里完成人机验证(提交页)" beats "blocked".

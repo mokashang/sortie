@@ -11,7 +11,7 @@ import { answeredNotice } from "@/executor/attended-session";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 
-// User -> App from a 待处理 card's form: {jobId, answers: {key: {value, remember?}}}.
+// User -> App from a 待处理 card's form: {jobId, answers: {key: {value, remember?}}, note?}.
 // Remembered text answers are merged into the account's standard_answers (so the next
 // application gets them in its answer pack without asking); everything is stored on the
 // application and it moves on — see answerInfo for the state transitions. A paused row
@@ -23,6 +23,9 @@ export const POST = withUser(async (req, { userId }) => {
     const db = getDb();
     const jobId = Number(body.jobId);
     const answers = (body.answers ?? {}) as Record<string, InfoAnswer>;
+    // The card's free-text message to the assistant (ASSISTANT_NOTE_KEY): with one, required
+    // items may be left blank — "it's in my Google Drive" instead of an upload.
+    const note = typeof body.note === "string" ? body.note.trim() : "";
 
     // A file answer must be a file the upload route wrote into the account's documents folder —
     // never a path typed by hand, which would point the executor's file_upload at an arbitrary file.
@@ -40,7 +43,7 @@ export const POST = withUser(async (req, { userId }) => {
       for (const q of questions) {
         if (infoKind(q) !== "file") continue;
         const value = answers[q.key]?.value?.trim();
-        if (!value && q.optional) continue;
+        if (!value && (q.optional || note)) continue;
         if (!value || !isDocumentPath(value, dir)) {
           return NextResponse.json({ error: messagesFor(langFromRequest(req)).errors.fileNotUploaded(q.label) }, { status: 400 });
         }
@@ -60,7 +63,7 @@ export const POST = withUser(async (req, { userId }) => {
         const current = (getProfileData(db, userId)?.standard_answers ?? {}) as Record<string, string>;
         saveStandardAnswers(db, userId, { ...current, ...remembered });
       },
-      { executorWaiting }
+      { executorWaiting, note }
     );
     if (result.status === "prepared") {
       // A long-lived attended session (attended.ts) is told in its terminal and fills the answers

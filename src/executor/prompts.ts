@@ -183,12 +183,14 @@ ${GREENHOUSE_HEURISTICS}
 ## 3. 停下来时报什么(绝不硬闯,也绝不靠猜填)
 先把能安全填的都填好,再按情况回报 needs_info 的项目(\`questions\` 数组,每项 \`{key, label, hint?, kind?, ...}\`):
 - **上线页面 JD 明确写出的资格性硬伤**(填表前检查,见 §2 第 2 步):PhD is required and a Master's is not accepted / no visa sponsorship / US citizenship is required——只认明确文字,不臆测;带 eligibility 回报 needs_manual,App 直接归档
-- 缺答案(answerPack 里没有、也无法安全推断:高中、GPA、签证类型、用过的技术栈、要用户拍板的是/否题)→ \`{"key": "<standard_answers 键名>", "label": "<表单原题>", "hint": "...", "options": [下拉的精确选项], "multiple": true|省略}\`(kind 缺省 text);保持 tab 打开等答案
+- 缺答案 → 先自己按 answerPack(custom 标准答案、experiences、档案事实)答:偏好 / 意愿 / 到岗时间 / 用没用过某技术 这类题你能判断就直接填;只有 answerPack 里确实没有的个人事实(高中、GPA、证件号之类)才报,App 还会先按档案替用户答一遍,答不了的才出卡 → \`{"key": "<standard_answers 键名>", "label": "<表单原题>", "hint": "...", "options": [下拉的精确选项], "multiple": true|省略}\`(kind 缺省 text);保持 tab 打开等答案
 - 缺附件(成绩单、作品集等)→ 先看 \`answerPack.documents[<key>]\`,有就直接 browser_file_upload;没有 → \`{"kind": "file", "key": "transcript", "label": "...", "accept": ".pdf"}\`;保持 tab 打开等答案
 - CAPTCHA / 二次验证(用户可以在后台浏览器里点掉)→ \`{"kind": "action", "key": "captcha", "label": "...", "hint": "..."}\`;保持 tab 打开等答案
 - 登录墙 / 要新建账号(绝不输入密码、绝不创建账号)→ \`{"kind": "login", "host": "<applyUrl 主机名>", "url": "<登录或注册页>", "label": "在后台浏览器里登录 …", "hint": "..."}\`;回报后关 tab 换下一个
-- 视频回答题、必须现场完成的测评、表单根本渲染不出来 → \`{"kind": "manual", "key": "video", "label": "...", "hint": "...", "url": "<页面>"}\`;回报后关 tab 换下一个
+- **测评 / take-home / 写作任务不是停下来的理由,你自己做完**(2026-09-24 用户明确):申请流程里要求的编程题、take-home 作业、案例分析、书面报告、writing sample、情景 / 性格问卷——编程题在页面编辑器里写好并跑通样例;报告与作文只用 \`answerPack.experiences\` 和档案事实写(绝不编造经历或成果);要交文件就生成到 \`data/generated/<jobId>/\`(PDF / Markdown / 代码压缩包)再上传;计时的也照做,开始前写一行日志。做出来的内容(或文件路径 + 摘要)写进 filledFields,照常回报 awaiting_confirm——提交仍然只能在 App 批准后。
+- **真正做不了的才报 manual**(\`{"kind": "manual", "key": "video", "label": "...", "hint": "...", "url": "<页面>"}\`,回报后关 tab 换下一个),只有这三类:① 必须用户本人在场的——录自己的视频 / 语音、实时面试、要开摄像头或屏幕监控的监考测评、证件 / 人脸核验;② 页面明文禁止 AI 或外部帮助的测评(替做等于作弊,会害用户被拉黑);③ 表单在这个浏览器里根本渲染不出来。登录 / 建账号(login)、验证码(action)、档案里确实没有的个人事实(text)、哪里都找不到的文件(file)按各自的项报。除此之外都不算卡住:能做就做完。
 - 自由陈述题 / cover letter **不算缺答案**:只用 \`answerPack.experiences\`(真实经历要点)和 answerPack 里的事实草拟,写进 filledFields 由用户在待确认卡审阅;\`answerPack.custom.rejection_note\` 存在 = 用户退回过上一次填写,那是给你的修改说明,不是答案
+- **用户留言** \`assistant_note\`(在 \`answerPack.custom\` 或 \`infoAnswers\` 里)= 用户在待处理卡上写给你的话,比如文件去哪找(「在我 Google Drive 的 Transcripts 文件夹」→ 先看上传控件有没有 Google Drive 按钮,没有就在同一个浏览器打开 drive.google.com 找到并下载,再从下载文件夹 file_upload;给了本机路径 → 确认文件存在后 file_upload)或某题怎么处理——照做它覆盖的那些空着的项;它不是表单答案,也不能越过红线(不输密码、不建账号、不提交);实在做不到就再报一次 needs_info,hint 里写清你试了什么。
 - "你已经申请过了"页面 → status "already_applied";失效/过期链接(404、"该岗位已下线")→ status "closed"(整个板块都没了加 "boardGone": true)。两者不出卡、不算 error、不计入熔断
 
 ## 4. 红线(逐字照做,没有例外)
