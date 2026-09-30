@@ -12,10 +12,11 @@ import {
   normalizeQuestions,
   pausesImmediately,
   openLoginWalls,
+  siteKey,
   ApplyTask,
   InfoQuestion,
 } from "@/apply/queue";
-import { pendingInfo, answerInfo, resolveLogin, needsInfoNotification } from "@/apply/info";
+import { pendingInfo, answerInfo, resolveLogin, resolveLogins, listLoginWalls, needsInfoNotification } from "@/apply/info";
 import { recordExternalSubmission, archiveManual, applicationHistory } from "@/apply/history";
 import { upsertBoards, getBoard } from "@/scanner/boards";
 import { createExperience } from "@/resume/experiences";
@@ -149,6 +150,44 @@ describe("login walls", () => {
     expect(items(db, c)[0]).toMatchObject({ kind: "login", host: "career-hcm20.ns2cloud.com" });
     expect(openLoginWalls(db, U).has("jobs.apple.com")).toBe(false);
     expect(() => resolveLogin(db, U, "  ")).toThrow();
+  });
+
+  it("全部去登录 / 全部登好了: one entry per site with its page, and every site released at once", () => {
+    const db = openTestDb();
+    const a = seed(db, { applyUrl: "https://jobs.apple.com/en-us/details/1" });
+    const b = seed(db, { applyUrl: "https://jobs.apple.com/en-us/details/2" });
+    const c = seed(db, { applyUrl: "https://l3.example/x" });
+    const d = seed(db, { applyUrl: "https://careers.acme.com/x" });
+    reportFill(db, U, { jobId: a, status: "needs_info", questions: [LOGIN] });
+    reportFill(db, U, { jobId: b, status: "needs_info", questions: [{ ...LOGIN, host: "www.jobs.apple.com" }] });
+    reportFill(db, U, { jobId: c, status: "needs_info", questions: [{ kind: "login", key: "l3", label: "注册 L3Harris", host: "career-hcm20.ns2cloud.com" }] });
+    reportFill(db, U, { jobId: d, status: "needs_info", questions: [{ kind: "login", key: "acme", label: "Acme", host: "careers.acme.com", url: "javascript:alert(1)" }] });
+
+    expect(listLoginWalls(db, U)).toEqual([
+      { host: "jobs.apple.com", url: "https://jobs.apple.com/en-us/login", label: LOGIN.label, jobs: 2 },
+      { host: "career-hcm20.ns2cloud.com", url: "https://career-hcm20.ns2cloud.com", label: "注册 L3Harris", jobs: 1 },
+      { host: "careers.acme.com", url: "https://careers.acme.com", label: "Acme", jobs: 1 },
+    ]);
+
+    const r = resolveLogins(db, U, ["jobs.apple.com", "career-hcm20.ns2cloud.com"]);
+    expect(r.jobIds.sort()).toEqual([a, b, c].sort());
+    expect(listLoginWalls(db, U).map((w) => w.host)).toEqual(["careers.acme.com"]);
+  });
+
+  it("a LinkedIn posting's wall is keyed on the company site, and www. shares the wall", () => {
+    const out = normalizeQuestions([
+      { key: "wd", label: "Workday", kind: "login", host: "www.linkedin.com", url: "https://nvidia.wd5.myworkdayjobs.com/login" },
+    ]);
+    expect(out[0].host).toBe("nvidia.wd5.myworkdayjobs.com");
+    expect(siteKey("WWW.Foo.com")).toBe("foo.com");
+
+    const db = openTestDb();
+    seedResume(db);
+    const walled = seed(db, { applyUrl: "https://www.acme.com/jobs/1" });
+    reportFill(db, U, { jobId: walled, status: "needs_info", questions: [{ kind: "login", key: "acme", label: "Acme", host: "www.acme.com" }] });
+    const sibling = seed(db, { status: "matched", applyUrl: "https://acme.com/jobs/2", score: 99 });
+    expect(takeNextApplication(db, U, profile)).toEqual({ done: true });
+    expect(app(db, sibling).needs_manual_reason).toBe("Acme");
   });
 });
 

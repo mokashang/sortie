@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import path from "path";
-import { openBrowserProfile, chromeCandidates } from "@/executor/open-profile";
+import { openBrowserProfile, chromeCandidates, openUrlsInJobChrome } from "@/executor/open-profile";
 
 // "Login once" affordance: POST /api/executor/open-profile spawns a headed Chrome window on the
 // SAME persistent profile dir (data/browser-profile) the headless Playwright MCP executor drives,
@@ -103,5 +103,28 @@ describe("executor/open-profile", () => {
     const { spawnFn, calls } = makeFakeSpawn();
     openBrowserProfile({ spawn: spawnFn, existsSync: () => false, profileDir: "/tmp/x", platform: "linux", env: {} });
     expect(calls[0].bin).toBe("google-chrome");
+  });
+});
+
+describe("openUrlsInJobChrome (全部去登录)", () => {
+  it("opens every http(s) page as tabs of the job-search profile, dropping anything else", () => {
+    const { spawnFn, calls } = makeFakeSpawn();
+    openUrlsInJobChrome(["https://a.example/login?x=1&y=2", "javascript:alert(1)", "http://b.example"], {
+      spawn: spawnFn,
+      existsSync: () => false,
+      platform: "win32",
+      env: { CHROME_BIN: "C:\chrome.exe", CHROME_JOB_PROFILE: "Profile 9" },
+    });
+    expect(calls[0].bin).toBe("C:\chrome.exe");
+    expect(calls[0].args).toEqual(["--profile-directory=Profile 9", "https://a.example/login?x=1&y=2", "http://b.example"]);
+  });
+
+  it("defaults to Profile 4 and never falls back to cmd /c start on Windows", () => {
+    const { spawnFn, calls } = makeFakeSpawn();
+    expect(() => openUrlsInJobChrome(["https://a.example"], { spawn: spawnFn, existsSync: () => false, platform: "win32", env: {} })).toThrow();
+    expect(calls).toHaveLength(0);
+    openUrlsInJobChrome(["https://a.example"], { spawn: spawnFn, existsSync: () => true, platform: "win32", env: { ProgramFiles: "C:\PF" } });
+    expect(calls[0].args[0]).toBe("--profile-directory=Profile 4");
+    expect(() => openUrlsInJobChrome(["file:///etc/passwd"], { spawn: spawnFn, existsSync: () => true, platform: "win32", env: {} })).toThrow();
   });
 });

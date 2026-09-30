@@ -92,3 +92,44 @@ export function openBrowserProfile(deps: OpenProfileDeps = {}): OpenProfileResul
 
   return { bin, args, pid: child.pid };
 }
+
+// The job-search Chrome profile on this machine — the one the attended session drives (Windows
+// Profile 4, ops/windows/start-chrome.cmd). CHROME_JOB_PROFILE overrides the folder name.
+export function jobChromeProfile(env: Record<string, string | undefined> = process.env): string {
+  return env.CHROME_JOB_PROFILE?.trim() || "Profile 4";
+}
+
+// 「全部去登录」 on the 待处理 tab: open every blocked sign-in page as tabs of the user's own
+// job-search Chrome on the server machine (an already-running Chrome just adds the tabs), so the
+// session lands where the assistant fills forms — not in whatever browser the App is viewed from.
+// The user does the signing in; this only opens pages. Only http(s) URLs are passed through.
+export function openUrlsInJobChrome(urls: string[], deps: Omit<OpenProfileDeps, "profileDir"> = {}): OpenProfileResult {
+  const spawnFn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
+  const existsSync = deps.existsSync ?? fs.existsSync;
+  const platform = deps.platform ?? process.platform;
+  const env = deps.env ?? process.env;
+  const safe = urls.filter((u) => /^https?:\/\//i.test(u));
+  if (safe.length === 0) throw new Error("openUrlsInJobChrome: no http(s) urls");
+  const profile = `--profile-directory=${jobChromeProfile(env)}`;
+
+  const found = env.CHROME_BIN || chromeCandidates(platform, env).find((c) => existsSync(c));
+  let bin: string;
+  let args: string[];
+  if (found) {
+    bin = found;
+    args = [profile, ...safe];
+  } else if (platform === "darwin") {
+    bin = "open";
+    args = ["-na", "Google Chrome", "--args", profile, ...safe];
+  } else if (platform === "win32") {
+    // No `cmd /c start` fallback here: cmd would parse the `&` in a query string as a separator.
+    throw new Error("Chrome not found (set CHROME_BIN)");
+  } else {
+    bin = "google-chrome";
+    args = [profile, ...safe];
+  }
+
+  const child = spawnFn(bin, args, { detached: true, stdio: "ignore", windowsHide: true });
+  child.unref();
+  return { bin, args, pid: child.pid };
+}
