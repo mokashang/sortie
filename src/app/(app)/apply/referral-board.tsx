@@ -16,7 +16,7 @@ interface CardJob {
   applyUrl: string | null;
   direction: string | null;
   score: number | null;
-  status: "referral_seeking" | "referral_ready";
+  status: string;
   noContactReason: string | null;
   referralInfo: { source: string; link?: string; code?: string; note?: string; at: string } | null;
   referralPersonName: string | null;
@@ -28,13 +28,20 @@ interface ReferralCardData {
   outreaches: CardOutreach[];
   daysWaiting: number | null;
   overdue: boolean;
+  conversationOnly?: boolean;
 }
 
 type Action = "direct" | "won" | "retry" | "archive";
 
 const needsAttention = (c: ReferralCardData) =>
   c.jobs.some((j) => j.status === "referral_ready") ||
-  c.outreaches.some((o) => o.status === "draft" || o.stage === "will_refer" || o.stage === "referred");
+  c.outreaches.some(
+    (o) =>
+      o.status === "draft" ||
+      o.followup?.status === "draft" ||
+      o.followup?.status === "needs_user" ||
+      (o.status !== "referral_won" && (o.stage === "will_refer" || o.stage === "referred"))
+  );
 
 // 内推进行中: one card per company; several contacts per card. Polls every 5s. With
 // onlyAttention (the 今日 page) only cards that need the user are shown, and nothing when none do.
@@ -143,6 +150,31 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
       });
     });
 
+  // The next message in a conversation (src/network/followup.ts): approve (with the user's edit),
+  // don't send, back to draft, or answer the question only the user can.
+  const followupAction = (o: CardOutreach, action: "approve" | "reject" | "unapprove" | "answer", payload?: string) => {
+    const f = o.followup;
+    if (!f) return;
+    return run(`fu-${action}-${f.id}`, async () => {
+      const body: Record<string, unknown> = { followupId: f.id, action };
+      if (action === "approve" && payload) body.text = payload;
+      if (action === "answer") body.answer = payload ?? "";
+      const j = await postJson<{ queued?: boolean; autoApproved?: boolean; followup?: { status: string } }>("/api/referral/followup", body);
+      const r = m.apply.referrals;
+      if (action === "approve") {
+        toast({ title: r.followupApproved(o.personName), description: j.queued ? r.followupQueued : r.followupNextCheck, tone: "good" });
+      } else if (action === "reject") {
+        toast({ title: r.followupRejected(o.personName), tone: "neutral" });
+      } else if (action === "answer") {
+        const status = j.followup?.status;
+        toast({
+          title: status === "needs_user" ? r.followupStillAsking : j.autoApproved ? r.followupAutoApproved : r.followupDrafted,
+          tone: status === "needs_user" ? "neutral" : "good",
+        });
+      }
+    });
+  };
+
   const checkNow = () =>
     run("check", async () => {
       const j = await postJson<{ queued?: boolean; runId?: number }>("/api/referral/check", {});
@@ -206,7 +238,9 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
                   <Chip tone="info">{m.apply.referrals.searchingChip}</Chip>
                 )}
               </div>
-              {c.daysWaiting != null ? (
+              {c.conversationOnly ? (
+                <span className="muted small">{m.apply.referrals.conversationOnly}</span>
+              ) : c.daysWaiting != null ? (
                 <span className={cx("small", c.overdue ? "text-danger strong" : "muted")}>{m.apply.referrals.waiting(c.daysWaiting, c.overdue)}</span>
               ) : null}
             </div>
@@ -252,12 +286,15 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
                     onApprove={() => approveDraft(o)}
                     onReject={() => rejectDraft(o)}
                     onUnapprove={() => unapproveDraft(o)}
+                    onFollowup={(action, payload) => void followupAction(o, action, payload)}
                     busy={busy}
+                    conversationOnly={c.conversationOnly}
                   />
                 ))}
               </div>
             ) : null}
 
+            {c.conversationOnly ? null : (
             <div className="row mt-4">
               {ready ? (
                 <Button variant="primary" onClick={() => decide(c, "won", { info: readyInfo })} loading={busyHere}>
@@ -296,6 +333,7 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
                 </>
               )}
             </div>
+            )}
           </Card>
         );
       })}

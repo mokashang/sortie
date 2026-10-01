@@ -17,7 +17,7 @@ export function enqueueReferralCheck(db: DB, userId: string, deps: { startExecut
   return start(db, userId, "referral_check", options, {}, "user_chrome").id;
 }
 
-// The twice-daily tick: one run per account that has conversations to monitor.
+// The scheduled tick: one run per account that has conversations to monitor.
 export function enqueueReferralChecksForAll(db: DB, deps: { startExecutor?: typeof startExecutor } = {}): number[] {
   const ids: number[] = [];
   for (const u of listUsers(db)) {
@@ -27,9 +27,33 @@ export function enqueueReferralChecksForAll(db: DB, deps: { startExecutor?: type
   return ids;
 }
 
-// Twice a day (local time). Pure so the tick route can be unit-tested: returns the slot key
-// ("YYYY-MM-DD@9" / "@18") that is due right now and not yet fired, else null.
-export const CHECK_HOURS = [9, 18] as const;
+// An approval that lands while a check run is already on its way may come after the session
+// passed that person (or the session sent everything else and ended). When a check run ends with
+// a follow-up approved after it was claimed still unsent, queue one more check. Bounded: only
+// approvals made after this run started count, so a run that fails to send what was approved
+// before it started does not loop. Returns the queued run id or null. Never throws.
+export function requeueStrandedFollowups(db: DB, userId: string, runId: number, deps: { startExecutor?: typeof startExecutor } = {}): number | null {
+  try {
+    const run = db
+      .prepare("SELECT COALESCE(claimed_at, started_at) AS since FROM executor_runs WHERE id = ? AND user_id = ?")
+      .get(runId, userId) as { since: string | null } | undefined;
+    if (!run?.since) return null;
+    const n = (
+      db
+        .prepare("SELECT COUNT(*) n FROM outreach_followups WHERE user_id = ? AND status = 'pending_send' AND datetime(approved_at) > datetime(?)")
+        .get(userId, run.since) as { n: number }
+    ).n;
+    if (n === 0) return null;
+    return enqueueReferralCheck(db, userId, deps);
+  } catch {
+    return null;
+  }
+}
+
+// Three times a day (local time) — a reply should not wait half a day for its answer. Pure so the
+// tick route can be unit-tested: returns the slot key ("YYYY-MM-DD@9" / "@13" / "@18") that is
+// due right now and not yet fired, else null.
+export const CHECK_HOURS = [9, 13, 18] as const;
 export function dueSlot(now: Date, fired: Set<string>): string | null {
   const h = now.getHours();
   if (!(CHECK_HOURS as readonly number[]).includes(h) || now.getMinutes() >= 5) return null;

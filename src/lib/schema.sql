@@ -120,6 +120,28 @@ CREATE TABLE IF NOT EXISTS outreach_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_outreach_jobs_job ON outreach_jobs(job_id);
 
+-- 内推对话的后续消息(2026-09-30,spec 2026-09-30-referral-followup-design):第一条发出去之后,
+-- 助手读到新进展(对方接受邀请 / 回了话 / 久未回)就由 App 起草下一条,走和第一条一样的批准闸门
+-- (needs_user → draft → pending_send → sent)。每个 outreach 同时最多一条未结束的;answers_at 是它回应的
+-- 那条对话记录的时间(thread_log 末尾那条的 at),对话往前走了旧的就作废(superseded)。
+CREATE TABLE IF NOT EXISTS outreach_followups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  outreach_id INTEGER NOT NULL REFERENCES outreach(id),
+  kind TEXT NOT NULL,              -- intro(接受邀请后补上完整请求)| reply(回对方的话)| nudge(久未回的轻提醒)
+  answers_at TEXT,                 -- thread_log 里它所回应那条记录的 at
+  draft TEXT,                      -- 要发的文字;needs_user 时为空
+  attach_resume INTEGER NOT NULL DEFAULT 0,
+  question TEXT,                   -- 只有用户本人能答的问题(needs_user)
+  user_answer TEXT,
+  reason TEXT,                     -- 一句话说明为什么这样回(给卡片看)
+  status TEXT NOT NULL DEFAULT 'draft', -- needs_user|draft|pending_send|sent|skipped|superseded|archived
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  approved_at TEXT,
+  sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_outreach_followups_outreach ON outreach_followups(outreach_id, status);
+
 CREATE TABLE IF NOT EXISTS companies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,

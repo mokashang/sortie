@@ -27,7 +27,9 @@ export function overview(db: DB, userId: string): Overview {
   const assistant = liveRuns[0] ?? runs[0] ?? null;
   const liveKinds = [...new Set(liveRuns.map((r) => r.kind))];
 
-  const cards = referralBoard(db, userId);
+  // Conversation-only cards (jobs already off the board, a message still waiting) are counted by
+  // referralDrafts below, not as jobs in flight.
+  const cards = referralBoard(db, userId).filter((c) => !c.conversationOnly);
   const referralInFlight = cards.reduce((n, c) => n + c.jobs.length, 0);
   const referralProgress = cards.reduce(
     (n, c) => n + c.outreaches.filter((o) => o.stage === "will_refer" || o.stage === "referred").length,
@@ -42,7 +44,11 @@ export function overview(db: DB, userId: string): Overview {
       userId
     ),
     needsInfo: pendingInfo(db, userId).length,
-    referralDrafts: count(db, `SELECT COUNT(*) n FROM outreach o WHERE o.user_id = ? AND o.status = 'draft' AND ${JOB_LINKED_SQL}`, userId),
+    // First messages to approve plus later ones in a conversation (a reply to approve, or a
+    // question only the user can answer — src/network/followup.ts).
+    referralDrafts:
+      count(db, `SELECT COUNT(*) n FROM outreach o WHERE o.user_id = ? AND o.status = 'draft' AND ${JOB_LINKED_SQL}`, userId) +
+      count(db, "SELECT COUNT(*) n FROM outreach_followups WHERE user_id = ? AND status IN ('draft','needs_user')", userId),
     referralProgress,
     referralInFlight,
     networkDrafts: count(db, `SELECT COUNT(*) n FROM outreach o WHERE o.user_id = ? AND o.status = 'draft' AND NOT ${JOB_LINKED_SQL}`, userId),

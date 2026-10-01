@@ -3,7 +3,7 @@ import { getDb } from "@/lib/db";
 import { dueSlot, enqueueReferralChecksForAll } from "@/apply/referral-check";
 import { withInternal } from "@/lib/actor";
 
-// Called every 60s by src/instrumentation.ts. Twice a day (09:xx and 18:xx local, once each)
+// Called every 60s by src/instrumentation.ts. Three times a day (09:xx, 13:xx and 18:xx local, once each)
 // enqueues a referral_check run for every account with conversations to monitor.
 const fired = new Set<string>();
 

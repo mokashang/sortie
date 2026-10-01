@@ -570,6 +570,22 @@ td.company {
   padding-top: var(--s-3);
 }
 
+/* 内推对话跟进: the conversation view and the next message (referral-followup.tsx) */
+.referral-thread summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.referral-thread .thread-meta {
+  margin-bottom: 4px;
+}
+
+.referral-followup {
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
 .submitted-list {
   border-top: 1px solid var(--line-2);
 }

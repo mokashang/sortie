@@ -158,7 +158,8 @@ Off (default): every fill waits on a To confirm card. On: the app approves a fil
 reported, and answers missing text questions itself from the profile, standard answers and
 experience (never inventing numbers or facts; visa answered truthfully); only sign-in, account
 creation, captcha, missing files and finish-yourself steps still leave a card; every automatic
-submission sends a phone notification. Messages to people are never auto-sent.
+submission sends a phone notification. Referral messages (the first one and every follow-up in the
+conversation) are approved automatically too; coffee-chat messages from Network never are.
 
 ## Referrals
 
@@ -172,10 +173,23 @@ asks small with an easy out, thanks regardless. **The user approves every messag
 and 200 characters per note; 2nd/3rd-degree "Message" is a paid InMail wall the assistant never
 uses. Jobs then sit under **Referrals in progress** per company with each contact's stage
 (pending / accepted / replied / asked for resume / will refer / referred / declined / no
-headcount); a "check replies" task runs at 9:00 and 18:00 (or from the card) and reads the
+headcount); a "check replies" task runs at 9:00, 13:00 and 18:00 (or from the card) and reads the
 conversations. The user decides: "Got a referral" (then the application is filled with the
 referral link / code), "Apply directly", or "Cast again" (different people). If nobody at the
 company can be contacted, the card says so and the job goes back to direct.
+
+**The conversation keeps going until it lands** (follow-ups). Every time a check reads a thread,
+the app decides whether the user owes the next message and drafts it: when someone accepts a
+connection request, a thank-you that carries what the short note left out (the roles with links
+and the light ask); when they reply, an answer to exactly what they said (the résumé attached if
+they ask for it, the email or job links, a thank-you once they refer, a gracious close on a no);
+when our message has gone unanswered, at most two short no-guilt nudges (after 5 days, then 7
+more), then the thread is left alone. Each follow-up shows on the contact in the card with a
+"Conversation" view: approve / edit / don't send — or, with Auto-apply on, it goes out at once in
+the thread the assistant has open. Anything only the user can answer (a time for a call, a
+preference the profile lacks) becomes a question on the card; the reply is drafted from the
+user's answer. A phone notification goes out when someone replies, and when a drafted message or
+a question waits on the user. Nudges stop once the user applies directly, gives up, or casts again.
 
 ## What the chat itself can do
 

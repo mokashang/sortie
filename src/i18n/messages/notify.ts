@@ -32,6 +32,16 @@ export const notify = defineMessages({
       title: (company: string) => `Sortie · 已自动投出 ${company}`,
       body: (jobTitle: string) => `${jobTitle} — 自动投递已开启,助手填好后直接提交了;记录在「历史」里。`,
     },
+    // 内推对话跟进 (spec 2026-09-30): someone replied / accepted, and what the assistant does about it.
+    referral: {
+      replied: (person: string, company: string) => `Sortie · ${person}(${company})回复了你`,
+      accepted: (person: string, company: string) => `Sortie · ${person}(${company})接受了好友邀请`,
+      nudge: (person: string, company: string) => `Sortie · 该跟进 ${person}(${company})了`,
+      sending: "助手已起草好下一条消息并直接发出(自动投递已开启)。",
+      approve: "助手起草好了下一条消息,打开投递页「内推进行中」看一眼、批准后助手发出。",
+      question: (q: string) => `需要你来定:${q} — 打开投递页「内推进行中」回答,助手按你的回答起草回复。`,
+      body: (summary: string | null, next: string) => [summary, next].filter(Boolean).join(" — "),
+    },
     // 邮箱同步 (spec 2026-09-21): a mail moved an application's stage, or carries a next step.
     inbox: {
       changed: (company: string, stage: string) => `Sortie · ${company} → ${stage}`,
@@ -76,6 +86,15 @@ export const notify = defineMessages({
     autoSubmitted: {
       title: (company: string) => `Sortie · auto-submitted to ${company}`,
       body: (jobTitle: string) => `${jobTitle} — auto-apply is on, so the assistant submitted as soon as the form was filled; it is in History.`,
+    },
+    referral: {
+      replied: (person: string, company: string) => `Sortie · ${person} (${company}) replied`,
+      accepted: (person: string, company: string) => `Sortie · ${person} (${company}) accepted your invite`,
+      nudge: (person: string, company: string) => `Sortie · time to follow up with ${person} (${company})`,
+      sending: "The assistant drafted the next message and is sending it now (auto-apply is on).",
+      approve: "The assistant drafted the next message — approve it under Referrals in progress on the Apply page and it goes out.",
+      question: (q: string) => `Your call: ${q} — answer it under Referrals in progress on the Apply page and the assistant drafts the reply from it.`,
+      body: (summary: string | null, next: string) => [summary, next].filter(Boolean).join(" — "),
     },
     inbox: {
       changed: (company: string, stage: string) => `Sortie · ${company} → ${stage}`,

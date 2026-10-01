@@ -5,6 +5,7 @@ import { localShort } from "@/app/lib/time";
 import { cx } from "@/app/lib/cx";
 import { Button, Chip, Field, Textarea } from "@/app/components/ui";
 import { useMessages } from "@/i18n/client";
+import { ReferralFollowup, ReferralThread, type CardFollowup, type ThreadEntry } from "./referral-followup";
 
 export const NOTE_MAX = 200;
 
@@ -26,6 +27,9 @@ export interface CardOutreach {
   stageLink: string | null;
   lastCheckedAt: string | null;
   lastMessage: { dir: "sent" | "received"; at: string; text: string } | null;
+  thread: ThreadEntry[];
+  followup: CardFollowup | null;
+  next: { state: string; nextNudgeAt: string | null };
 }
 
 export interface Edited {
@@ -40,14 +44,17 @@ export interface ReferralContactProps {
   onApprove: () => void;
   onReject: () => void;
   onUnapprove: () => void;
+  onFollowup: (action: "approve" | "reject" | "unapprove" | "answer", payload?: string) => void;
   busy: string | null;
+  // On a conversation-only card there is no 有内推了 button to point at.
+  conversationOnly?: boolean;
 }
 
-const CONVERSING = new Set(["sent", "accepted", "replied"]);
+const CONVERSING = new Set(["sent", "accepted", "replied", "referral_won"]);
 
 // One contact inside a referral company card: who they are, where the conversation stands, and
 // (while still a draft) the two editable message versions with approve/reject.
-export function ReferralContact({ o, edit, onEdit, onApprove, onReject, onUnapprove, busy }: ReferralContactProps) {
+export function ReferralContact({ o, edit, onEdit, onApprove, onReject, onUnapprove, onFollowup, busy, conversationOnly = false }: ReferralContactProps) {
   const m = useMessages();
   const noteLen = edit.note.trim().length;
   const stage = o.stage ?? "pending";
@@ -82,13 +89,26 @@ export function ReferralContact({ o, edit, onEdit, onApprove, onReject, onUnappr
               {o.lastMessage.text.length > 200 ? "…" : ""}
             </div>
           ) : null}
-          {won ? (
+          {won && o.status !== "referral_won" && !conversationOnly ? (
             <div className="notice notice-good">
               <span>{m.apply.contact.wonNotice(o.stage === "referred", o.stageLink)}</span>
             </div>
-          ) : o.stageAction ? (
+          ) : o.stageAction && !o.followup ? (
             <div className="text-warn small">{m.apply.contact.suggestion(o.stageAction)}</div>
           ) : null}
+          <ReferralThread thread={o.thread} personName={o.personName} />
+          {o.followup ? (
+            <ReferralFollowup
+              f={o.followup}
+              busy={busy}
+              onApprove={(text) => onFollowup("approve", text)}
+              onReject={() => onFollowup("reject")}
+              onUnapprove={() => onFollowup("unapprove")}
+              onAnswer={(answer) => onFollowup("answer", answer)}
+            />
+          ) : (
+            <NextStep next={o.next} />
+          )}
         </div>
       ) : null}
 
@@ -152,4 +172,23 @@ export function ReferralContact({ o, edit, onEdit, onApprove, onReject, onUnappr
       ) : null}
     </div>
   );
+}
+
+// What happens next in a conversation with nothing waiting on anyone (src/network/followup.ts plan).
+function NextStep({ next }: { next: { state: string; nextNudgeAt: string | null } }) {
+  const m = useMessages();
+  const t = m.apply.contact.next;
+  const text =
+    next.state === "due"
+      ? t.due
+      : next.state === "waiting" && next.nextNudgeAt
+      ? t.waiting(localShort(next.nextNudgeAt))
+      : next.state === "exhausted"
+      ? t.exhausted
+      : next.state === "settled"
+      ? t.settled
+      : next.state === "not_seeking"
+      ? t.not_seeking
+      : null;
+  return text ? <div className="muted xs">{text}</div> : null;
 }

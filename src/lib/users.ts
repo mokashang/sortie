@@ -173,6 +173,7 @@ export function purgeUserData(db: DB, userId: string): Record<string, number> {
     // applications reference people/outreach; clear those pointers before the rows go.
     db.prepare("UPDATE applications SET referral_person_id = NULL, origin_outreach_id = NULL, resume_id = NULL WHERE user_id = ?").run(userId);
     db.prepare("UPDATE matches SET resume_id = NULL WHERE user_id = ?").run(userId);
+    out.outreach_followups = db.prepare("DELETE FROM outreach_followups WHERE user_id = ?").run(userId).changes;
     out.outreach = db.prepare("DELETE FROM outreach WHERE user_id = ?").run(userId).changes;
     out.people = db.prepare("DELETE FROM people WHERE user_id = ?").run(userId).changes;
     out.matches = db.prepare("DELETE FROM matches WHERE user_id = ?").run(userId).changes;

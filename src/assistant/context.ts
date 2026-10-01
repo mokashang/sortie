@@ -134,7 +134,7 @@ export function buildSnapshot(db: DB, userId: string, lang: Lang, question: stri
       bullet([
         `to confirm: ${c.awaitingConfirm} (of which approved and waiting for the assistant to submit: ${c.approvedWaiting})`,
         `to-do cards: ${c.needsInfo}`,
-        `referral drafts awaiting approval: ${c.referralDrafts}`,
+        `referral messages awaiting approval (first messages, replies, and questions only the user can answer): ${c.referralDrafts}`,
         `referral conversations needing a decision: ${c.referralProgress}`,
         `jobs in referrals in progress: ${c.referralInFlight}`,
         `network drafts: ${c.networkDrafts} · network approved and waiting to send: ${c.networkPendingSend}`,

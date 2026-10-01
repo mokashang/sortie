@@ -6,6 +6,7 @@ import { tryAcquireMatching, releaseMatching } from "@/matcher/inflight";
 import { maybeContinueApplyRun, resumePausedChainIfReady, ContinueResult } from "@/apply/continue";
 import { requeueStrandedApprovals, DecideAutoStartResult } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, ReclaimResult } from "@/apply/followup";
+import { requeueStrandedFollowups } from "@/apply/referral-check";
 import { withUser, failResponse } from "@/lib/actor";
 
 // POST {runId, status: 'done'|'failed'|'stopped', summary?} — the attended session calls this
@@ -45,6 +46,10 @@ export const POST = withUser(async (req, { userId }) => {
       if (continuation.action === "none") stranded = requeueStrandedApprovals(db, userId);
     }
 
+    // A referral follow-up approved while this check was already running may have been missed.
+    let followupRun: number | null = null;
+    if (run?.kind === "referral_check") followupRun = requeueStrandedFollowups(db, userId, runId);
+
     if (run?.kind === "jd_review") {
       // 回流的 discovered 行带完整 JD 重打(每个账号各自),然后若还有待补且未到每日上限,接力下一个 run。不 await:
       // 匹配可能跑几分钟,HTTP 响应不能等。`tryAcquireMatching()` is the same process-wide lock the
@@ -71,7 +76,7 @@ export const POST = withUser(async (req, { userId }) => {
       })();
     }
 
-    return NextResponse.json({ ok: true, continuation, stranded, reclaimed });
+    return NextResponse.json({ ok: true, continuation, stranded, reclaimed, followupRun });
   } catch (e) {
     return failResponse(e);
   }

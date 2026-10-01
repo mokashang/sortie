@@ -285,16 +285,43 @@ Resume runs (`options.resume`) must also send `GET /api/network/sendables?jobLin
 
 ## 2c. Referral conversation check (`kind: "referral_check"` runs, and before every other run)
 
-Read-only. `GET /api/referral/checklist` → `{checklist:[{outreachId, status, personName, linkedinUrl,
-company, lastEntryAt, sentText}]}`. For each row: open the profile; **accepted** = the top card no
-longer shows "Pending" (a 1st-degree profile shows Message without Pending). If accepted, click
-Message (free for 1st degree), read the whole thread, and collect every message as
-`{dir: "sent"|"received", at?: ISO, text}` (yours = sent, theirs = received; copy text verbatim).
-Then `POST /api/referral/harvest {"outreachId", "accepted", "messages"}` — the App dedupes, moves
-status, and has Claude label the stage. Report `accepted:false` with no messages when nothing
-changed so the card's "上次检查" timestamp moves. Never click Connect, Send, or type anything in
-this mode. ≥10s between people. A referred/will_refer stage is only ever *shown* — the user
-confirms via 「有内推了」.
+Read, then answer. A referral conversation doesn't end at the first message: the App drafts the
+next one whenever the thread moves (they accepted → the message the short note left out; they
+replied → an answer to exactly what they said; quiet for days → at most two light nudges), and
+you send it once it is approved. Spec: `docs/superpowers/specs/2026-09-30-referral-followup-design.md`.
+
+1. `GET /api/referral/checklist` → `{checklist:[{outreachId, status, personName, linkedinUrl,
+   company, lastEntryAt, sentText, followupStatus}]}` (rows with an approved follow-up —
+   `followupStatus: "pending_send"` — come first).
+2. For each row: open the profile; **accepted** = the top card no longer shows "Pending" (a
+   1st-degree profile shows Message without Pending). If accepted, click Message (free for 1st
+   degree), read the whole thread, and collect every message as `{dir: "sent"|"received", at?:
+   ISO, text}` (yours = sent, theirs = received; copy text verbatim). Then
+   `POST /api/referral/harvest {"outreachId", "accepted", "messages"}` (write the body to a file
+   and `--data-binary @file` — messages are rarely pure ASCII). Report `accepted:false` with no
+   messages when nothing changed so the card's "上次检查" timestamp moves.
+3. **Read the harvest response's `followup`.** Only `followup.status === "pending_send"` is yours
+   to send (approved by the user on the card, or by the 自动投递 switch the moment it was drafted —
+   `autoApproved: true`); anything else (`draft`, `needs_user`, `null`) waits on the user — send
+   nothing. To send, in the conversation you have open:
+   - **Double-send guard first**: if the thread already shows a message from you that matches
+     `followup.text` (a prior session, a retry), do not type it again — report it as sent with the
+     text you found.
+   - Type `followup.text` verbatim into the message box (no edits, no trimming; it is a DM, there
+     is no length cap). If `followup.attachResume` is true, attach the file at
+     `followup.resumePath` with `file_upload` on the message box's attachment input (the paperclip)
+     and wait for the upload chip to show; if the attach fails, don't send — log it and move on.
+   - Read the box back character-for-character, then click Send.
+   - `POST /api/referral/followup {"followupId": <followup.id>, "action": "sent", "text": "<what
+     went out>"}` (file body). If this errors, stop sending and finish the run with the error.
+   This is the **only** typing allowed in this mode; never click Connect, never send anything that
+   didn't come back as `pending_send`, never write or change a word yourself.
+4. When the checklist is done, `GET /api/referral/followup` → `{followups:[…]}` (approved, still
+   unsent — the user may have approved while you were busy). For each one you haven't just sent,
+   open that person's thread again and repeat 2–3 for them.
+
+≥10s between people. A referred/will_refer stage is only ever *shown* — the user confirms via
+「有内推了」. Never click Connect or Send for anything other than step 3.
 
 ## 3. Tiered fill strategy
 

@@ -182,6 +182,13 @@ export interface ThreadEntry {
   text: string;
 }
 
+// Identity of a message for dedup: what LinkedIn shows can differ from what we recorded in
+// punctuation, quotes, spacing or how a link is rendered, and a copy counted as "new" would move
+// the thread's tail (voiding a waiting follow-up, restarting the nudge clock). Letters and digits only.
+export function messageKey(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
 export interface OutreachRow {
   id: number;
   personId: number;

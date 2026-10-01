@@ -5,6 +5,7 @@ import { LlmBackend } from "@/llm/types";
 import { EFFECTIVE_MODE_SQL } from "@/apply/mode";
 import { upsertPerson, PersonInput, Channel, outreachesForJobs, outreachJobIds } from "@/network/crm";
 import { generateDraft } from "@/network/draft";
+import { activeFollowup, archiveActiveFollowups, followupPlan, FollowupView, PlanNoneReason } from "@/network/followup";
 
 // The referral half of the apply pipeline (spec §1.4, §4). A job the user (or Claude) tagged
 // as "worth a referral" leaves the queue through takeNextReferral → status 'referral_seeking';
@@ -183,7 +184,8 @@ export interface ReferralInfo {
   at: string;
 }
 export interface ReferralCardJob extends ReferralTaskJob {
-  status: "referral_seeking" | "referral_ready";
+  // referral_seeking | referral_ready; on a conversationOnly card, wherever the job is now.
+  status: string;
   noContactReason: string | null;
   referralInfo: ReferralInfo | null;
   referralPersonName: string | null;
@@ -209,6 +211,13 @@ export interface ReferralCardOutreach {
   stageLink: string | null;
   lastCheckedAt: string | null;
   lastMessage: { dir: "sent" | "received"; at: string; text: string } | null;
+  // The whole conversation, oldest first (the card's 对话 view).
+  thread: { dir: "sent" | "received"; at: string; text: string }[];
+  // The next message, while it waits on the user, the gate or the session (src/network/followup.ts).
+  followup: FollowupView | null;
+  // What happens next when nothing is waiting: due = the next check drafts it; waiting = a nudge
+  // goes out at nextNudgeAt if they stay quiet; exhausted / settled / not_seeking = left alone.
+  next: { state: "due" | PlanNoneReason; nextNudgeAt: string | null };
 }
 export interface ReferralCard {
   company: string;
@@ -217,6 +226,42 @@ export interface ReferralCard {
   outreaches: ReferralCardOutreach[];
   daysWaiting: number | null;
   overdue: boolean;
+  // The jobs have left the referral pipeline (applied directly, given up, already applied with
+  // the referral) but a message in one of these conversations still waits on the user or the
+  // assistant — shown so it never waits where nobody can see it. No job-level buttons.
+  conversationOnly?: boolean;
+}
+
+function toCardOutreach(db: DB, userId: string, o: ReturnType<typeof outreachesForJobs>[number], nowMs: number): ReferralCardOutreach {
+  const person = db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as {
+    relation: string | null;
+    linkedin_url: string | null;
+    notes: string | null;
+  };
+  const sent = o.threadLog.find((t) => t.dir === "sent");
+  const plan = followupPlan(db, userId, o.id, nowMs);
+  return {
+    id: o.id,
+    personId: o.personId,
+    personName: o.personName,
+    relation: person.relation,
+    linkedinUrl: person.linkedin_url,
+    personNotes: person.notes,
+    channel: o.channel,
+    status: o.status,
+    draft: o.draft,
+    draftNote: o.draftNote,
+    sentAt: sent?.at ?? null,
+    stage: o.referralStage,
+    stageSummary: o.stageSummary,
+    stageAction: o.stageAction,
+    stageLink: o.stageLink,
+    lastCheckedAt: o.lastCheckedAt,
+    lastMessage: o.threadLog.length ? o.threadLog[o.threadLog.length - 1] : null,
+    thread: o.threadLog,
+    followup: activeFollowup(db, userId, o.id),
+    next: plan.action === "draft" ? { state: "due", nextNudgeAt: null } : { state: plan.reason, nextNudgeAt: plan.nextNudgeAt ?? null },
+  };
 }
 
 // /apply's 内推进行中 board: one card per company, its in-flight jobs, and the latest outreach.
@@ -248,33 +293,7 @@ export function referralBoard(db: DB, userId: string, now: () => number = () => 
     // Every outreach across the group's jobs (several people per company), archived ones hidden.
     const outreaches: ReferralCardOutreach[] = outreachesForJobs(db, userId, group.map((r) => r.job_id))
       .filter((o) => o.status !== "archived")
-      .map((o) => {
-        const person = db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as {
-          relation: string | null;
-          linkedin_url: string | null;
-          notes: string | null;
-        };
-        const sent = o.threadLog.find((t) => t.dir === "sent");
-        return {
-          id: o.id,
-          personId: o.personId,
-          personName: o.personName,
-          relation: person.relation,
-          linkedinUrl: person.linkedin_url,
-          personNotes: person.notes,
-          channel: o.channel,
-          status: o.status,
-          draft: o.draft,
-          draftNote: o.draftNote,
-          sentAt: sent?.at ?? null,
-          stage: o.referralStage,
-          stageSummary: o.stageSummary,
-          stageAction: o.stageAction,
-          stageLink: o.stageLink,
-          lastCheckedAt: o.lastCheckedAt,
-          lastMessage: o.threadLog.length ? o.threadLog[o.threadLog.length - 1] : null,
-        };
-      });
+      .map((o) => toCardOutreach(db, userId, o, now()));
     const reached = group.map((r) => r.referral_reached_at).filter((x): x is string => !!x).sort()[0] ?? null;
     const daysWaiting = reached ? Math.floor((now() - Date.parse(reached.replace(" ", "T") + "Z")) / 86400_000) : null;
     cards.push({
@@ -295,6 +314,55 @@ export function referralBoard(db: DB, userId: string, now: () => number = () => 
       overdue: daysWaiting != null && daysWaiting > OVERDUE_DAYS,
     });
   }
+  // Conversations whose jobs left the board but which still owe a message (see conversationOnly).
+  const shown = new Set(cards.flatMap((c) => c.outreaches.map((o) => o.id)));
+  const waiting = (
+    db
+      .prepare("SELECT DISTINCT outreach_id FROM outreach_followups WHERE user_id = ? AND status IN ('needs_user','draft','pending_send')")
+      .all(userId) as { outreach_id: number }[]
+  )
+    .map((r) => r.outreach_id)
+    .filter((id) => !shown.has(id));
+  const orphanByCompany = new Map<string, ReferralCard>();
+  for (const oid of waiting) {
+    const jobIds = outreachJobIds(db, oid);
+    const o = outreachesForJobs(db, userId, jobIds).find((x) => x.id === oid);
+    if (!o) continue;
+    const jobs = jobIds.map((id) => {
+      const r = db
+        .prepare(
+          `SELECT j.id as job_id, j.company, j.title, j.apply_url, m.direction, m.score, a.status
+           FROM jobs j LEFT JOIN applications a ON a.job_id = j.id AND a.user_id = ? LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ?
+           WHERE j.id = ?`
+        )
+        .get(userId, userId, id) as JobRow & { status: string | null };
+      return {
+        jobId: r.job_id,
+        title: r.title,
+        applyUrl: r.apply_url,
+        direction: r.direction,
+        score: r.score,
+        status: r.status ?? "",
+        noContactReason: null,
+        referralInfo: null,
+        referralPersonName: null,
+        company: r.company,
+      };
+    });
+    const company = jobs[0]?.company ?? o.personCompany ?? "?";
+    const key = company.toLowerCase();
+    // Same company still has a regular card: the conversation simply joins it.
+    const regular = cards.find((c) => c.company.toLowerCase() === key);
+    if (regular) {
+      regular.outreaches.push(toCardOutreach(db, userId, o, now()));
+      continue;
+    }
+    const card = orphanByCompany.get(key) ?? { company, jobs: [], outreaches: [], daysWaiting: null, overdue: false, conversationOnly: true };
+    for (const { company: _c, ...j } of jobs) if (!card.jobs.some((x) => x.jobId === j.jobId)) card.jobs.push(j);
+    card.outreaches.push(toCardOutreach(db, userId, o, now()));
+    orphanByCompany.set(key, card);
+  }
+  cards.push(...orphanByCompany.values());
   return cards;
 }
 
@@ -363,15 +431,18 @@ export function referralDecide(db: DB, userId: string, input: ReferralDecideInpu
             "UPDATE applications SET status = 'referral_ready', referral_info = ?, referral_person_id = COALESCE(?, referral_person_id), needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?"
           ).run(JSON.stringify(info), personId, userId, r.id);
         }
-        setOutreach(["sent", "replied", "pending_send", "draft"], "referral_won");
+        // 'accepted' too: an invite accepted with nothing said yet is as much "in flight" as a sent one.
+        setOutreach(["sent", "accepted", "replied", "pending_send", "draft"], "referral_won");
         break;
       }
       case "retry":
         for (const r of rows) {
           db.prepare("UPDATE applications SET status = 'matched', apply_mode = 'referral', pinned = 1, needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?").run(userId, r.id);
         }
-        setOutreach(["sent", "replied"], "no_response");
+        setOutreach(["sent", "accepted", "replied"], "no_response");
         setOutreach(["draft", "pending_send"], "archived");
+        // Moving on to other people: nothing more goes out in these threads.
+        archiveActiveFollowups(db, userId, [...outreachIds]);
         break;
       case "archive":
         for (const r of rows) {
