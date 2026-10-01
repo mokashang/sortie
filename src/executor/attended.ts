@@ -12,15 +12,27 @@ import {
   stalledRunNotice,
   noticeDue,
   markNotice,
-  clearNotices,
+  clearNoticesFor,
 } from "@/executor/attended-session";
+import {
+  listSpawns,
+  saveSpawns,
+  ownerOf,
+  sameSession,
+  sessionOfRun,
+  sessionOfJob,
+  runsOfSession,
+  attendedParallel,
+  type SpawnRecord,
+} from "@/executor/sessions";
 import { maybeContinueApplyRun } from "@/apply/continue";
 import { createRunToken, revokeRunTokens } from "@/lib/api-tokens";
 import { ownerId } from "@/lib/users";
-import { nextQueuedRun } from "@/executor/runner";
 import { settleRunOutcome } from "@/apply/run-outcome";
 import { getAiProvider, type AiProvider } from "@/ai/config";
 import { buildAttendedAgentLaunch } from "@/ai/runtime";
+
+export type { SpawnRecord } from "@/executor/sessions";
 
 // The attended-session dispatcher ("值守会话调度器", spec: docs/superpowers/specs/
 // 2026-09-06-attended-dispatcher-design.md). The user_chrome channel needs an *interactive*
@@ -40,16 +52,23 @@ import { buildAttendedAgentLaunch } from "@/ai/runtime";
 // about, or when it has been idle — nothing running or queued, and no form *it* filled awaiting
 // the user (attendedBusyDetail) — for IDLE_REAP_MS. There is no maximum age.
 //
+// Several at once (2026-09-30, spec docs/superpowers/specs/2026-09-30-parallel-apply-design.md):
+// the user wanted to start a second apply task while one was running and have both go. The
+// dispatcher keeps up to attendedParallel() sessions (设置 → 同时进行的任务, default 2), one task
+// each, all in the same Chrome but each in its own tab group. A queued run goes to a session with
+// no run of its own (typed into its terminal), else to a fresh session while there is room, else
+// waits. Every per-job and per-run line goes to the session that owns that job's or run's tab
+// (src/executor/sessions.ts) — never to "the" session.
+//
 // Accounts (spec 2026-09-13 accounts §4): heartbeats are per user (a session belongs to one
 // account); the dispatcher only serves the box's OWNER — the Chrome on this machine is theirs.
 // Other accounts run their own attended session on their own computer with a personal token.
 //
-// Both pieces of state live in the `profile` key/value table so no schema migration is needed:
+// The state lives in the `profile` key/value table so no schema migration is needed:
 //   attended_heartbeat:<userId> = {sessionId, kind, at}
-//   attended_spawn              = {pid, runId, startedAt, logPath, idleSince?}
+//   attended_spawns             = [{pid, runId, startedAt, logPath, idleSince?}, …]  (sessions.ts)
 
 export const HEARTBEAT_KEY = "attended_heartbeat";
-export const SPAWN_KEY = "attended_spawn";
 export const HEARTBEAT_STALE_MS = 30_000;
 // A spawned session with nothing to do (no run running or queued, no filled application waiting
 // on the user) is closed after this long; the next queued run spawns a fresh one.
@@ -57,6 +76,11 @@ export const IDLE_REAP_MS = 15 * 60 * 1000;
 // A queued run is announced to the live session once, and again only if it is still unclaimed
 // after this long.
 export const NOTICE_RETRY_MS = 2 * 60 * 1000;
+// A session that has not claimed anything yet is still starting up (loading its tools, reading
+// the protocol) and will claim a queued run by itself — the one in its prompt, or the oldest —
+// so it covers one queued run and is not told about others meanwhile. Past this, it is treated
+// like any session with no run: told about queued runs.
+export const BOOT_GRACE_MS = 5 * 60 * 1000;
 // A session whose claimed run has written no log line for this long is assumed to be sitting at
 // its prompt waiting for a line that will never come (run #118, 2026-09-17: it treated an
 // approval's "then stop" as the end of its segment). The dispatcher types a reminder, and again
@@ -74,14 +98,6 @@ export interface Heartbeat {
   sessionId: string;
   kind: "desktop" | "cli";
   at: string; // ISO
-}
-export interface SpawnRecord {
-  pid: number;
-  runId: number;
-  startedAt: string; // ISO
-  logPath: string;
-  // ISO time the session was first seen idle (cleared while it has work); drives IDLE_REAP_MS.
-  idleSince?: string | null;
 }
 
 function readKey<T>(db: DB, key: string): T | null {
@@ -110,8 +126,14 @@ export function heartbeatAgeMs(db: DB, userId: string, now = new Date()): number
   const t = Date.parse(hb.at);
   return Number.isNaN(t) ? null : Math.max(0, now.getTime() - t);
 }
+// Every spawned session, oldest first.
+export function currentSpawns(db: DB): SpawnRecord[] {
+  return listSpawns(db);
+}
+// The newest spawned session (what there was exactly one of before 2026-09-30).
 export function currentSpawn(db: DB): SpawnRecord | null {
-  return readKey<SpawnRecord>(db, SPAWN_KEY);
+  const all = listSpawns(db);
+  return all.length > 0 ? all[all.length - 1] : null;
 }
 
 export type Decision =
@@ -122,65 +144,187 @@ export type Decision =
   | { action: "nudge"; pid: number; runId: number; reason: string }
   | { action: "reap"; pid: number; reason: string };
 
+// One spawned session as the planner sees it.
+export interface SessionInput {
+  pid: number;
+  runId: number;
+  alive: boolean;
+  // This process holds the child's terminal and can type into it.
+  reachable: boolean;
+  // How long the session has had nothing to do (null while it has work).
+  idleForMs: number | null;
+  // The user_chrome run it has claimed and not finished. A session works one run at a time: it
+  // is not told about queued runs while it has one (it claims the next itself when it finishes,
+  // its prompt says so), and a mid-run "claim this" would have it juggling two runs at once.
+  runningRunId: number | null;
+  // How long that run's log has been silent (null: no running run or no log file yet).
+  runningQuietMs: number | null;
+  // The stall reminder for that run has not been typed recently.
+  stallNoticeDue: boolean;
+  // Spawned moments ago and has not claimed anything yet (BOOT_GRACE_MS).
+  booting: boolean;
+  // An approved application in one of its tabs (only matters when it is unreachable).
+  approvalsWaiting: boolean;
+}
+
+export interface PlanInput {
+  // The owner's queued user_chrome runs, oldest first; toldTo = the sessions it was announced to
+  // within NOTICE_RETRY_MS (a session that is gone does not count).
+  queued: { id: number; toldTo: number[] }[];
+  heartbeatAgeMs: number | null;
+  // How many spawned sessions may exist at once.
+  maxSessions: number;
+  sessions: SessionInput[];
+}
+
+export interface Plan {
+  // In the order they are carried out: reaps, notices, reminders, spawns.
+  actions: Exclude<Decision, { action: "none" }>[];
+  // Why nothing (more) is done this tick.
+  reason: string;
+}
+
+// Pure decision so the matrix is unit-testable. Reaping wins over spawning: a tick that reaps
+// spawns nothing, and a fresh session (if still needed) is spawned on the next.
+export function planDispatch(input: PlanInput): Plan {
+  const reaps: Plan["actions"] = [];
+  const notices: Plan["actions"] = [];
+  const nudges: Plan["actions"] = [];
+  const spawns: Plan["actions"] = [];
+  const kept: SessionInput[] = [];
+  const reasons: string[] = [];
+  for (const s of input.sessions) {
+    if (!s.alive) {
+      reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} exited` });
+      continue;
+    }
+    const idle = s.idleForMs != null && s.idleForMs >= IDLE_REAP_MS;
+    if (!s.reachable) {
+      // It cannot be told anything. One still on a run of its own is left to finish it; one
+      // between runs is in the way of the work waiting for it.
+      if (s.approvalsWaiting) reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} is unreachable (server restarted?) and approvals wait in its tabs` });
+      else if (input.queued.length > 0 && s.runningRunId == null)
+        reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} is unreachable (server restarted?) and work is waiting` });
+      else if (idle) reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} idle for ${Math.round((s.idleForMs as number) / 60_000)} min` });
+      else {
+        kept.push(s);
+        reasons.push(`child ${s.pid} unreachable, nothing to tell it`);
+      }
+      continue;
+    }
+    if (idle) {
+      reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} idle for ${Math.round((s.idleForMs as number) / 60_000)} min` });
+      continue;
+    }
+    kept.push(s);
+    reasons.push(s.idleForMs == null ? `child ${s.pid} has work` : `child ${s.pid} idle, keeping it`);
+  }
+
+  for (const s of kept) {
+    if (s.reachable && s.runningRunId != null && s.runningQuietMs != null && s.runningQuietMs >= STALL_NUDGE_MS && s.stallNoticeDue)
+      nudges.push({
+        action: "nudge",
+        pid: s.pid,
+        runId: s.runningRunId,
+        reason: `run #${s.runningRunId} running but quiet for ${Math.round(s.runningQuietMs / 60_000)} min`,
+      });
+  }
+
+  // Each queued run needs one taker: a session still starting up (it claims one by itself), a
+  // session told about it recently, a free session told now, or a fresh session.
+  let free = kept.filter((s) => s.reachable && s.runningRunId == null && !s.booting);
+  let booting = kept.filter((s) => s.booting).length;
+  const uncovered: number[] = [];
+  for (const q of input.queued) {
+    if (booting > 0) {
+      booting -= 1;
+      reasons.push(`run #${q.id} queued, a session is starting up`);
+      continue;
+    }
+    const told = kept.find((s) => q.toldTo.includes(s.pid));
+    if (told) {
+      free = free.filter((s) => s !== told);
+      reasons.push(`run #${q.id} queued, announced to child ${told.pid} recently`);
+      continue;
+    }
+    const s = free.shift();
+    if (s) {
+      notices.push({ action: "notify", pid: s.pid, runId: q.id, reason: `run #${q.id} queued, child ${s.pid} has no run` });
+      continue;
+    }
+    uncovered.push(q.id);
+  }
+  if (uncovered.length > 0) {
+    if (input.heartbeatAgeMs != null && input.heartbeatAgeMs < HEARTBEAT_STALE_MS) {
+      reasons.push(`attended session alive (${Math.round(input.heartbeatAgeMs / 1000)}s ago)`);
+    } else if (reaps.length > 0) {
+      // The reaped sessions' runs are being closed out (a chain may queue its next segment);
+      // the next tick sees the settled queue and spawns for it.
+      reasons.push(`run #${uncovered[0]} queued, spawning after this tick's reap`);
+    } else {
+      let room = input.maxSessions - input.sessions.length;
+      for (const runId of uncovered) {
+        if (room <= 0) {
+          reasons.push(`run #${runId} queued, all ${input.maxSessions} session(s) busy`);
+          break;
+        }
+        room -= 1;
+        spawns.push({
+          action: "spawn",
+          runId,
+          reason: input.sessions.length === 0 && spawns.length === 0 ? "queued run and no live attended session" : `run #${runId} queued and every session is busy`,
+        });
+      }
+    }
+  }
+  if (input.sessions.length === 0 && input.queued.length === 0) reasons.push("nothing queued");
+  return { actions: [...reaps, ...notices, ...nudges, ...spawns], reason: reasons.join("; ") || "nothing to do" };
+}
+
+// The single-session view of the planner (one session at most, no parallelism): the shape the
+// dispatcher had before 2026-09-30, kept for the decision-matrix tests.
 export interface DecideInput {
   queuedRunId: number | null;
   heartbeatAgeMs: number | null;
   // An approved application nobody has submitted yet (only matters for an unreachable child).
   approvalsWaiting: boolean;
-  // A user_chrome run the session has claimed and not finished. A queued run is not announced
-  // while one is running: the session claims the next one itself when it finishes (its prompt
-  // says so), and a mid-run "claim this" would have it juggling two runs at once.
   runningRunId?: number | null;
-  // How long the running run's log has been silent (null: no running run or no log file yet).
   runningQuietMs?: number | null;
-  // The stall reminder for that run has not been typed recently.
   stallNoticeDue?: boolean;
   spawn: {
     pid: number;
     runId: number;
     alive: boolean;
-    // This process holds the child's terminal and can type into it.
     reachable: boolean;
-    // How long the session has had nothing to do (null while it has work).
     idleForMs: number | null;
     // The queued run has not been announced to the session recently.
     queuedNoticeDue: boolean;
   } | null;
 }
-
-// Pure decision so the matrix is unit-testable. Reaping wins over spawning: a dead/unreachable
-// child is cleared first and a fresh one (if still needed) is spawned on the next tick.
 export function decide(input: DecideInput): Decision {
   const s = input.spawn;
-  if (s) {
-    if (!s.alive) return { action: "reap", pid: s.pid, reason: `child ${s.pid} exited` };
-    if (!s.reachable) {
-      if (input.queuedRunId != null || input.approvalsWaiting)
-        return { action: "reap", pid: s.pid, reason: `child ${s.pid} is unreachable (server restarted?) and work is waiting` };
-      if (s.idleForMs != null && s.idleForMs >= IDLE_REAP_MS)
-        return { action: "reap", pid: s.pid, reason: `child ${s.pid} idle for ${Math.round(s.idleForMs / 60_000)} min` };
-      return { action: "none", reason: `child ${s.pid} unreachable, nothing to tell it` };
-    }
-    if (input.queuedRunId != null && s.queuedNoticeDue) {
-      if (input.runningRunId != null)
-        return { action: "none", reason: `run #${input.queuedRunId} queued, child ${s.pid} still on run #${input.runningRunId}` };
-      return { action: "notify", pid: s.pid, runId: input.queuedRunId, reason: `run #${input.queuedRunId} queued, session alive` };
-    }
-    if (input.runningRunId != null && input.runningQuietMs != null && input.runningQuietMs >= STALL_NUDGE_MS && input.stallNoticeDue)
-      return {
-        action: "nudge",
-        pid: s.pid,
-        runId: input.runningRunId,
-        reason: `run #${input.runningRunId} running but quiet for ${Math.round(input.runningQuietMs / 60_000)} min`,
-      };
-    if (s.idleForMs != null && s.idleForMs >= IDLE_REAP_MS)
-      return { action: "reap", pid: s.pid, reason: `child ${s.pid} idle for ${Math.round(s.idleForMs / 60_000)} min` };
-    return { action: "none", reason: s.idleForMs == null ? `child ${s.pid} has work` : `child ${s.pid} idle, keeping it` };
-  }
-  if (input.queuedRunId == null) return { action: "none", reason: "nothing queued" };
-  if (input.heartbeatAgeMs != null && input.heartbeatAgeMs < HEARTBEAT_STALE_MS)
-    return { action: "none", reason: `attended session alive (${Math.round(input.heartbeatAgeMs / 1000)}s ago)` };
-  return { action: "spawn", runId: input.queuedRunId, reason: "queued run and no live attended session" };
+  const plan = planDispatch({
+    queued: input.queuedRunId != null ? [{ id: input.queuedRunId, toldTo: s && !s.queuedNoticeDue ? [s.pid] : [] }] : [],
+    heartbeatAgeMs: input.heartbeatAgeMs,
+    maxSessions: 1,
+    sessions: s
+      ? [
+          {
+            pid: s.pid,
+            runId: s.runId,
+            alive: s.alive,
+            reachable: s.reachable,
+            idleForMs: s.idleForMs,
+            runningRunId: input.runningRunId ?? null,
+            runningQuietMs: input.runningQuietMs ?? null,
+            stallNoticeDue: input.stallNoticeDue ?? false,
+            booting: false,
+            approvalsWaiting: input.approvalsWaiting,
+          },
+        ]
+      : [],
+  });
+  return plan.actions[0] ?? { action: "none", reason: plan.reason };
 }
 
 // Tools the spawned session may use without a human at the keyboard. Everything else is denied
@@ -227,6 +371,7 @@ export function buildAttendedPrompt(
     `投递 run 的 options 里若有 chunk(本段最多做几份:海投填好待确认 + 内推进入寻找,合计;默认 10)和 chain(接力链:root / 第几段 / 累计进度),按 CLAUDE.md §3.3b 执行:做满 chunk 份就正常 finish {status:'done'},App 会自动排下一段;既不要为了凑够计划总数硬撑,也不要因为「做不完」提前收工。`,
     `回报 awaiting_confirm 之后不要等、不要轮询、不要 sleep 循环:填好的标签页保持打开,本段做满就 finish,然后再 GET claim-next 一次——还有排队的就接着做;没有就**直接停下来,什么都不做**(不要退出)。服务器会在需要时往这个终端打一行消息:\`[Sortie] approved job <id>\` = 用户批准了,回到你自己为它填的那个标签页(tabs_context_mcp 找到它),核对表单值仍与回报的 filledFields 一致后点 Submit,看到成功页 POST /api/apply/report {jobId,status:'submitted'};**绝不关标签页**(关掉一个标签页会让扩展销毁整个标签组,其他填好的表单一起消失——2026-09-17 Lumion 就是这样丢的),成功页留着或把那个标签页导航到 about:blank;\`[Sortie] rejected job <id>\` = 用户退回了,不提交,同样不关标签页、导航到 about:blank 即可;\`[Sortie] answered job <id>\` = 用户答完了你为这个岗报的 needs_info 题目,GET /api/apply/pending?jobId=<id> 的 infoAnswers 就是答案,回到你为它留着的标签页填进去、回读、回报 awaiting_confirm(那个标签页真的没了才 POST /api/apply/next {"jobIds":[<id>],"mode":"direct"} 重新打开填);\`[Sortie] run <id> queued\` = 有新任务,GET claim-next 接单照常执行(用户处理完的待处理卡会变成这样的定向任务,排在你当前任务后面,做完手头的就会轮到)。**每条消息只是插进来的一件事,不是收工信号**:处理完后,如果你手上的任务还在 running、本段还没做满,就回到取件循环接着填下一个(2026-09-17 任务 #118 就是在第 4 份的批准之后停下来等,50 分钟没人叫它);只有本段做满、或者没有任务在手上,才停下等下一条。任务还在 running 却 10 分钟没写日志时,服务器会往这里打一行 \`[Sortie] run <id> is still running…\` 提醒你继续。原因:每个会话只看得到自己标签组里的标签页,换一个会话就得重填、让用户再确认一次,所以由你自己一直守着这些标签页直到用户决定。会话空闲(没有任务、没有待确认的申请、没有等答案的表单)15 分钟后服务器才会收掉它。`,
     `**自动投递(设置页的开关,用户可能开着)**:看每次 POST /api/apply/report 的响应。回报 awaiting_confirm 的响应里若有 \`autoApproved: true\`,说明 App 已替用户批准——不要停下等消息,立刻在同一个标签页重读表单核对与 filledFields 一致后点 Submit,看到成功页 POST report {jobId,status:'submitted'}(响应里没有 autoApproved 就照常停下等 [Sortie] approved)。回报 needs_info 的响应里若有 \`autoAnswered: true\`(这一条与开关无关,App 总会先按档案替用户答 text 题),\`infoAnswers\` 就是 App 按用户档案替用户答好的答案——不要取下一个,立刻填进这个标签页、回读、回报 awaiting_confirm;\`autoAnswered: "partial"\` 或 false 则 \`remaining\` 里的项目仍在等用户,照常取下一个。内推同理:POST /api/referral/outreach 的响应里若有 \`autoApproved: true\`(status 已是 pending_send),不要轮询 /api/referral/pending,按 §3.10.d 立刻发送(仍看对话框里的字数上限与本月剩余邀请数,超限就 shorten / 跳过)。只有 登录 / 创建账号 / 验证码 / 缺文件 / 必须亲自完成 / 档案里确实没有的个人事实 才会等用户:偏好、意愿、到岗时间、用没用过某技术这类题先自己按 answerPack 答,答不了的照报 needs_info,App 会再替用户答一遍。**用户留言**:\`answerPack.custom.assistant_note\` 或 \`infoAnswers.assistant_note\` 是用户在待处理卡上写给你的话(例如「成绩单在我 Google Drive 的 Transcripts 文件夹」→ 先看上传控件有没有 Google Drive 按钮,没有就在用户的 Chrome 里新开标签页打开 drive.google.com 找到并下载(那个标签页用完导航到 about:blank,别关),再从下载文件夹 file_upload;给了本机路径 → 确认文件存在后 file_upload);照做它覆盖的那些空着的项,它不是表单答案,也不能越过红线;实在做不到就再报一次 needs_info,hint 里写清你试了什么。**测评 / take-home / 写报告不是停下来的理由**(2026-09-24 用户明确):编程题、take-home 作业、案例分析、书面报告、writing sample、情景问卷都由你做完——代码在页面编辑器里写好跑通样例,文字只用 answerPack.experiences 与档案事实写(绝不编造),要交文件就生成到 data/generated/<jobId>/ 再 file_upload,内容或文件路径 + 摘要写进 filledFields,照常回报 awaiting_confirm(提交仍只在 App 批准后)。**真正做不了才报 manual**,只有三类:必须用户本人在场的(录自己的视频 / 语音、实时面试、开摄像头或屏幕监控的监考、证件 / 人脸核验);页面明文禁止 AI 或外部帮助的测评(替做是作弊,会害用户被拉黑);表单在浏览器里根本渲染不出来。登录 / 建账号、验证码、档案里没有的个人事实、找不到的文件按各自的项报;其余一律自己做完。`,
+    `**可能有别的助手会话和你同时在这个 Chrome 里工作**(设置页「同时进行的任务」,每个会话各做一个任务):只碰你自己标签组里的标签页,绝不切换、关闭或操作别的标签组;一次只做一个任务——claim-next 在你手上还有 running 的任务时会返回 {run:null},先把手上的做完、finish,再领下一个;恢复阶段 GET /api/apply/pending 只列出你自己的和已经没人接手的待确认申请,GET /api/network/sendables 只给你分到的那几条内推消息——没列给你的属于别的会话,不要去碰。[Sortie] 消息也只会发给负责那件事的会话,收到的都是你自己的。`,
     `所有 App API 调用只用 Bash 里的 curl(不要在页面里 fetch),每条都带上面的 authorization 头。`,
     `Windows 上 curl 内联的请求体(-d 后直接写 JSON)会被 curl.exe 按 GBK 发出、App 收到乱码:凡请求体含中文或任何非 ASCII 字符(log 的 line、finish 的 summary、report 的 reason 等),先用 cat 的 heredoc 写到临时文件(如 /tmp/sortie-body.json),再 curl --data-binary @/tmp/sortie-body.json 发送(仍带 authorization 头),绝不内联;纯 ASCII 的请求体才可以内联。`,
   ]
@@ -319,6 +464,8 @@ export interface AttendedDeps {
   token?: string;
   // Last-modified time of a run's log file (tests fake the clock on it).
   mtime?: (filePath: string) => number | null;
+  // How many sessions may run at once (default: 设置 → 同时进行的任务, attendedParallel()).
+  maxSessions?: number;
 }
 
 function defaultIsAlive(pid: number): boolean {
@@ -345,6 +492,7 @@ function defaultSpawnWindows(mode: AttendedSpawnMode, opts: WindowsSpawnOptions)
 
 // macOS/Linux: an expect script gives claude a pseudo-tty and answers the first-run prompt.
 // Windows: node-pty (or a plain console window) does the same job — see attended-win.ts.
+// The new session joins the list; the others keep working.
 export function spawnAttendedSession(db: DB, runId: number, deps: AttendedDeps = {}): SpawnRecord {
   const now = (deps.now ?? (() => new Date()))();
   const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
@@ -370,27 +518,50 @@ export function spawnAttendedSession(db: DB, runId: number, deps: AttendedDeps =
     pid = (deps.spawnExpect ?? defaultSpawnExpect)(scriptPath, logPath, launch.env).pid;
   }
   const rec: SpawnRecord = { pid, runId, startedAt: now.toISOString(), logPath, idleSince: null };
-  writeKey(db, SPAWN_KEY, rec);
-  clearNotices();
+  saveSpawns(db, [...listSpawns(db).filter((s) => s.pid !== pid), rec]);
   // The run it was started for is in its prompt: remind it only if it is still unclaimed later.
-  markNotice(`run:${runId}`, now.getTime());
+  clearNoticesFor(pid);
+  markNotice(`run:${runId}:${pid}`, now.getTime());
   return rec;
 }
 
-// True while the spawned session is alive and this process can type into it. The approve path
-// (src/apply/decide-auto-start.ts) uses this to tell the session instead of queueing a new run.
-export function isAttendedSessionReachable(db: DB, deps: AttendedDeps = {}): boolean {
-  const rec = currentSpawn(db);
+// True while that session is alive and this process can type into it.
+export function isSessionReachable(rec: SpawnRecord | null, deps: AttendedDeps = {}): boolean {
   if (!rec) return false;
   return (deps.isAlive ?? defaultIsAlive)(rec.pid) && (deps.reachable ?? isAttendedReachable)(rec.pid);
 }
 
-// Type one line into the live session. False when there is no reachable session — the caller
-// falls back to queueing a run for a fresh session.
-export function notifyAttendedSession(db: DB, line: string, deps: AttendedDeps = {}): boolean {
-  const rec = currentSpawn(db);
-  if (!rec || !isAttendedSessionReachable(db, deps)) return false;
+// True while any spawned session is alive and reachable.
+export function isAttendedSessionReachable(db: DB, deps: AttendedDeps = {}): boolean {
+  return listSpawns(db).some((rec) => isSessionReachable(rec, deps));
+}
+
+function typeInto(rec: SpawnRecord | null, line: string, deps: AttendedDeps): boolean {
+  if (!rec || !isSessionReachable(rec, deps)) return false;
   return (deps.write ?? writeToAttended)(rec.pid, line);
+}
+
+// Type one line into the session that owns this run (claimed it). False when that session is not
+// reachable — the caller falls back to whatever it does without one.
+export function notifyRunSession(db: DB, runId: number, line: string, deps: AttendedDeps = {}): boolean {
+  return typeInto(sessionOfRun(db, runId), line, deps);
+}
+
+// The session whose tab holds this job's form (the owner of the run that took it): the approve,
+// reject and answered paths tell it, and only it — another session cannot see that tab.
+export function isJobSessionReachable(db: DB, userId: string, jobId: number, deps: AttendedDeps = {}): boolean {
+  return isSessionReachable(sessionOfJob(db, userId, jobId), deps);
+}
+export function notifyJobSession(db: DB, userId: string, jobId: number, line: string, deps: AttendedDeps = {}): boolean {
+  return typeInto(sessionOfJob(db, userId, jobId), line, deps);
+}
+
+// Is this job's form open in a reachable session other than `caller`? Then it is that session's
+// to submit or refill (it is told about the decision), not the caller's — the resume phase of a
+// parallel task skips it (GET /api/apply/pending).
+export function heldByOtherSession(db: DB, userId: string, jobId: number, caller: SpawnRecord, deps: AttendedDeps = {}): boolean {
+  const holder = sessionOfJob(db, userId, jobId);
+  return !!holder && !sameSession(holder, caller) && isSessionReachable(holder, deps);
 }
 
 // Anything the session is still needed for: a run of its channel running or queued, a filled
@@ -403,53 +574,54 @@ export function notifyAttendedSession(db: DB, line: string, deps: AttendedDeps =
 // waiting row of the account kept each *later* session busy forever: eight needs_info cards from
 // 09-18/19 held the session spawned for run #182 for two hours after its run ended (idleSince
 // never set, deploy.ps1 refusing all evening), and would have held every session after it. So a
-// row counts only when the run that took it (applications.run_id) was claimed after this
-// session started; rows left behind by earlier sessions are reported as `stale` for the
-// operator and keep nothing alive (the followup / stranded-approval paths re-queue them as
-// targeted runs when the user acts on them).
+// row counts only when the run that took it (applications.run_id) is one this session claimed
+// (src/executor/sessions.ts ownerOf); rows left behind by sessions that are gone are reported as
+// `stale` for the operator and keep nothing alive (the followup / stranded-approval paths
+// re-queue them as targeted runs when the user acts on them). Rows of *other* live sessions
+// (parallel tasks, 2026-09-30) are theirs and count for neither.
 export interface AttendedBusy {
-  // The owner's user_chrome runs that are running or queued.
+  // The owner's queued user_chrome runs, and the running ones this session claimed.
   runs: { id: number; kind: string; status: string }[];
   // Waiting rows whose open tab lives in this session (taken by a run it claimed).
   waiting: { awaiting_confirm: number; needs_info: number; prepared: number };
-  // Waiting rows left behind by earlier sessions (their tabs are gone). Informational.
+  // Waiting rows left behind by sessions that are gone (their tabs are gone). Informational.
   stale: number;
 }
 export function isBusy(b: AttendedBusy): boolean {
   return b.runs.length > 0 || b.waiting.awaiting_confirm + b.waiting.needs_info + b.waiting.prepared > 0;
 }
-// ISO → SQLite datetime('now') form (UTC, whole seconds, floored) so it compares as text against
-// executor_runs.claimed_at. Flooring also absorbs the ~1 ms by which SQLite's clock can trail.
-function sqliteTime(iso: string): string {
-  const t = Date.parse(iso);
-  return (Number.isNaN(t) ? new Date(0) : new Date(t)).toISOString().slice(0, 19).replace("T", " ");
+function emptyBusy(): AttendedBusy {
+  return { runs: [], waiting: { awaiting_confirm: 0, needs_info: 0, prepared: 0 }, stale: 0 };
 }
-export function attendedBusyDetail(db: DB, userId: string, spawn: Pick<SpawnRecord, "startedAt"> | null): AttendedBusy {
-  const runs = db
-    .prepare("SELECT id, kind, status FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status IN ('running','queued') ORDER BY id")
-    .all(userId) as { id: number; kind: string; status: string }[];
-  const waiting = { awaiting_confirm: 0, needs_info: 0, prepared: 0 };
-  let stale = 0;
-  const since = spawn ? sqliteTime(spawn.startedAt) : null;
+export function attendedBusyDetail(
+  db: DB,
+  userId: string,
+  spawn: Pick<SpawnRecord, "pid" | "startedAt"> | null,
+  spawns: SpawnRecord[] = listSpawns(db)
+): AttendedBusy {
+  const me = spawn ? (spawns.find((s) => s.pid === spawn.pid && s.startedAt === spawn.startedAt) ?? null) : null;
+  const live = db
+    .prepare(
+      "SELECT id, kind, status, pid, claimed_at, channel FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status IN ('running','queued') ORDER BY id"
+    )
+    .all(userId) as { id: number; kind: string; status: string; pid: number | null; claimed_at: string | null; channel: string }[];
+  const runs = live
+    .filter((r) => r.status === "queued" || (me != null && sameSession(ownerOf(r, spawns), me)))
+    .map((r) => ({ id: r.id, kind: r.kind, status: r.status }));
+  const out = emptyBusy();
+  out.runs = runs;
   const rows = db
     .prepare(
-      `SELECT a.status, r.claimed_at, r.channel, COUNT(*) n FROM applications a LEFT JOIN executor_runs r ON r.id = a.run_id
-       WHERE a.user_id = ? AND a.status IN ('awaiting_confirm','needs_info','prepared') GROUP BY a.status, r.claimed_at, r.channel`
+      `SELECT a.status, r.pid, r.claimed_at, r.channel, COUNT(*) n FROM applications a LEFT JOIN executor_runs r ON r.id = a.run_id
+       WHERE a.user_id = ? AND a.status IN ('awaiting_confirm','needs_info','prepared') GROUP BY a.status, r.pid, r.claimed_at, r.channel`
     )
-    .all(userId) as { status: keyof typeof waiting; claimed_at: string | null; channel: string | null; n: number }[];
+    .all(userId) as { status: keyof AttendedBusy["waiting"]; pid: number | null; claimed_at: string | null; channel: string | null; n: number }[];
   for (const row of rows) {
-    const mine = since != null && row.channel === "user_chrome" && row.claimed_at != null && row.claimed_at >= since;
-    if (mine) waiting[row.status] += row.n;
-    else stale += row.n;
+    const owner = ownerOf(row, spawns);
+    if (me != null && sameSession(owner, me)) out.waiting[row.status] += row.n;
+    else if (!owner) out.stale += row.n;
   }
-  return { runs, waiting, stale };
-}
-
-function runningRun(db: DB, userId: string): { id: number; log_path: string | null } | null {
-  const row = db
-    .prepare("SELECT id, log_path FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status = 'running' ORDER BY id DESC LIMIT 1")
-    .get(userId) as { id: number; log_path: string | null } | undefined;
-  return row ?? null;
+  return out;
 }
 
 function defaultMtime(filePath: string): number | null {
@@ -460,22 +632,24 @@ function defaultMtime(filePath: string): number | null {
   }
 }
 
-function approvalsWaiting(db: DB, userId: string): boolean {
-  const row = db
-    .prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status = 'awaiting_confirm' AND confirm_decision = 'approved'")
-    .get(userId) as { n: number };
-  return row.n > 0;
+// An approved application in one of this session's tabs.
+function approvalsIn(db: DB, userId: string, rec: SpawnRecord, spawns: SpawnRecord[]): boolean {
+  const rows = db
+    .prepare(
+      `SELECT r.pid, r.claimed_at, r.channel FROM applications a JOIN executor_runs r ON r.id = a.run_id
+       WHERE a.user_id = ? AND a.status = 'awaiting_confirm' AND a.confirm_decision = 'approved'`
+    )
+    .all(userId) as { pid: number | null; claimed_at: string | null; channel: string | null }[];
+  return rows.some((r) => sameSession(ownerOf(r, spawns), rec));
 }
 
 // A reaped child cannot finish what it had claimed: its running runs are closed out so the UI
-// and the auto-start guards stop treating them as live, and its token dies with it.
-function closeOutReapedSession(db: DB, rec: SpawnRecord, reason: string): void {
+// and the auto-start guards stop treating them as live, and its token dies with it. Only its own
+// runs — the other sessions keep theirs.
+function closeOutReapedSession(db: DB, rec: SpawnRecord, reason: string, spawns: SpawnRecord[]): void {
   const run = db.prepare("SELECT user_id FROM executor_runs WHERE id = ?").get(rec.runId) as { user_id: string } | undefined;
   if (run) {
-    const rows = db
-      .prepare("SELECT id FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status = 'running'")
-      .all(run.user_id) as { id: number }[];
-    for (const row of rows) {
+    for (const row of runsOfSession(db, run.user_id, rec, spawns).filter((r) => r.status === "running")) {
       db.prepare("UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?").run(`attended session ended: ${reason}`, row.id);
       revokeRunTokens(db, row.id);
       settleRunOutcome(db, row.id);
@@ -491,10 +665,12 @@ function closeOutReapedSession(db: DB, rec: SpawnRecord, reason: string): void {
 }
 
 export interface DispatchResult {
+  // The first thing this tick did (or why it did nothing); `actions` has all of them.
   decision: Decision;
+  actions: Decision[];
   spawned?: SpawnRecord;
   notified?: boolean;
-  // What the spawned session (if any) was judged on this tick.
+  // What the newest session (if any) was judged on this tick.
   busy?: AttendedBusy;
 }
 
@@ -504,94 +680,127 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
   const now = (deps.now ?? (() => new Date()))();
   const isAlive = deps.isAlive ?? defaultIsAlive;
   const reachable = deps.reachable ?? isAttendedReachable;
+  const mtime = deps.mtime ?? defaultMtime;
   const owner = ownerId(db);
-  const queued = owner ? nextQueuedRun(db, owner) : null;
-  const spawnRec = currentSpawn(db);
-  let spawnInput: DecideInput["spawn"] = null;
+  const spawns = listSpawns(db);
+  const queued = owner
+    ? (db
+        .prepare("SELECT id, kind FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status = 'queued' ORDER BY id ASC")
+        .all(owner) as { id: number; kind: string }[])
+    : [];
+
+  const views: SessionInput[] = [];
+  const quietBy = new Map<number, number | null>();
   let busy: AttendedBusy | undefined;
-  if (spawnRec) {
-    const alive = isAlive(spawnRec.pid);
+  let changed = false;
+  const updated = spawns.map((rec) => {
+    const alive = isAlive(rec.pid);
     // Idleness is judged from the database alone (never from the terminal handle), so a record
     // that outlived a server restart is still aged and reaped like any other.
-    busy = owner ? attendedBusyDetail(db, owner, spawnRec) : { runs: [], waiting: { awaiting_confirm: 0, needs_info: 0, prepared: 0 }, stale: 0 };
-    let idleSince = spawnRec.idleSince ?? null;
-    if (isBusy(busy)) idleSince = null;
+    const b = owner ? attendedBusyDetail(db, owner, rec, spawns) : emptyBusy();
+    busy = b;
+    let idleSince = rec.idleSince ?? null;
+    if (isBusy(b)) idleSince = null;
     else if (!idleSince) idleSince = now.toISOString();
-    if (idleSince !== (spawnRec.idleSince ?? null)) writeKey(db, SPAWN_KEY, { ...spawnRec, idleSince });
-    spawnInput = {
-      pid: spawnRec.pid,
-      runId: spawnRec.runId,
+    if (idleSince !== (rec.idleSince ?? null)) changed = true;
+    const mine = owner ? runsOfSession(db, owner, rec, spawns) : [];
+    const running = mine.find((r) => r.status === "running") ?? null;
+    const runMtime = running?.log_path ? mtime(running.log_path) : null;
+    const quiet = runMtime != null ? Math.max(0, now.getTime() - runMtime) : null;
+    if (running) quietBy.set(running.id, quiet);
+    views.push({
+      pid: rec.pid,
+      runId: rec.runId,
       alive,
-      reachable: alive && reachable(spawnRec.pid),
+      reachable: alive && reachable(rec.pid),
       idleForMs: idleSince ? Math.max(0, now.getTime() - Date.parse(idleSince)) : null,
-      queuedNoticeDue: queued ? noticeDue(`run:${queued.id}`, now.getTime(), NOTICE_RETRY_MS) : false,
-    };
-  }
-  const running = owner ? runningRun(db, owner) : null;
-  const runningMtime = running?.log_path ? (deps.mtime ?? defaultMtime)(running.log_path) : null;
-  const decision = decide({
-    queuedRunId: queued?.id ?? null,
-    heartbeatAgeMs: owner ? heartbeatAgeMs(db, owner, now) : null,
-    approvalsWaiting: owner ? approvalsWaiting(db, owner) : false,
-    runningRunId: running?.id ?? null,
-    runningQuietMs: runningMtime != null ? Math.max(0, now.getTime() - runningMtime) : null,
-    stallNoticeDue: running ? noticeDue(`stall:${running.id}`, now.getTime(), STALL_NUDGE_MS) : false,
-    spawn: spawnInput,
+      runningRunId: running?.id ?? null,
+      runningQuietMs: quiet,
+      stallNoticeDue: running ? noticeDue(`stall:${running.id}`, now.getTime(), STALL_NUDGE_MS) : false,
+      booting: mine.length === 0 && now.getTime() - Date.parse(rec.startedAt) < BOOT_GRACE_MS,
+      approvalsWaiting: owner ? approvalsIn(db, owner, rec, spawns) : false,
+    });
+    return { ...rec, idleSince };
   });
-  if (decision.action === "reap") {
-    (deps.kill ?? killTree)(decision.pid);
-    if (spawnRec) closeOutReapedSession(db, spawnRec, decision.reason);
-    writeKey(db, SPAWN_KEY, null);
-    clearNotices();
-    console.log(`[attended] reaped child ${decision.pid}: ${decision.reason}`);
-    return { decision, busy };
+  if (changed) saveSpawns(db, updated);
+
+  const plan = planDispatch({
+    queued: queued.map((q) => ({ id: q.id, toldTo: updated.filter((s) => !noticeDue(`run:${q.id}:${s.pid}`, now.getTime(), NOTICE_RETRY_MS)).map((s) => s.pid) })),
+    heartbeatAgeMs: owner ? heartbeatAgeMs(db, owner, now) : null,
+    maxSessions: deps.maxSessions ?? attendedParallel(db),
+    sessions: views,
+  });
+
+  let remaining = updated;
+  let spawned: SpawnRecord | undefined;
+  let notified: boolean | undefined;
+  for (const d of plan.actions) {
+    if (d.action === "reap") {
+      (deps.kill ?? killTree)(d.pid);
+      const rec = updated.find((s) => s.pid === d.pid);
+      if (rec) closeOutReapedSession(db, rec, d.reason, updated);
+      remaining = remaining.filter((s) => s.pid !== d.pid);
+      clearNoticesFor(d.pid);
+      saveSpawns(db, remaining);
+      console.log(`[attended] reaped child ${d.pid}: ${d.reason}`);
+    } else if (d.action === "notify") {
+      const kind = queued.find((q) => q.id === d.runId)?.kind ?? "apply";
+      const ok = (deps.write ?? writeToAttended)(d.pid, queuedRunNotice(d.runId, kind));
+      if (ok) markNotice(`run:${d.runId}:${d.pid}`, now.getTime());
+      notified ??= ok;
+      console.log(`[attended] ${ok ? "told" : "could not tell"} child ${d.pid} about run #${d.runId}`);
+    } else if (d.action === "nudge") {
+      const quietMin = Math.round((quietBy.get(d.runId) ?? 0) / 60_000);
+      const ok = (deps.write ?? writeToAttended)(d.pid, stalledRunNotice(d.runId, quietMin));
+      // Marked either way so an unwritable terminal is not retried every 10 s.
+      markNotice(`stall:${d.runId}`, now.getTime());
+      notified ??= ok;
+      console.log(`[attended] ${ok ? "nudged" : "could not nudge"} child ${d.pid}: ${d.reason}`);
+    } else if (d.action === "spawn") {
+      const rec = spawnAttendedSession(db, d.runId, deps);
+      spawned ??= rec;
+      console.log(`[attended] spawned ${deps.aiProvider ?? getAiProvider(db)} assistant (pid ${rec.pid}) for run #${d.runId}: ${d.reason}`);
+    }
   }
-  if (decision.action === "notify") {
-    const line = queuedRunNotice(decision.runId, queued?.kind ?? "apply");
-    const notified = (deps.write ?? writeToAttended)(decision.pid, line);
-    if (notified) markNotice(`run:${decision.runId}`, now.getTime());
-    console.log(`[attended] ${notified ? "told" : "could not tell"} child ${decision.pid} about run #${decision.runId}`);
-    return { decision, notified, busy };
-  }
-  if (decision.action === "nudge") {
-    const quietMin = Math.round((running && runningMtime != null ? now.getTime() - runningMtime : 0) / 60_000);
-    const notified = (deps.write ?? writeToAttended)(decision.pid, stalledRunNotice(decision.runId, quietMin));
-    // Marked either way so an unwritable terminal is not retried every 10 s.
-    markNotice(`stall:${decision.runId}`, now.getTime());
-    console.log(`[attended] ${notified ? "nudged" : "could not nudge"} child ${decision.pid}: ${decision.reason}`);
-    return { decision, notified, busy };
-  }
-  if (decision.action === "spawn") {
-    const spawned = spawnAttendedSession(db, decision.runId, deps);
-    console.log(`[attended] spawned ${deps.aiProvider ?? getAiProvider(db)} assistant (pid ${spawned.pid}) for run #${decision.runId}: ${decision.reason}`);
-    return { decision, spawned };
-  }
-  return { decision, busy };
+  const decision: Decision = plan.actions[0] ?? { action: "none", reason: plan.reason };
+  return { decision, actions: plan.actions, spawned, notified, busy };
 }
 
-export interface AttendedStatus {
-  heartbeat: (Heartbeat & { ageSec: number }) | null;
-  // idleSec: how long the session has had nothing to do (null while busy, as last judged by the
+export interface SessionStatus extends SpawnRecord {
+  alive: boolean;
+  reachable: boolean;
+  // How long the session has had nothing to do (null while busy, as last judged by the
   // dispatcher tick); busy: what is holding it — so an operator (deploy.ps1's guard) can tell a
   // stale record from real work.
-  spawn: (SpawnRecord & { alive: boolean; reachable: boolean; idleSec: number | null; busy: AttendedBusy }) | null;
+  idleSec: number | null;
+  busy: AttendedBusy;
+}
+export interface AttendedStatus {
+  heartbeat: (Heartbeat & { ageSec: number }) | null;
+  // The newest session (the only one before 2026-09-30); `spawns` lists all of them.
+  spawn: SessionStatus | null;
+  spawns: SessionStatus[];
+  maxSessions: number;
 }
 export function attendedStatus(db: DB, userId: string, deps: AttendedDeps = {}): AttendedStatus {
   const now = (deps.now ?? (() => new Date()))();
   const hb = lastHeartbeat(db, userId);
-  const sp = currentSpawn(db);
-  const alive = sp ? (deps.isAlive ?? defaultIsAlive)(sp.pid) : false;
-  const idleAt = sp?.idleSince ? Date.parse(sp.idleSince) : NaN;
+  const spawns = listSpawns(db);
+  const views = spawns.map((sp): SessionStatus => {
+    const alive = (deps.isAlive ?? defaultIsAlive)(sp.pid);
+    const idleAt = sp.idleSince ? Date.parse(sp.idleSince) : NaN;
+    return {
+      ...sp,
+      alive,
+      reachable: alive && (deps.reachable ?? isAttendedReachable)(sp.pid),
+      idleSec: Number.isNaN(idleAt) ? null : Math.round(Math.max(0, now.getTime() - idleAt) / 1000),
+      busy: attendedBusyDetail(db, userId, sp, spawns),
+    };
+  });
   return {
     heartbeat: hb ? { ...hb, ageSec: Math.round(Math.max(0, now.getTime() - Date.parse(hb.at)) / 1000) } : null,
-    spawn: sp
-      ? {
-          ...sp,
-          alive,
-          reachable: alive && (deps.reachable ?? isAttendedReachable)(sp.pid),
-          idleSec: Number.isNaN(idleAt) ? null : Math.round(Math.max(0, now.getTime() - idleAt) / 1000),
-          busy: attendedBusyDetail(db, userId, sp),
-        }
-      : null,
+    spawn: views.length > 0 ? views[views.length - 1] : null,
+    spawns: views,
+    maxSessions: deps.maxSessions ?? attendedParallel(db),
   };
 }

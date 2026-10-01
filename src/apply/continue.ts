@@ -175,11 +175,16 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
     };
     const channel = (run.channel === "headless" ? "headless" : "user_chrome") as ExecutorChannel;
     const unconfirmed = unconfirmedCount(db, userId);
-    const live = (deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun)(db, userId, "apply");
+    // Another task of the account being on is no reason to wait on the Chrome channel: tasks run
+    // side by side there, each in its own session, and a queued segment simply waits for a free
+    // one (2026-09-30). A headless segment is a process spawned right now against the one
+    // browser profile, so it still waits for the one ahead of it.
+    const live = channel === "headless" && (deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun)(db, userId, "apply");
     if (unconfirmed >= BACKLOG_PAUSE_AT || live) {
       return { action: "paused", runId: insertPausedRun(db, userId, channel, next, unconfirmed, live), unconfirmed };
     }
-    const started = (deps.startExecutor ?? startExecutor)(db, userId, "apply", next, deps.logDir ? { logDir: deps.logDir } : {}, channel);
+    const runnerDeps = { ...(deps.logDir ? { logDir: deps.logDir } : {}), ...(channel === "user_chrome" ? { queueBehind: true } : {}) };
+    const started = (deps.startExecutor ?? startExecutor)(db, userId, "apply", next, runnerDeps, channel);
     return { action: "queued", runId: started.id, channel };
   } catch (e) {
     console.error("[apply continue] run", runId, e);
@@ -190,31 +195,36 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
 // Called whenever the account's confirmation backlog may have shrunk (approve/reject on /apply)
 // or a session freed up (any apply run finished): if a chain is parked as 'paused' and the
 // backlog is low enough, hand it to a session. A user_chrome row simply becomes 'queued' (same
-// id, so the card keeps its identity); a headless row spawns a fresh run and the placeholder is
-// closed out.
+// id, so the card keeps its identity) — every parked one at once, since tasks run side by side
+// there (2026-09-30); the result names the newest. A headless row spawns a fresh run and the
+// placeholder is closed out, one at a time and only while no other apply run is on.
 export function resumePausedChainIfReady(db: DB, userId: string, deps: ContinueDeps = {}): ContinueResult {
   try {
-    const paused = db
-      .prepare(
-        "SELECT id, channel, options, log_path FROM executor_runs WHERE user_id = ? AND kind = 'apply' AND status = 'paused' ORDER BY id DESC LIMIT 1"
-      )
-      .get(userId) as { id: number; channel: string; options: string; log_path: string | null } | undefined;
-    if (!paused) return { action: "none", reason: "no paused chain" };
+    const parked = db
+      .prepare("SELECT id, channel, options, log_path FROM executor_runs WHERE user_id = ? AND kind = 'apply' AND status = 'paused' ORDER BY id DESC")
+      .all(userId) as { id: number; channel: string; options: string; log_path: string | null }[];
+    if (parked.length === 0) return { action: "none", reason: "no paused chain" };
     const unconfirmed = unconfirmedCount(db, userId);
     if (unconfirmed > BACKLOG_RESUME_AT) return { action: "none", reason: `backlog still ${unconfirmed} unconfirmed` };
-    if ((deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun)(db, userId, "apply")) return { action: "none", reason: "another apply run is live or queued" };
 
-    if (paused.channel !== "headless") {
+    const attended = parked.filter((p) => p.channel !== "headless");
+    if (attended.length > 0) {
       const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
       fs.mkdirSync(logDir, { recursive: true });
-      const logPath = paused.log_path ?? path.join(logDir, `run-${paused.id}.log`);
-      fs.closeSync(fs.openSync(logPath, "a"));
-      const flipped = db
-        .prepare("UPDATE executor_runs SET status = 'queued', started_at = datetime('now'), log_path = ?, summary = NULL WHERE id = ? AND status = 'paused'")
-        .run(logPath, paused.id);
-      if (flipped.changes === 0) return { action: "none", reason: "paused row changed underneath" };
-      return { action: "queued", runId: paused.id, channel: "user_chrome" };
+      let first: number | null = null;
+      for (const paused of attended) {
+        const logPath = paused.log_path ?? path.join(logDir, `run-${paused.id}.log`);
+        fs.closeSync(fs.openSync(logPath, "a"));
+        const flipped = db
+          .prepare("UPDATE executor_runs SET status = 'queued', started_at = datetime('now'), log_path = ?, summary = NULL WHERE id = ? AND status = 'paused'")
+          .run(logPath, paused.id);
+        if (flipped.changes > 0) first ??= paused.id;
+      }
+      if (first == null) return { action: "none", reason: "paused row changed underneath" };
+      return { action: "queued", runId: first, channel: "user_chrome" };
     }
+    if ((deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun)(db, userId, "apply")) return { action: "none", reason: "another apply run is live or queued" };
+    const paused = parked[0];
     let options: StartOptions = {};
     try {
       options = JSON.parse(paused.options);
@@ -231,14 +241,4 @@ export function resumePausedChainIfReady(db: DB, userId: string, deps: ContinueD
     console.error("[apply continue] resume", e);
     return { action: "none", reason: `error: ${String(e)}` };
   }
-}
-
-// The user started a new plan from /apply: whatever chain of theirs was parked waiting for
-// confirmations is superseded — two chains competing for one session would only confuse the board.
-export function supersedePausedChain(db: DB, userId: string): number {
-  return db
-    .prepare(
-      "UPDATE executor_runs SET status = 'stopped', summary = '被新的投递计划取代', ended_at = datetime('now') WHERE user_id = ? AND kind = 'apply' AND status = 'paused'"
-    )
-    .run(userId).changes;
 }

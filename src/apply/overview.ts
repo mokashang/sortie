@@ -7,6 +7,7 @@ import { todaySubmitted } from "@/apply/history";
 import { weekly } from "@/network/stats";
 import { JOB_LINKED_SQL } from "@/network/crm";
 import { profileStatus } from "@/lib/profile";
+import { attendedParallel } from "@/executor/sessions";
 
 // One read for the app shell: badge counts for the sidebar, the numbers on the 今日 page, and
 // which assistant task (if any) is in flight. Composed entirely from existing read functions,
@@ -23,7 +24,9 @@ function count(db: DB, sql: string, ...params: unknown[]): number {
 
 export function overview(db: DB, userId: string): Overview {
   const runs = executorStatus(db, userId);
-  const liveRuns = runs.filter((r) => r.status === "queued" || r.status === "running");
+  // Running before queued (runs come newest first): with tasks side by side, the card leads with
+  // one that is actually working, not the one just queued behind it.
+  const liveRuns = runs.filter((r) => r.status === "running").concat(runs.filter((r) => r.status === "queued"));
   const assistant = liveRuns[0] ?? runs[0] ?? null;
   const liveKinds = [...new Set(liveRuns.map((r) => r.kind))];
 
@@ -61,7 +64,9 @@ export function overview(db: DB, userId: string): Overview {
   return {
     today: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
     assistant,
+    liveRuns,
     liveKinds,
+    parallel: attendedParallel(db),
     counts,
     profileComplete: profileStatus(db, userId).complete,
   };

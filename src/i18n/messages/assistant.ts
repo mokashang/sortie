@@ -31,6 +31,10 @@ export const assistant = defineMessages({
     stepsTitle: (id: number, kind: string) => `任务 #${id} · ${kind}`,
     noLogYet: "还没有记录。",
     pillLive: (kind: string, status: string) => `助手 · ${kind} · ${status}`,
+    pillLiveMany: (n: number) => `助手 · ${n} 个任务同时进行`,
+    // The other tasks on at the same time, listed under the first one.
+    alsoOn: (n: number) => `同时还有 ${n} 个任务`,
+    queuedShort: "排队中,等一个助手空出来",
     pillIdle: "助手空闲",
     pillPaused: "助手 · 已暂停,等你确认",
     chainPaused: (unconfirmed: number | null | undefined, resumeAt: number) =>
@@ -64,6 +68,10 @@ export const assistant = defineMessages({
     stepsTitle: (id: number, kind: string) => `Task #${id} · ${kind}`,
     noLogYet: "Nothing logged yet.",
     pillLive: (kind: string, status: string) => `Assistant · ${kind} · ${status}`,
+    pillLiveMany: (n: number) => `Assistant · ${n} tasks at once`,
+    // The other tasks on at the same time, listed under the first one.
+    alsoOn: (n: number) => (n === 1 ? "1 more task on" : `${n} more tasks on`),
+    queuedShort: "Queued, waiting for a free assistant",
     pillIdle: "Assistant idle",
     pillPaused: "Assistant · paused, waiting for you",
     chainPaused: (unconfirmed: number | null | undefined, resumeAt: number) =>

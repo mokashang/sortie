@@ -11,7 +11,6 @@ import { startExecutor, claimNextRun, finishRun, stopExecutor, StartOptions } fr
 import {
   maybeContinueApplyRun,
   resumePausedChainIfReady,
-  supersedePausedChain,
   remainingPlan,
   unconfirmedCount,
   BACKLOG_PAUSE_AT,
@@ -282,7 +281,7 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     expect(maybeContinueApplyRun(db, b, { logDir, interrupted: true })).toMatchObject({ action: "none", reason: expect.stringContaining("stopped") });
   });
 
-  it("a paused chain can be stopped by the user, and a new plan from /apply supersedes one", () => {
+  it("a paused chain can be stopped by the user, and a new plan from /apply leaves another one alone (tasks run side by side)", () => {
     for (let i = 0; i < 11; i++) seedJob(db, { score: 95 - i });
     const a = startSegment({ plan: [{ direction: "swe_general", count: 11, mode: "direct" }], chunk: 10 });
     for (let i = 0; i < 10; i++) fillNext();
@@ -297,14 +296,16 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     expect(runStatusDisplay("stopped", outcome, "zh").label).toBe("已停止");
     expect(resumePausedChainIfReady(db, U, { logDir })).toMatchObject({ action: "none", reason: "no paused chain" });
 
-    // Another chain parks itself (backlog still 10); the user starting a new plan supersedes it.
+    // Another chain parks itself (backlog still 10). The user starting a new plan (2026-09-30:
+    // queued alongside, src/app/api/executor/start) does not end it: it waits for the backlog.
     const b = startSegment({ plan: [{ direction: "swe_general", count: 5, mode: "direct" }], chunk: 10 });
     fillNext();
     finishRun(db, U, b, "done");
     const p2 = (maybeContinueApplyRun(db, b, { logDir }) as { runId: number; action: string });
     expect(p2.action).toBe("paused");
-    expect(supersedePausedChain(db, U)).toBe(1);
-    expect(runRow(db, p2.runId)).toMatchObject({ status: "stopped", summary: "被新的投递计划取代" });
+    const fresh = startExecutor(db, U, "apply", { plan: [{ direction: "swe_backend", count: 2, mode: "direct" }], chunk: 10 }, { logDir, queueBehind: true }, "user_chrome");
+    expect(runRow(db, fresh.id).status).toBe("queued");
+    expect(runRow(db, p2.runId).status).toBe("paused");
   });
 });
 

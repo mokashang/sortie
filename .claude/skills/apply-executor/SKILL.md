@@ -26,6 +26,15 @@ anything: poll `GET /api/executor/claim-next?channel=user_chrome` to claim it, w
 call `POST /api/executor/log` as you go and `POST /api/executor/finish` when done (or check
 `GET /api/executor/run?id=` to see if the user hit 停止).
 
+**Other sessions may be working in the same Chrome** (2026-09-30, parallel apply tasks — Settings →
+同时进行的任务, up to 3): each dispatcher-spawned session works one task in its own tab group. Touch
+only your own tab group — never switch to, read, close or fill another group's tabs. Work one run
+at a time: claim-next returns `{run:null}` while a run of yours is still running, so finish it
+before claiming the next. In a resume phase, `GET /api/apply/pending` lists only the filled forms
+that are yours or that no live session holds any more, and `GET /api/network/sendables` only the
+approved messages handed to you; anything not listed belongs to another session. Every
+`[Sortie] …` line typed into your terminal is about your own runs and tabs.
+
 **Never ask the user for missing answers in the Claude session** (AskUserQuestion or chat) — the
 user wants every interaction in the App. A required question with no answer-pack value is a
 `needs_info` report (`{jobId, status:'needs_info', questions:[{key,label,hint?,kind?,...}]}`, kinds

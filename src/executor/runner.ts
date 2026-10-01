@@ -13,6 +13,7 @@ import {
 } from "@/executor/prompts";
 import { createRunToken, revokeRunTokens, pruneExpiredTokens } from "@/lib/api-tokens";
 import { ownerId } from "@/lib/users";
+import { listSpawns, ownerOf, runsOfSession, type RunOwnerFields, type SpawnRecord } from "@/executor/sessions";
 
 // The process manager for headless AI agent sessions launched from the App's UI.
 // See docs on the API routes (src/app/api/executor/*) and README's 投递执行/人脉 sections for the
@@ -81,9 +82,11 @@ export interface RunnerDeps {
   spawn?: SpawnFn;
   logDir?: string;
   // user_chrome only: insert the run as 'queued' even while another run of the kind is running
-  // or queued for the account, instead of refusing. The attended session works its queue in id
-  // order, so this is how a 待处理 card the user just resolved becomes work behind the current run
-  // (src/apply/followup.ts) rather than being dropped on the floor.
+  // or queued for the account, instead of refusing. Sessions work the queue in id order, so this
+  // is how a 待处理 card the user just resolved becomes work behind the current run
+  // (src/apply/followup.ts) rather than being dropped on the floor — and, since 2026-09-30, how a
+  // second apply plan or a relay's next segment runs alongside a task that is already on (the
+  // dispatcher gives it its own session while there is room, src/executor/attended.ts).
   queueBehind?: boolean;
 }
 
@@ -152,22 +155,16 @@ export interface ReapDeps {
   now?: () => number;
   mtime?: (filePath: string) => number | null;
   killTree?: (pid: number) => void;
-  // Whether the dispatcher-spawned attended session is alive (tests fake it). While it is, a
-  // quiet user_chrome run is a session waiting at its prompt for the user, not a lost one.
-  attendedAlive?: () => boolean;
+  // Whether the dispatcher-spawned session that owns a user_chrome run is alive (tests fake it).
+  // While it is, a quiet run is a session waiting at its prompt for the user, not a lost one.
+  attendedAlive?: (run: RunOwnerFields) => boolean;
 }
 
-// The dispatcher-spawned attended session (src/executor/attended.ts keeps its record under the
-// profile key attended_spawn; read directly here to avoid a runner <-> attended import cycle).
-export function attendedChildAlive(db: DB): boolean {
-  const row = db.prepare("SELECT value FROM profile WHERE key = ?").get("attended_spawn") as { value: string } | undefined;
-  if (!row) return false;
-  try {
-    const rec = JSON.parse(row.value) as { pid?: number };
-    return typeof rec.pid === "number" && isAlive(rec.pid);
-  } catch {
-    return false;
-  }
+// Whether the dispatcher-spawned session that claimed this run (src/executor/sessions.ts) is
+// alive. Each parallel session answers for its own runs only.
+export function attendedChildAlive(db: DB, run: RunOwnerFields): boolean {
+  const owner = ownerOf(run, listSpawns(db));
+  return owner != null && isAlive(owner.pid);
 }
 
 // Machine-wide (every account's runs): a dead process is dead whoever owns it.
@@ -183,11 +180,12 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
       }
     });
 
-  const rows = db.prepare("SELECT id, pid, channel, log_path FROM executor_runs WHERE status='running'").all() as {
+  const rows = db.prepare("SELECT id, pid, channel, log_path, claimed_at FROM executor_runs WHERE status='running'").all() as {
     id: number;
     pid: number | null;
     channel: string;
     log_path: string | null;
+    claimed_at: string | null;
   }[];
   const fail = (id: number, summary: string) => {
     db.prepare("UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?").run(summary, id);
@@ -197,8 +195,9 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
   for (const row of rows) {
     if (row.channel === "user_chrome") {
       // A live spawned session sits silently at its prompt between the App's messages
-      // (attended.ts, 2026-09-17): no log activity is normal, so only an unattended row can go stale.
-      if ((deps.attendedAlive ?? (() => attendedChildAlive(db)))()) continue;
+      // (attended.ts, 2026-09-17): no log activity is normal, so only an unattended row can go
+      // stale. Its pid is the session's (claim-next stamps it), never a process of ours to probe.
+      if ((deps.attendedAlive ?? ((r: RunOwnerFields) => attendedChildAlive(db, r)))(row)) continue;
       const mt = row.log_path ? mtime(row.log_path) : null;
       if (mt != null && now() - mt > STALE_USER_CHROME_MS) fail(row.id, "session gone");
       continue;
@@ -227,7 +226,7 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
 // user_chrome rows never count here (they have no pid) — see hasLiveOrQueuedRun for the check
 // that also covers queued/attended runs.
 export function hasLiveRun(db: DB, userId: string, kind: ExecutorKind): boolean {
-  const rows = db.prepare("SELECT pid FROM executor_runs WHERE user_id=? AND kind=? AND status='running'").all(userId, kind) as {
+  const rows = db.prepare("SELECT pid FROM executor_runs WHERE user_id=? AND kind=? AND status='running' AND channel != 'user_chrome'").all(userId, kind) as {
     pid: number | null;
   }[];
   return rows.some((row) => isAlive(row.pid));
@@ -448,7 +447,19 @@ export interface ClaimedRun {
 // else's run). Returns null when there's nothing queued.
 // `kinds` (optional) restricts which run kinds this claimer takes — an attended session that only
 // knows the apply/referral protocols must not swallow a queued 'scan' run meant for another.
-export function claimNextRun(db: DB, userId: string, channel: ExecutorChannel = "user_chrome", kinds?: ExecutorKind[]): ClaimedRun | null {
+//
+// `claimer` (2026-09-30): the dispatcher-spawned session asking (src/executor/sessions.ts). Its
+// pid goes on the run, which is how every later line about the run or its jobs finds the right
+// terminal while several sessions work side by side. A session works one run at a time: while it
+// has one running it gets null, so the queued run goes to a session that is free.
+export function claimNextRun(
+  db: DB,
+  userId: string,
+  channel: ExecutorChannel = "user_chrome",
+  kinds?: ExecutorKind[],
+  claimer?: SpawnRecord | null
+): ClaimedRun | null {
+  if (claimer && runsOfSession(db, userId, claimer).some((r) => r.status === "running")) return null;
   const kindFilter = kinds && kinds.length > 0 ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
   const row = db
     .prepare(`SELECT id, kind, options, log_path FROM executor_runs WHERE user_id=? AND channel=? AND status='queued'${kindFilter} ORDER BY id ASC LIMIT 1`)
@@ -456,8 +467,8 @@ export function claimNextRun(db: DB, userId: string, channel: ExecutorChannel = 
   if (!row) return null;
 
   const result = db
-    .prepare("UPDATE executor_runs SET status='running', claimed_at=datetime('now') WHERE id=? AND status='queued'")
-    .run(row.id);
+    .prepare("UPDATE executor_runs SET status='running', claimed_at=datetime('now'), pid=? WHERE id=? AND status='queued'")
+    .run(claimer?.pid ?? null, row.id);
   if (result.changes === 0) return null; // lost a race with another claimer
 
   let options: unknown = {};

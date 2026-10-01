@@ -6,7 +6,7 @@ import { infoKind, InfoQuestion } from "@/apply/queue";
 import { isDocumentPath, userDocumentsDir } from "@/lib/documents";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
 import { askerCanContinue } from "@/apply/followup";
-import { notifyAttendedSession } from "@/executor/attended";
+import { notifyJobSession } from "@/executor/attended";
 import { answeredNotice } from "@/executor/attended-session";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
@@ -74,7 +74,7 @@ export const POST = withUser(async (req, { userId }) => {
       const company = (db.prepare("SELECT company FROM jobs WHERE id = ?").get(jobId) as { company: string | null } | undefined)?.company ?? "";
       let notified = false;
       try {
-        notified = notifyAttendedSession(db, answeredNotice(jobId, company));
+        notified = notifyJobSession(db, userId, jobId, answeredNotice(jobId, company));
       } catch {
         notified = false;
       }

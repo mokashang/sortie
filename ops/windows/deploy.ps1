@@ -58,20 +58,25 @@ function Get-Json($url) {
 if (-not $Force) {
   $attended = Get-Json "$Base/api/executor/dispatch"
   $status = Get-Json "$Base/api/executor/status"
-  $spawn = $null
-  if ($attended) { $spawn = $attended.spawn }
-  $spawnAlive = [bool]($spawn -and $spawn.alive)
+  # Since 2026-09-30 several sessions can run side by side (parallel apply tasks): `spawns` lists
+  # them all; an older server only reports the one `spawn`.
+  $spawns = @()
+  if ($attended) {
+    if ($null -ne $attended.spawns) { $spawns = @($attended.spawns) }
+    elseif ($attended.spawn) { $spawns = @($attended.spawn) }
+  }
+  $aliveSpawns = @($spawns | Where-Object { $_ -and $_.alive })
   $running = @()
   if ($status -and $status.runs) {
     $running = @($status.runs | Where-Object { $_.channel -eq "user_chrome" -and $_.status -eq "running" })
   }
-  if ($spawnAlive -or $running.Count -gt 0) {
+  if ($aliveSpawns.Count -gt 0 -or $running.Count -gt 0) {
     # Say what is holding the deploy, so a stale record can be told from real work (2026-09-22:
     # the guard refused all evening on a session that had nothing to do). The server's own view:
-    # GET /api/executor/dispatch -> spawn.busy (runs / forms it filled awaiting the user / stale
-    # cards from earlier sessions) and spawn.idleSec (reaped at 15 min).
+    # GET /api/executor/dispatch -> spawns[].busy (runs / forms it filled awaiting the user / stale
+    # cards from earlier sessions) and spawns[].idleSec (reaped at 15 min).
     Write-Host "Refusing to deploy: attended work in progress." -ForegroundColor Yellow
-    if ($spawnAlive) {
+    foreach ($spawn in $aliveSpawns) {
       $reach = "reachable"
       if (-not $spawn.reachable) { $reach = "NOT reachable from the current server process (it restarted after the spawn)" }
       $idle = "not idle"

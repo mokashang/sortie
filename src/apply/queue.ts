@@ -84,7 +84,7 @@ export function takeNextApplication(
   db: DB,
   userId: string,
   profile: Profile,
-  opts: { direction?: string; jobIds?: number[]; documents?: Record<string, string> } = {}
+  opts: { direction?: string; jobIds?: number[]; documents?: Record<string, string>; runId?: number | null } = {}
 ): ApplyTask | { done: true } {
   // Login walls the user hasn't cleared yet (open `login` items on paused rows), by apply_url
   // host: a job on the same host is paused with the same item instead of being handed out — the
@@ -198,12 +198,14 @@ export function takeNextApplication(
     // out of 'matched' between the SELECT above and this UPDATE (e.g. a concurrent executor
     // request) — treat that as a lost race and just try the next candidate rather than returning
     // a task nobody actually locked.
-    // run_id: which apply run took this job — the run's outcome (计划完成度) is counted from it.
+    // run_id: which apply run took this job — the run's outcome (计划完成度) is counted from it, and
+    // its session is the one holding the tab (src/executor/sessions.ts). opts.runId is the
+    // caller's own run when the route could tell (parallel tasks); else the newest running one.
     const claim = db
       .prepare(
         "UPDATE applications SET status = 'prepared', answer_pack = ?, confirm_decision = NULL, run_id = ? WHERE user_id = ? AND job_id = ? AND status IN ('matched','referral_ready')"
       )
-      .run(JSON.stringify(answerPack), currentApplyRunId(db, userId), userId, row.job_id);
+      .run(JSON.stringify(answerPack), opts.runId !== undefined ? opts.runId : currentApplyRunId(db, userId), userId, row.job_id);
     if (claim.changes === 0) continue;
 
     return {
