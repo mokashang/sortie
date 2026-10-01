@@ -118,3 +118,9 @@ export function markNotice(key: string, now: number): void {
 export function clearNotices(): void {
   reg().notices.clear();
 }
+// Forget what was told to one session (keys ending in `:<pid>`): it was reaped, or its pid now
+// belongs to a fresh session that has heard nothing yet.
+export function clearNoticesFor(pid: number): void {
+  const suffix = `:${pid}`;
+  for (const key of [...reg().notices.keys()]) if (key.endsWith(suffix)) reg().notices.delete(key);
+}

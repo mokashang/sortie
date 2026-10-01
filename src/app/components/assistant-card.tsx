@@ -57,7 +57,10 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
   const [stopping, setStopping] = useState(false);
 
   const relevant = useMemo(() => (runs ?? []).filter((r) => !filterKinds || filterKinds.includes(r.kind)), [runs, filterKinds]);
-  const run = relevant.find((r) => isLive(r.status)) ?? relevant[0] ?? null;
+  // Tasks can run side by side (2026-09-30): lead with one that is working, list the rest below.
+  const liveList = useMemo(() => relevant.filter((r) => r.status === "running").concat(relevant.filter((r) => r.status === "queued")), [relevant]);
+  const run = liveList[0] ?? relevant[0] ?? null;
+  const others = liveList.slice(1);
   const live = !!run && isLive(run.status);
   // 接力 segment parked behind the confirmation backlog (src/apply/continue.ts): not live, but
   // the user can end the chain with 停止, and the card says what it is waiting for.
@@ -138,6 +141,16 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
             <p className="muted xs mt-2">
               {m.assistant.startedPrefix}<RelativeTime value={run.startedAt} /> · {m.assistant.taskRef(run.id)}
             </p>
+            {others.length > 0 ? (
+              <div className="assistant-others">
+                <div className="muted xs">{m.assistant.alsoOn(others.length)}</div>
+                <ul>
+                  {others.map((r) => (
+                    <OtherTask key={r.id} run={r} onSteps={() => setStepsFor(r)} onStop={() => setStopFor(r)} />
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         ) : paused && run ? (
           <div className="assistant-body">
@@ -218,6 +231,37 @@ export function AssistantCard({ variant = "full", filterKinds, actions }: Assist
         confirmLabel={m.common.stop}
       />
     </>
+  );
+}
+
+// One more task on at the same time as the card's lead task: what it is, where it is, its own
+// 步骤 and 停止.
+function OtherTask({ run, onSteps, onStop }: { run: RunStatusRow; onSteps: () => void; onStop: () => void }) {
+  const m = useMessages();
+  const lang = useLang();
+  const described = describeRun(run.kind, run.options, lang);
+  const progress = runProgressText(run.outcome, lang);
+  const last = run.logTail?.length ? parseLogLine(run.logTail[run.logTail.length - 1]) : null;
+  return (
+    <li className="assistant-other">
+      <span className={cx("dot", run.status === "running" && "is-running", run.status === "queued" && "is-queued")} aria-hidden />
+      <div className="grow">
+        <div className="small">
+          {labelOf(m.labels.runKind, run.kind, run.kind)}
+          {described ? ` · ${described}` : ""}
+          {progress ? ` · ${progress}` : ""}
+        </div>
+        <div className="muted xs truncate">
+          {run.status === "queued" ? m.assistant.queuedShort : (last?.text ?? m.assistant.waitingFirstStep)} · {m.assistant.taskRef(run.id)}
+        </div>
+      </div>
+      <Button size="sm" variant="ghost" icon={<ListChecks size={14} />} onClick={onSteps}>
+        {m.assistant.steps}
+      </Button>
+      <Button size="sm" variant="ghost" icon={<Square size={12} />} onClick={onStop}>
+        {m.common.stop}
+      </Button>
+    </li>
   );
 }
 
@@ -319,9 +363,13 @@ export function AssistantPill() {
   const run = data?.assistant ?? null;
   const live = !!run && isLive(run.status);
   const paused = run?.status === "paused";
+  // "at once" counts the tasks actually being worked, not the ones queued behind them.
+  const runningCount = (data?.liveRuns ?? []).filter((r) => r.status === "running").length;
   const text =
     live && run
-      ? m.assistant.pillLive(labelOf(m.labels.runKind, run.kind, run.kind), runStatusDisplay(run.status, run.outcome, lang).label)
+      ? runningCount > 1
+        ? m.assistant.pillLiveMany(runningCount)
+        : m.assistant.pillLive(labelOf(m.labels.runKind, run.kind, run.kind), runStatusDisplay(run.status, run.outcome, lang).label)
       : paused
         ? m.assistant.pillPaused
         : m.assistant.pillIdle;

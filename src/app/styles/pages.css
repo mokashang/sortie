@@ -69,6 +69,33 @@ td.company {
   margin-top: 12px;
 }
 
+/* Other tasks on at the same time as the lead one (parallel tasks). */
+.assistant-others {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.assistant-others ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-other {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistant-other .grow {
+  min-width: 0;
+}
+
 /* ---- Decision cards (待确认 / 待补信息) ---- */
 
 .confirm-head {

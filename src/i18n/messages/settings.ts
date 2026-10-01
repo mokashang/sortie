@@ -170,6 +170,14 @@ export const settings = defineMessages({
       toastOff: "之后填好的申请会先等你确认",
       saveFailed: "保存失败",
     },
+    parallel: {
+      title: "同时进行的任务",
+      description:
+        "投递任务最多同时做几个。每个任务由一个助手在你的 Chrome 里用自己的一组标签页去做,互不干扰;多出来的先排队,前面做完一个就接上。开得越多,AI 额度用得越快。选 1 就是一个做完再做下一个。",
+      option: (n: number) => `${n} 个`,
+      saved: (n: number) => (n === 1 ? "之后的投递任务一个做完再做下一个" : `之后最多同时做 ${n} 个投递任务`),
+      saveFailed: "保存失败",
+    },
     chat: {
       title: "问答助手",
       description: "顶栏「问助手」里回答问题用的模型。「上网找岗位」只有 Claude 订阅能做(它自带联网搜索)。",
@@ -389,6 +397,14 @@ export const settings = defineMessages({
       on: "On",
       toastOn: "Filled applications will now be submitted right away, with missing answers written by the App",
       toastOff: "Filled applications will wait for your confirmation again",
+      saveFailed: "Could not save",
+    },
+    parallel: {
+      title: "Tasks at once",
+      description:
+        "How many apply tasks the assistant works on at the same time. Each task gets its own assistant with its own group of tabs in your Chrome, so they stay out of each other's way; any more wait in line and start as soon as one finishes. More at once uses up AI quota faster. 1 means one task after another.",
+      option: (n: number) => String(n),
+      saved: (n: number) => (n === 1 ? "Apply tasks will now run one after another" : `Up to ${n} apply tasks will now run at once`),
       saveFailed: "Could not save",
     },
     chat: {

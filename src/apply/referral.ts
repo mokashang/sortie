@@ -63,7 +63,11 @@ const SELECT = `SELECT j.id as job_id, j.company, j.title, j.apply_url, m.direct
 // whose effective mode is 'referral' (optionally within one direction); targeted mode (jobIds,
 // from the board's 换人再问) only considers the given ids. Up to MAX_SIBLINGS more queued
 // referral-mode jobs at the same company ride along so one message can cover them all.
-export function takeNextReferral(db: DB, userId: string, opts: { direction?: string; jobIds?: number[] } = {}): ReferralTask | { done: true } {
+export function takeNextReferral(
+  db: DB,
+  userId: string,
+  opts: { direction?: string; jobIds?: number[]; runId?: number | null } = {}
+): ReferralTask | { done: true } {
   const targeted = !!opts.jobIds?.length;
   const idList = targeted ? opts.jobIds!.map(() => "?").join(",") : "";
   for (;;) {
@@ -91,7 +95,8 @@ export function takeNextReferral(db: DB, userId: string, opts: { direction?: str
 
     const jobs = [primary, ...siblings];
     // run_id: which apply run took these jobs — the run's outcome (计划完成度) is counted from it.
-    const runId = currentApplyRunId(db, userId);
+    // opts.runId is the caller's own run when the route could tell (parallel tasks).
+    const runId = opts.runId !== undefined ? opts.runId : currentApplyRunId(db, userId);
     const claim = db.prepare(
       "UPDATE applications SET status = 'referral_seeking', confirm_decision = NULL, run_id = ? WHERE user_id = ? AND job_id = ? AND status = 'matched'"
     );

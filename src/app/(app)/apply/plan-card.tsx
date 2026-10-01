@@ -31,6 +31,9 @@ export function PlanCard() {
   const { data, refresh: refreshOverview } = useOverview();
   const { toast } = useToast();
   const applyBusy = data?.liveKinds.includes("apply") ?? false;
+  // In the user's Chrome another task can start while one is on — both go, each with its own
+  // assistant (2026-09-30). The background browser has one profile, so there it still waits.
+  const blocked = applyBusy && channel === "headless";
   const jdBusy = data?.liveKinds.includes("jd_review") ?? false;
 
   useEffect(() => setChannel(getChannel()), []);
@@ -74,12 +77,22 @@ export function PlanCard() {
       counts
     );
     if (plan.length === 0) return;
+    // Tasks already holding an assistant in the user's Chrome, before this one joins them.
+    const onChrome = (data?.liveRuns ?? []).filter((r) => r.channel === "user_chrome").length;
+    const limit = data?.parallel ?? 1;
     setStarting(true);
     try {
       await postJson("/api/executor/start", { kind: "apply", channel, options: { plan } });
       toast({
         title: m.apply.plan.scheduled(totals.total),
-        description: channel === "user_chrome" ? m.apply.plan.scheduledUserChrome : m.apply.plan.scheduledHeadless,
+        description:
+          channel !== "user_chrome"
+            ? m.apply.plan.scheduledHeadless
+            : onChrome === 0
+              ? m.apply.plan.scheduledUserChrome
+              : onChrome < limit
+                ? m.apply.plan.scheduledAlongside
+                : m.apply.plan.scheduledBehind(limit),
         tone: "good",
       });
       setCounts((prev) => Object.fromEntries(Object.keys(prev).map((k) => [k, { referral: 0, direct: 0 }])));
@@ -161,13 +174,13 @@ export function PlanCard() {
                       </td>
                       <td>
                         <div className="row row-nowrap">
-                          <Stepper value={c.referral} max={g.referralSuggested} disabled={applyBusy || g.referralSuggested === 0} onChange={(v) => setCount(g.direction, "referral", v, g.referralSuggested)} ariaLabel={m.apply.plan.referralCountAria(name)} />
+                          <Stepper value={c.referral} max={g.referralSuggested} disabled={blocked || g.referralSuggested === 0} onChange={(v) => setCount(g.direction, "referral", v, g.referralSuggested)} ariaLabel={m.apply.plan.referralCountAria(name)} />
                           <span className="muted xs nowrap">{m.apply.plan.available(g.referralSuggested)}</span>
                         </div>
                       </td>
                       <td>
                         <div className="row row-nowrap">
-                          <Stepper value={c.direct} max={g.directSuggested} disabled={applyBusy || g.directSuggested === 0} onChange={(v) => setCount(g.direction, "direct", v, g.directSuggested)} ariaLabel={m.apply.plan.directCountAria(name)} />
+                          <Stepper value={c.direct} max={g.directSuggested} disabled={blocked || g.directSuggested === 0} onChange={(v) => setCount(g.direction, "direct", v, g.directSuggested)} ariaLabel={m.apply.plan.directCountAria(name)} />
                           <span className="muted xs nowrap">{m.apply.plan.available(g.directSuggested)}</span>
                         </div>
                       </td>
@@ -183,8 +196,8 @@ export function PlanCard() {
               {m.apply.plan.totalPrefix} <strong className="mono">{totals.total}</strong> {m.apply.plan.totalUnit(totals.total)}
               <span className="muted">{m.apply.plan.totalBreakdown(totals.referral, totals.direct)}</span>
             </span>
-            <Button variant="primary" icon={<Play size={14} />} loading={starting} disabled={applyBusy || totals.total === 0} onClick={start}>
-              {applyBusy ? m.apply.plan.inProgress : m.apply.plan.start}
+            <Button variant="primary" icon={<Play size={14} />} loading={starting} disabled={blocked || totals.total === 0} onClick={start}>
+              {blocked ? m.apply.plan.inProgress : applyBusy ? m.apply.plan.startAnother : m.apply.plan.start}
             </Button>
           </div>
         </>

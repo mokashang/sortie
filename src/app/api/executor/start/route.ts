@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { startExecutor, ExecutorKind, ExecutorChannel, StartOptions, ExecutorStartError } from "@/executor/runner";
-import { supersedePausedChain, APPLY_CHUNK_SIZE } from "@/apply/continue";
+import { APPLY_CHUNK_SIZE } from "@/apply/continue";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 
@@ -16,13 +16,17 @@ const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 // account's own Playwright browser profile. Refuses (400) if one of the same kind+channel is
 // already running/queued for the account; see src/executor/runner.ts.
 //
+// Except apply on user_chrome (2026-09-30, spec 2026-09-30-parallel-apply-design): the user can
+// start another apply task while one is on, and both go — the dispatcher gives each its own
+// attended session, up to 设置 → 同时进行的任务, and queues the rest. A paused 接力 chain is no
+// longer superseded by a new plan either; it resumes when the confirmations come down.
+//
 // jd_review has no user_chrome protocol (buildJdReviewPrompt only exists as a headless
 // Playwright-profile prompt — there's no attended-session equivalent), so its channel is forced
 // to 'headless' here regardless of what the caller passed, before channel validation runs.
 //
 // An apply run with a plan is the first segment of a 接力 chain (src/apply/continue.ts): it gets
-// the default chunk size, and any chain of this account still parked waiting for confirmations
-// is superseded.
+// the default chunk size.
 //
 // A channel/mode mismatch (referrals or scanning on the headless channel) comes back as an
 // ExecutorStartError with a code; the message shown in the App's toast is picked in the UI
@@ -44,10 +48,10 @@ export const POST = withUser(async (req, { userId }) => {
     const db = getDb();
     const options: StartOptions = body.options ?? {};
     if (kind === "apply" && Array.isArray(options.plan) && options.plan.length > 0) {
-      supersedePausedChain(db, userId);
       if (typeof options.chunk !== "number" || options.chunk <= 0) options.chunk = APPLY_CHUNK_SIZE;
     }
-    const result = startExecutor(db, userId, kind as ExecutorKind, options, {}, channel as ExecutorChannel);
+    const parallel = kind === "apply" && channel === "user_chrome";
+    const result = startExecutor(db, userId, kind as ExecutorKind, options, parallel ? { queueBehind: true } : {}, channel as ExecutorChannel);
     return NextResponse.json(result);
   } catch (e) {
     if (e instanceof ExecutorStartError) return NextResponse.json({ error: messagesFor(langFromRequest(req)).errors[e.code] }, { status: 400 });

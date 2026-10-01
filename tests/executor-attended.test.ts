@@ -20,7 +20,7 @@ import {
   IDLE_REAP_MS,
   NOTICE_RETRY_MS,
   STALL_NUDGE_MS,
-  notifyAttendedSession,
+  notifyJobSession,
   isAttendedSessionReachable,
 } from "@/executor/attended";
 import type { WindowsSpawnOptions } from "@/executor/attended-win";
@@ -220,7 +220,7 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
 
     // The App types the approval straight into the session.
-    expect(notifyAttendedSession(db, "[Sortie] approved job 1", deps)).toBe(true);
+    expect(notifyJobSession(db, U, jobId, "[Sortie] approved job 1", deps)).toBe(true);
     expect(typed).toEqual(["[Sortie] approved job 1"]);
   });
 
@@ -240,7 +240,7 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     // A queued run it cannot hear about: reap, and the next tick spawns a fresh session for it.
     expect(dispatchAttended(db, deps).decision.action).toBe("reap");
     expect(killed).toEqual([5]);
-    expect(notifyAttendedSession(db, "x", deps)).toBe(false);
+    expect(isAttendedSessionReachable(db, deps)).toBe(false);
     expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
   });
 

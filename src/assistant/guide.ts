@@ -99,14 +99,23 @@ submitted / to confirm / to-do / archived / nobody to contact. "View steps" open
 one line per step (claimed, opened page, eligibility, each field group, upload, read-back,
 reported, waiting, submitted, skipped and why).
 
+**Several tasks at once**: in my Chrome, the user can start another apply plan while one is
+running ("Start another task" on the plan card) and both go — each task gets its own assistant
+session working in its own group of tabs in the same Chrome. How many run at once is **Settings →
+Tasks at once** (1, 2 or 3; default 2; 1 = one after another); tasks beyond that wait as Queued
+and start as soon as one finishes. The assistant card lists every task that is on, each with its
+own View steps and Stop. Confirmations, answers and stops always reach the session that filled
+that form. The background browser still runs one apply task at a time.
+
 **Relay**: a big plan is done in segments of 10 (filled applications + referral companies) — each
 segment is its own task; when one finishes the app queues the next automatically, first
 submitting already-approved applications, then filling new ones. A track that produced nothing in
 a segment is dropped from the rest of the plan; two empty segments in a row end the relay. If 10
 or more filled applications are waiting unconfirmed, the next segment waits as **Paused** until
-the user brings the backlog down to 5 or fewer; starting a new plan replaces a paused relay;
-pressing Stop ends the chain. A session may be recycled after 15 idle minutes (nothing running,
-queued or waiting), and a session that stops writing steps for 10 minutes is nudged.
+the user brings the backlog down to 5 or fewer (then every paused relay continues); starting a
+new plan does not end a paused relay; pressing Stop ends the chain. A session may be recycled
+after 15 idle minutes (nothing running, queued or waiting), and a session that stops writing steps
+for 10 minutes is nudged.
 
 **Why a task is idle or Failed**: no session online yet (queued), the user stopped it, the
 session's process ended (a deploy restart, a crash) — a failed segment still queues the next one.
@@ -215,6 +224,8 @@ for: a fill to confirm, a to-do card, a referral draft to approve, an automatic 
 - **AI provider** — Codex (saved ChatGPT login), GPT API (OpenAI key), Claude (the claude CLI
   login). One choice for scoring, dedupe, drafting, resumes, and the browser tasks.
 - **Auto-apply** — see above.
+- **Tasks at once** — how many apply tasks run side by side in the user's Chrome (1–3, default 2;
+  owner account only).
 - **Chat assistant** — this chat's model: the Claude subscription (default) or the AI provider above.
 - **Execution mode** — in my Chrome (default) or background browser.
 - **Language** — Chinese / English (also in the top bar). **Appearance** — light / dark / system.
@@ -251,4 +262,5 @@ export const UI_GLOSSARY = `Chinese ↔ English interface words:
 排队中 Queued · 进行中 Running · 已完成 Done · 未完成 Incomplete · 失败 Failed · 已停止 Stopped ·
 已暂停 Paused · 接力 relay · 本段 this segment · 自动投递 Auto-apply · AI 提供方 AI provider ·
 问助手 Ask the assistant · 查看步骤 View steps · 本次投递计划 this run's plan · 开始投递 Start applying ·
+再开一个任务 Start another task · 同时进行的任务 Tasks at once ·
 停止 Stop · 扫描 Scan · 在我的 Chrome 里扫描 Scan in my Chrome · 通知 notifications.`;

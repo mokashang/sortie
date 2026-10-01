@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, Bot, Database, ExternalLink, Globe, Languages, Mail, MessageCircleQuestionMark, Monitor, Moon, RefreshCw, Sun, Zap } from "lucide-react";
+import { Bell, Bot, Database, ExternalLink, Globe, Languages, Layers, Mail, MessageCircleQuestionMark, Monitor, Moon, RefreshCw, Sun, Zap } from "lucide-react";
+import { PARALLEL_CHOICES } from "@/app/lib/parallel";
 import { postJson, errorMessage } from "@/app/lib/api";
 import type { InboxStatus, MailboxStatus } from "@/inbox/sync";
 import { getChannel, getTheme, setChannel, setTheme, type Channel, type Theme } from "@/app/lib/settings";
@@ -30,6 +31,7 @@ export function SettingsClient({
   auth,
   ai,
   autoSubmit: autoSubmitInitial,
+  parallel: parallelInitial,
   chatProvider: chatProviderInitial,
   inbox: inboxInitial,
 }: {
@@ -39,6 +41,7 @@ export function SettingsClient({
   auth: AuthPublicConfig;
   ai: { provider: AiProvider; providers: AiProviderStatus[] };
   autoSubmit: boolean;
+  parallel: number;
   chatProvider: ChatProvider;
   inbox: InboxStatus;
 }) {
@@ -52,6 +55,8 @@ export function SettingsClient({
   const [savingAi, setSavingAi] = useState(false);
   const [autoSubmit, setAutoSubmit] = useState<boolean>(autoSubmitInitial);
   const [savingAutoSubmit, setSavingAutoSubmit] = useState(false);
+  const [parallel, setParallel] = useState<number>(parallelInitial);
+  const [savingParallel, setSavingParallel] = useState(false);
   const [chatProvider, setChatProvider] = useState<ChatProvider>(chatProviderInitial);
   const [savingChat, setSavingChat] = useState(false);
   const [inbox, setInbox] = useState<InboxStatus>(inboxInitial);
@@ -189,6 +194,22 @@ export function SettingsClient({
     }
   }
 
+  async function chooseParallel(next: number) {
+    if (next === parallel || savingParallel) return;
+    const previous = parallel;
+    setParallel(next);
+    setSavingParallel(true);
+    try {
+      await postJson("/api/settings/parallel", { value: next });
+      toast({ title: m.settings.parallel.saved(next), tone: "good" });
+    } catch (e) {
+      setParallel(previous);
+      toast({ title: m.settings.parallel.saveFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setSavingParallel(false);
+    }
+  }
+
   async function chooseChatProvider(value: ChatProvider) {
     if (value === chatProvider || savingChat) return;
     const previous = chatProvider;
@@ -268,6 +289,26 @@ export function SettingsClient({
           />
         </div>
       </Section>
+
+      {account.role === "owner" ? (
+        <Section id="parallel" title={m.settings.parallel.title} description={m.settings.parallel.description}>
+          <div aria-busy={savingParallel}>
+            <Segmented<string>
+              ariaLabel={m.settings.parallel.title}
+              value={String(parallel)}
+              onChange={(v) => void chooseParallel(Number(v))}
+              options={PARALLEL_CHOICES.map((n) => ({
+                value: String(n),
+                label: (
+                  <span className="row gap-1 row-nowrap">
+                    <Layers size={13} aria-hidden /> {m.settings.parallel.option(n)}
+                  </span>
+                ),
+              }))}
+            />
+          </div>
+        </Section>
+      ) : null}
 
       <Section id="inbox" title={m.inbox.settings.title} description={m.inbox.settings.description}>
         <div className="col gap-3">

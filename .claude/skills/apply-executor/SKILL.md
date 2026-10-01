@@ -26,6 +26,15 @@ anything: poll `GET /api/executor/claim-next?channel=user_chrome` to claim it, w
 call `POST /api/executor/log` as you go and `POST /api/executor/finish` when done (or check
 `GET /api/executor/run?id=` to see if the user hit 停止).
 
+**Other sessions may be working in the same Chrome** (2026-09-30, parallel apply tasks — Settings →
+同时进行的任务, up to 3): each dispatcher-spawned session works one task in its own tab group. Touch
+only your own tab group — never switch to, read, close or fill another group's tabs. Work one run
+at a time: claim-next returns `{run:null}` while a run of yours is still running, so finish it
+before claiming the next. In a resume phase, `GET /api/apply/pending` lists only the filled forms
+that are yours or that no live session holds any more, and `GET /api/network/sendables` only the
+approved messages handed to you; anything not listed belongs to another session. Every
+`[Sortie] …` line typed into your terminal is about your own runs and tabs.
+
 **Never ask the user for missing answers in the Claude session** (AskUserQuestion or chat) — the
 user wants every interaction in the App. A required question with no answer-pack value is a
 `needs_info` report (`{jobId, status:'needs_info', questions:[{key,label,hint?,kind?,...}]}`, kinds
@@ -303,7 +312,8 @@ you send it once it is approved. Spec: `docs/superpowers/specs/2026-09-30-referr
 3. **Read the harvest response's `followup`.** Only `followup.status === "pending_send"` is yours
    to send (approved by the user on the card, or by the 自动投递 switch the moment it was drafted —
    `autoApproved: true`); anything else (`draft`, `needs_user`, `null`) waits on the user — send
-   nothing. To send, in the conversation you have open:
+   nothing. `heldElsewhere: true` means another session running beside you was handed that
+   approved message — leave it to them. To send, in the conversation you have open:
    - **Double-send guard first**: if the thread already shows a message from you that matches
      `followup.text` (a prior session, a retry), do not type it again — report it as sent with the
      text you found.

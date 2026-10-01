@@ -18,9 +18,14 @@ export interface OverviewCounts {
 
 export interface Overview {
   today: string;
+  // The task to show first: a running one before a queued one, newest first.
   assistant: RunStatusRow | null;
+  // Every task currently queued or running, in the same order (tasks can run side by side).
+  liveRuns: RunStatusRow[];
   // Kinds of every task currently queued or running (an apply run can be queued while a scan runs).
   liveKinds: string[];
+  // How many apply tasks the assistant works on at once (设置 → 同时进行的任务).
+  parallel: number;
   counts: OverviewCounts;
   // false until the account's 档案 basics validate — the assistant can't match or apply before that.
   profileComplete: boolean;

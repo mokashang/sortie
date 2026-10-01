@@ -14,13 +14,22 @@ import {
   unapproveFollowup,
 } from "@/network/followup";
 import { enqueueReferralCheck } from "@/apply/referral-check";
+import { leaseSendables, FOLLOWUP_LEASE_KEY } from "@/network/send-lease";
+import { sessionOfCaller } from "@/executor/sessions";
+import { isSessionReachable } from "@/executor/attended";
 import { withUser, failResponse } from "@/lib/actor";
 
 // GET — approved follow-ups waiting to be sent (the attended session's sweep at the end of a
 // referral check: open each thread, harvest again, send what the harvest response hands back).
-export const GET = withUser(async (_req, { userId }) => {
+// A dispatcher-spawned session sees only the ones no other live session holds (send-lease.ts).
+export const GET = withUser(async (_req, actor) => {
   try {
-    return NextResponse.json({ followups: followupSendables(getDb(), userId) });
+    const db = getDb();
+    const rows = followupSendables(db, actor.userId);
+    const caller = sessionOfCaller(db, actor);
+    return NextResponse.json({
+      followups: caller ? leaseSendables(db, rows, caller, (s) => isSessionReachable(s), Date.now(), FOLLOWUP_LEASE_KEY) : rows,
+    });
   } catch (e) {
     return failResponse(e);
   }

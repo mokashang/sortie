@@ -471,3 +471,20 @@ describe("messageKey dedup", () => {
     expect(b.followupCalls).toHaveLength(1);
   });
 });
+
+describe("follow-up leases (tasks side by side)", () => {
+  it("an approved follow-up goes to one session; its lease map is separate from approved outreach", async () => {
+    const { leaseSendables, FOLLOWUP_LEASE_KEY } = await import("@/network/send-lease");
+    const { saveSpawns } = await import("@/executor/sessions");
+    const db = openDb(":memory:");
+    const at = new Date().toISOString();
+    const s1 = { pid: 601, runId: 1, startedAt: at, logPath: "", idleSince: null };
+    const s2 = { pid: 602, runId: 2, startedAt: at, logPath: "", idleSince: null };
+    saveSpawns(db, [s1, s2]);
+    const t = 1_000_000;
+    expect(leaseSendables(db, [{ id: 7 }], s1, () => true, t, FOLLOWUP_LEASE_KEY)).toEqual([{ id: 7 }]);
+    expect(leaseSendables(db, [{ id: 7 }], s2, () => true, t + 1000, FOLLOWUP_LEASE_KEY)).toEqual([]);
+    // Outreach #7 is a different thing: not held by the follow-up lease.
+    expect(leaseSendables(db, [{ id: 7 }], s2, () => true, t + 1000)).toEqual([{ id: 7 }]);
+  });
+});

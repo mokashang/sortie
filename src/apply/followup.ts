@@ -1,7 +1,7 @@
 import { DB, logEvent } from "@/lib/db";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
 import { manualItem, parkWithItems } from "@/apply/queue";
-import { isAttendedSessionReachable } from "@/executor/attended";
+import { isJobSessionReachable } from "@/executor/attended";
 
 // What a resolved 待处理 card turns into (2026-09-17). The user answered / uploaded / logged in /
 // clicked 「让助手再试一次」, so the job must be filled next — and "next" has to mean something even
@@ -20,8 +20,9 @@ export interface FollowupDeps {
   lastRunChannel?: typeof lastRunChannel;
   startExecutor?: typeof startExecutor;
   logDir?: string;
-  // The long-lived attended session is alive and this process can type into it (tests fake it).
-  sessionReachable?: () => boolean;
+  // The long-lived attended session holding this job's tab (the owner of the run that took it) is
+  // alive and this process can type into it (tests fake it).
+  sessionReachable?: (jobId: number) => boolean;
 }
 
 export interface FollowupResult {
@@ -96,11 +97,16 @@ export function queueTargetedRun(
 // becomes a targeted run that fills it afresh. (Before 2026-09-17 the check was "any apply run
 // of the account is running": Commure (1747881) and Neighbor (620336) were answered on
 // 2026-09-14 while an unrelated targeted run was on, flipped to 'prepared' for a session that had
-// died hours earlier, and sat invisible for three days.)
+// died hours earlier, and sat invisible for three days.) With parallel tasks (2026-09-30) "the
+// session" is the one that owns the run that took this job: another live session cannot see the tab.
 export function askerCanContinue(db: DB, userId: string, jobId: number, deps: FollowupDeps = {}): boolean {
   if (askingRunAlive(db, userId, jobId)) return true;
+  return holderReachable(db, userId, jobId, deps);
+}
+
+function holderReachable(db: DB, userId: string, jobId: number, deps: FollowupDeps): boolean {
   try {
-    return (deps.sessionReachable ?? (() => isAttendedSessionReachable(db)))();
+    return (deps.sessionReachable ?? ((id: number) => isJobSessionReachable(db, userId, id)))(jobId);
   } catch {
     return false;
   }
@@ -136,30 +142,36 @@ export interface ReclaimResult {
 // carrying the user's answers become a targeted run — once. If the run that dropped them was
 // already targeted at them, they become a card instead (让助手再试一次), so no loop.
 //
-// "Nobody working on it": with no reachable attended session, any row whose run is over (or that
-// never had one and is 30 minutes old). While a session is alive its tabs may still hold the
-// form — a finished run does not mean the form is gone — so its rows get 30 minutes from the
-// last change (the answer being handed to it) before they count as dropped.
+// "Nobody working on it": when no reachable attended session holds the row's tab, a row whose run
+// is over (or that never had one and is 30 minutes old). While the session holding it is alive
+// its tab may still hold the form — a finished run does not mean the form is gone — so the row
+// gets 30 minutes from the last change (the answer being handed to it) before it counts as
+// dropped. Judged per row: with parallel tasks each row has its own holder.
 export function reclaimStrandedPrepared(db: DB, userId: string, deps: FollowupDeps = {}): ReclaimResult {
   const result: ReclaimResult = { reclaimed: [], requeued: [], parked: [], followup: null };
   try {
-    let reachable = false;
-    try {
-      reachable = (deps.sessionReachable ?? (() => isAttendedSessionReachable(db)))();
-    } catch {
-      reachable = false;
-    }
-    const stale = reachable
-      ? `a.updated_at < datetime('now', '-30 minutes') AND (a.run_id IS NULL OR r.id IS NULL OR r.status NOT IN ('running','queued','paused'))`
-      : `((a.run_id IS NULL AND a.updated_at < datetime('now', '-30 minutes'))
-             OR (a.run_id IS NOT NULL AND (r.id IS NULL OR r.status NOT IN ('running','queued','paused'))))`;
-    const rows = db
+    const candidates = db
       .prepare(
-        `SELECT a.job_id, a.run_id, a.info_answers, r.status AS run_status, r.options AS run_options
+        `SELECT a.job_id, a.run_id, a.info_answers, r.status AS run_status, r.options AS run_options,
+                (a.updated_at < datetime('now', '-30 minutes')) AS old,
+                (r.id IS NOT NULL AND r.status IN ('running','queued','paused')) AS run_live
          FROM applications a LEFT JOIN executor_runs r ON r.id = a.run_id
-         WHERE a.user_id = ? AND a.status = 'prepared' AND ${stale}`
+         WHERE a.user_id = ? AND a.status = 'prepared'`
       )
-      .all(userId) as { job_id: number; run_id: number | null; info_answers: string | null; run_status: string | null; run_options: string | null }[];
+      .all(userId) as {
+      job_id: number;
+      run_id: number | null;
+      info_answers: string | null;
+      run_status: string | null;
+      run_options: string | null;
+      old: number;
+      run_live: number;
+    }[];
+    const rows = candidates.filter((r) => {
+      if (r.run_live) return false;
+      if (holderReachable(db, userId, r.job_id, deps)) return !!r.old;
+      return r.run_id != null || !!r.old;
+    });
     if (rows.length === 0) return result;
     const toRequeue: number[] = [];
     db.transaction(() => {

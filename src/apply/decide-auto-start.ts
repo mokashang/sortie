@@ -2,7 +2,7 @@ import { DB } from "@/lib/db";
 import { decide } from "@/apply/queue";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
 import { resumePausedChainIfReady } from "@/apply/continue";
-import { isAttendedSessionReachable, notifyAttendedSession } from "@/executor/attended";
+import { isJobSessionReachable, notifyJobSession } from "@/executor/attended";
 import { approvedNotice, rejectedNotice } from "@/executor/attended-session";
 import { queueTargetedRun } from "@/apply/followup";
 import { JOB_LINKED_SQL } from "@/network/crm";
@@ -20,10 +20,11 @@ export interface DecideAutoStartDeps {
   startExecutor?: typeof startExecutor;
   // Log dir for a resumed 接力 segment (tests point it at a temp dir).
   logDir?: string;
-  // The long-lived attended session (src/executor/attended.ts): whether this process can type
-  // into it, and the typing itself. Tests fake both.
-  attendedReachable?: () => boolean;
-  notifyAttended?: (line: string) => boolean;
+  // The long-lived attended session holding a job's tab (src/executor/attended.ts — with tasks
+  // running side by side, the one that owns the run that took the job): whether this process can
+  // type into it, and the typing itself. Tests fake both.
+  attendedReachable?: (jobId: number) => boolean;
+  notifyAttended?: (line: string, jobId: number) => boolean;
 }
 
 export interface DecideAutoStartResult {
@@ -84,22 +85,27 @@ export function decideAndMaybeAutoStart(
   deps: DecideAutoStartDeps = {}
 ): DecideAutoStartResult {
   decide(db, userId, jobId, decision, reason);
-  // A 接力 chain parked behind the confirmation backlog (src/apply/continue.ts) gets first claim
-  // on the session: approving or rejecting shrinks the backlog, and the chain's next segment
-  // starts with the resume phase, so it submits the approvals itself.
-  const resumed = resumePausedChainIfReady(db, userId, deps);
-  if (resumed.action === "queued") return { autoStarted: true, runId: resumed.runId, channel: resumed.channel };
   // The session that filled the form is still alive at its prompt with the tab open: tell it
   // (the App types into its terminal) and it submits — or closes the tab — right there. Only
   // when there is no reachable session does an approval queue a resume run for a fresh one,
-  // which cannot see the old tab and has to refill (2026-09-17).
+  // which cannot see the old tab and has to refill (2026-09-17). With parallel tasks (2026-09-30)
+  // that is the session owning the run that took this job, and nobody else: another session
+  // cannot see the tab.
   const company = (db.prepare("SELECT company FROM jobs WHERE id = ?").get(jobId) as { company: string | null } | undefined)?.company ?? "";
   const line = decision === "approve" ? approvedNotice(jobId, company) : rejectedNotice(jobId, company);
+  let notified = false;
   try {
-    if ((deps.notifyAttended ?? ((l: string) => notifyAttendedSession(db, l)))(line)) return { autoStarted: false, notified: true };
+    notified = (deps.notifyAttended ?? ((l: string, id: number) => notifyJobSession(db, userId, id, l)))(line, jobId);
   } catch {
-    // fall through to the queue-a-run path
+    notified = false;
   }
+  // A 接力 chain parked behind the confirmation backlog (src/apply/continue.ts): approving or
+  // rejecting shrinks the backlog, and the chain's next segment starts with the resume phase, so
+  // it submits whatever approval no session was told about. Told or not, this decision may be
+  // the one that frees it.
+  const resumed = resumePausedChainIfReady(db, userId, deps);
+  if (resumed.action === "queued") return { autoStarted: true, runId: resumed.runId, channel: resumed.channel, ...(notified ? { notified } : {}) };
+  if (notified) return { autoStarted: false, notified: true };
   if (decision !== "approve") return { autoStarted: false };
   return maybeAutoStartApply(db, userId, { resume: true }, deps);
 }
@@ -186,11 +192,17 @@ export function requeueStrandedApprovals(db: DB, userId: string, deps: DecideAut
     ).n;
     const outreach = strandedOutreach(db, userId);
     if (approvals === 0 && outreach === 0) return { autoStarted: false };
-    // A reachable attended session was told about each application approval as it happened and
-    // still holds the tabs; queueing a run would only make a second session refill the same
-    // forms. Approved messages are never typed into it, so they still need the run (which the
-    // dispatcher then hands to that same session).
-    if (outreach === 0 && (deps.attendedReachable ?? (() => isAttendedSessionReachable(db)))()) return { autoStarted: false };
+    // An approval whose tab a reachable attended session still holds was typed into that session
+    // as it happened; queueing a run would only make a second session refill the same form. Only
+    // approvals nobody holds are stranded. Approved messages are never typed into a session, so
+    // they still need the run (which the dispatcher then hands to a free session).
+    if (outreach === 0) {
+      const approved = db
+        .prepare("SELECT job_id FROM applications WHERE user_id = ? AND status = 'awaiting_confirm' AND confirm_decision = 'approved'")
+        .all(userId) as { job_id: number }[];
+      const held = deps.attendedReachable ?? ((id: number) => isJobSessionReachable(db, userId, id));
+      if (approved.every((a) => held(a.job_id))) return { autoStarted: false };
+    }
     const last = lastApplyRun(db, userId);
     if (last?.status === "stopped") return { autoStarted: false };
     if (last && isBareResumeRun(last.options)) {
