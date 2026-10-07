@@ -5,9 +5,10 @@ import path from "path";
 import { openDb, DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
 import { startExecutor, claimNextRun, finishRun } from "@/executor/runner";
-import { queueTargetedRun, askingRunAlive, askerCanContinue, reclaimStrandedPrepared } from "@/apply/followup";
+import { queueTargetedRun, askingRunAlive, askerCanContinue, reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
 import { pendingInfo } from "@/apply/info";
+import { reportFill } from "@/apply/queue";
 
 // A resolved 待处理 card must become work even while the assistant is busy (2026-09-17): the
 // job is merged into a queued targeted run or queued behind the running one, never dropped into
@@ -179,7 +180,7 @@ describe("reclaimStrandedPrepared", () => {
     expect(reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false }).reclaimed).toEqual([oldJob]);
   });
 
-  it("an answered row a targeted run already dropped becomes a card, not another silent retry", () => {
+  it("an answered row a targeted run already dropped is parked as an error: bounded automatic retries, then a card", () => {
     const { db, logDir } = openTestDb();
     const jobId = seedJob(db, "matched", { infoAnswers: { gpa: "3.3" } });
     const targeted = startExecutor(db, U, "apply", { jobIds: [jobId], mode: "direct" }, { logDir }, "user_chrome");
@@ -188,9 +189,56 @@ describe("reclaimStrandedPrepared", () => {
     finishRun(db, U, targeted.id, "done");
     const r = reclaimStrandedPrepared(db, U, { logDir, sessionReachable: () => false });
     expect(r).toMatchObject({ reclaimed: [jobId], requeued: [], parked: [jobId], followup: null });
-    const cards = pendingInfo(db, U);
-    expect(cards.map((c) => c.jobId)).toEqual([jobId]);
-    expect(cards[0].questions[0]).toMatchObject({ key: "error", kind: "manual" });
+    expect(app(db, jobId).needs_manual_reason).toBe(`retry: error: run #${targeted.id} took the job and never reported`);
+    expect(pendingInfo(db, U)).toEqual([]);
     expect(db.prepare("SELECT COUNT(*) n FROM executor_runs WHERE status = 'queued'").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("retryDueErrors", () => {
+  const at = (minutesFromNow: number) => () => new Date(Date.now() + minutesFromNow * 60_000);
+
+  it("hands an error back as a targeted run once its wait is over: 1 hour, then 6 hours, then a card", () => {
+    const { db, logDir } = openTestDb();
+    const jobId = seedJob(db, "prepared", { infoAnswers: { gpa: "3.3" } });
+    reportFill(db, U, { jobId, status: "error", reason: "LinkedIn shows grey placeholders" });
+    expect(pendingInfo(db, U)).toEqual([]);
+
+    // Not yet: the first retry waits an hour.
+    expect(retryDueErrors(db, U, { logDir, now: at(30) }).retried).toEqual([]);
+    const first = retryDueErrors(db, U, { logDir, now: at(61) });
+    expect(first.retried).toEqual([jobId]);
+    expect(JSON.parse(runRow(db, first.followup!.runId!).options)).toEqual({ jobIds: [jobId], mode: "direct" });
+    // Cleared like 「让助手再试一次」, the user's answers kept for the fresh take.
+    expect(app(db, jobId)).toMatchObject({ status: "matched", needs_manual_reason: null, pending_questions: null });
+    expect(JSON.parse(app(db, jobId).info_answers as string)).toEqual({ gpa: "3.3" });
+
+    // The retry fails too: the second wait is six hours.
+    db.prepare("UPDATE applications SET status = 'prepared' WHERE job_id = ?").run(jobId);
+    reportFill(db, U, { jobId, status: "error", reason: "still grey" });
+    expect(app(db, jobId).needs_manual_reason).toBe("retry: error: still grey");
+    expect(retryDueErrors(db, U, { logDir, now: at(120) }).retried).toEqual([]);
+    expect(retryDueErrors(db, U, { logDir, now: at(361) }).retried).toEqual([jobId]);
+
+    // Third failure: no more silent rounds — a card the user sees.
+    db.prepare("UPDATE applications SET status = 'prepared' WHERE job_id = ?").run(jobId);
+    reportFill(db, U, { jobId, status: "error", reason: "grey again" });
+    expect(app(db, jobId).needs_manual_reason).toBe("error: grey again");
+    expect(retryDueErrors(db, U, { logDir, now: at(10_000) }).retried).toEqual([]);
+    expect(pendingInfo(db, U).map((c) => c.jobId)).toEqual([jobId]);
+  });
+
+  it("batches every due error into one targeted run and leaves other cards alone", () => {
+    const { db, logDir } = openTestDb();
+    const a = seedJob(db, "prepared");
+    const b = seedJob(db, "prepared");
+    const login = seedJob(db, "prepared");
+    reportFill(db, U, { jobId: a, status: "error", reason: "x" });
+    reportFill(db, U, { jobId: b, status: "error", reason: "y" });
+    reportFill(db, U, { jobId: login, status: "needs_info", questions: [{ kind: "login", key: "login", label: "Sign in", host: "acme.wd1.myworkdayjobs.com" }] });
+    const r = retryDueErrors(db, U, { logDir, now: at(90) });
+    expect(r.retried.sort()).toEqual([a, b].sort());
+    expect(JSON.parse(runRow(db, r.followup!.runId!).options).jobIds.sort()).toEqual([a, b].sort());
+    expect(pendingInfo(db, U).map((c) => c.jobId)).toEqual([login]);
   });
 });

@@ -140,8 +140,9 @@ Whenever the assistant has to stop for the user it leaves a card with a clear ac
 the card automatically continues the work — there is no dead end:
 - **Needs info** — a form question with no known answer (or a decision only the user can make):
   answer it on the card; answers are remembered as standard answers. "Skip this job" archives it.
-- **Upload a file** — the form wants a transcript / portfolio / cover letter: upload once, it is
-  kept under Profile → Files for every later form.
+- **Upload a file** — the form wants a record only the user holds (a transcript, a certificate):
+  upload once, it is kept under Profile → Files for every later form. A portfolio, work sample or
+  cover letter is not a card: the assistant writes it from the user's real experience.
 - **Sign in once** — a login wall or a "create candidate account" step: the assistant first looks
   for a guest route or the same posting on an account-free board; it never types passwords, clicks
   Chrome's suggested password or creates accounts. The user signs in once in the job-search Chrome
@@ -156,7 +157,12 @@ the card automatically continues the work — there is no dead end:
   records it, or skip. Take-home tasks, coding exercises, reports and writing samples are NOT
   cards: the assistant does them from the user's real experience and they show up on the To
   confirm card for review.
-- **Assistant error** — a tool failure: "Let the assistant try again".
+- **Assistant error** — a tool failure or a page that would not render. The app retries an error
+  by itself (after an hour, then after six more hours) without showing a card; only a third
+  failure becomes a card ("Let the assistant try again").
+- A doubt about fit (more years asked than the user has, a new city, a soft "ideally no visa
+  needed") is never a card: the assistant applies. A question it attached to a sign-in card
+  (e.g. "would you move to Houston?") is answered by the app from the profile.
 - A rejected fill also becomes a card (the note goes to the next attempt).
 Cards from a waiting assistant time out after 30 minutes; the card stays and re-queues once
 answered.

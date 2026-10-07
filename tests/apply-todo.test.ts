@@ -244,12 +244,20 @@ describe("cards that only the user can move", () => {
     expect(app(db, jobId).pending_questions).toBeNull();
   });
 
-  it("an error report becomes a card with the reason as its hint", () => {
+  it("an error report waits out of sight for its automatic retries, and only the last failure becomes a card", () => {
     const db = openTestDb();
     const jobId = seed(db);
     reportFill(db, U, { jobId, status: "error", reason: "tab crashed twice" });
-    expect(app(db, jobId).needs_manual_reason).toBe("error: tab crashed twice");
+    expect(app(db, jobId).needs_manual_reason).toBe("retry: error: tab crashed twice");
     expect(items(db, jobId)).toEqual([{ key: "error", label: "助手出错,没填成", kind: "manual", hint: "tab crashed twice" }]);
+    expect(pendingInfo(db, U)).toEqual([]);
+    // Both automatic retries used up (retryDueErrors logs one event per retry, tests/apply-followup):
+    for (let i = 0; i < 2; i++) db.prepare("INSERT INTO events (kind, entity, entity_id, user_id) VALUES ('application_auto_retry', 'application', ?, ?)").run(jobId, U);
+    db.prepare("UPDATE applications SET status = 'prepared', needs_manual_reason = NULL, pending_questions = NULL WHERE job_id = ?").run(jobId);
+    reportFill(db, U, { jobId, status: "error", reason: "tab crashed again" });
+    expect(app(db, jobId).needs_manual_reason).toBe("error: tab crashed again");
+    expect(items(db, jobId)).toEqual([{ key: "error", label: "助手出错,没填成", kind: "manual", hint: "tab crashed again\n已自动重试 2 次,仍然没成。" }]);
+    expect(pendingInfo(db, U).map((c) => c.jobId)).toEqual([jobId]);
   });
 
   it("a rejected fill becomes a card and the reason rides along into the next answer pack", () => {
@@ -305,7 +313,7 @@ describe("cards that only the user can move", () => {
     expect(archiveManual(db, U, [waiting, paused, clean])).toEqual({ archived: 2, skipped: [clean] });
     expect(app(db, waiting).status).toBe("archived");
     expect(app(db, waiting).needs_manual_reason).toBe("user gave up");
-    expect(app(db, paused).needs_manual_reason).toBe("error: x");
+    expect(app(db, paused).needs_manual_reason).toBe("retry: error: x");
     unarchive(db, U, waiting);
     expect(app(db, waiting)).toMatchObject({ status: "matched", needs_manual_reason: null, pending_questions: null });
   });

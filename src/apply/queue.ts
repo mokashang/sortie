@@ -316,6 +316,35 @@ export function parkWithItems(db: DB, userId: string, jobId: number, items: Info
   ).run(reason, JSON.stringify(items), userId, jobId);
 }
 
+// Errors retry themselves (2026-10-06, the user: "为啥还需要我点击重试,必须自动重试"). Ten of the
+// 68 cards on 2026-10-01 were errors whose only exit was 「让助手再试一次」 — eight of them LinkedIn
+// refusing to render pages for a few hours. An error is parked out of sight with this reason
+// prefix; the dispatcher tick (retryDueErrors in src/apply/followup.ts) hands it back as a
+// targeted run once AUTO_RETRY_DELAYS_MIN[n] minutes have passed since the n-th failure. Only
+// the failure after the last automatic retry becomes a card.
+export const AUTO_RETRY_PREFIX = "retry: ";
+export const AUTO_RETRY_DELAYS_MIN = [60, 360];
+export const AUTO_RETRY_EVENT = "application_auto_retry";
+
+export function autoRetriesDone(db: DB, userId: string, jobId: number): number {
+  const row = db
+    .prepare("SELECT count(*) AS n FROM events WHERE kind = ? AND entity = 'application' AND entity_id = ? AND user_id = ?")
+    .get(AUTO_RETRY_EVENT, jobId, userId) as { n: number };
+  return row.n;
+}
+
+// Park an application that failed for a reason the assistant could not get past: silently, to be
+// retried, while automatic retries are left; as an error card once they are used up.
+export function parkErrorForRetry(db: DB, userId: string, jobId: number, label: string, detail: string, reason: string): void {
+  const done = autoRetriesDone(db, userId, jobId);
+  if (done < AUTO_RETRY_DELAYS_MIN.length) {
+    parkWithItems(db, userId, jobId, [manualItem("error", label, detail || undefined)], AUTO_RETRY_PREFIX + reason);
+    return;
+  }
+  const hint = [detail, `已自动重试 ${done} 次,仍然没成。`].filter(Boolean).join("\n");
+  parkWithItems(db, userId, jobId, [manualItem("error", label, hint)], reason);
+}
+
 // host -> the login item to reuse, for every open (unresolved) login wall on one of this
 // account's paused rows (a login is the user's own; another account's wall says nothing).
 export function openLoginWalls(db: DB, userId: string): Map<string, InfoQuestion> {
@@ -479,17 +508,12 @@ export function reportFill(db: DB, userId: string, input: ReportFillInput): void
     return;
   }
 
-  // error: something broke (tools failing repeatedly, a crashed tab). The reason keeps its
-  // "error: " prefix for logs; the user gets a card — let the assistant try again / I'll finish
-  // it myself / give up — rather than a silent park.
+  // error: something broke (tools failing repeatedly, a crashed tab, LinkedIn not rendering the
+  // page). The App retries it on its own first (parkErrorForRetry); only an error that survives
+  // the automatic retries becomes a card — let the assistant try again / I'll finish it myself /
+  // give up. The reason keeps its "error: " prefix for logs.
   if (input.status === "error") {
-    parkWithItems(
-      db,
-      userId,
-      input.jobId,
-      [manualItem("error", "助手出错,没填成", input.reason?.trim() ? input.reason.trim() : undefined)],
-      `error: ${input.reason ?? ""}`
-    );
+    parkErrorForRetry(db, userId, input.jobId, "助手出错,没填成", input.reason?.trim() ? input.reason.trim() : "", `error: ${input.reason ?? ""}`);
     return;
   }
 
