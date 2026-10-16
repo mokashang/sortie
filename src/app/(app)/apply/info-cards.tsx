@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, ExternalLink, MessageSquare, RotateCcw, Trash, UserCheck } from "lucide-react";
 import { directionName, documentLabel, labelOf } from "@/app/lib/labels";
+import { relativeTime } from "@/app/lib/time";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
 import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Select, Textarea, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
@@ -33,6 +34,17 @@ export interface InfoRow {
   needsManualReason: string | null;
   questions: Question[];
   askedAt: string;
+  // An emailed verification code the App found in the user's mailbox for this card's code step
+  // (src/apply/email-code.ts) — shown for the user to type into the tab; never sent anywhere.
+  emailCode?: {
+    key: string;
+    code: string | null;
+    from: string | null;
+    subject: string | null;
+    receivedAt: string | null;
+    watching: boolean;
+    noMailbox: boolean;
+  };
 }
 
 interface DocumentRow {
@@ -64,6 +76,25 @@ function cardKind(row: InfoRow): "login" | "manual" | "form" {
 function continueText(j: Continued, m: Messages): string {
   if (j.status === "prepared") return m.apply.todo.continueForm;
   return j.autoStarted ? m.apply.todo.continueRequeued : m.apply.todo.continueBusy;
+}
+
+// The code (or what the watcher knows so far) above the 完成了 box of an emailed-code step.
+function EmailCode({ code }: { code: NonNullable<InfoRow["emailCode"]> }) {
+  const m = useMessages();
+  const lang = useLang();
+  const t = m.apply.todo.code;
+  if (code.code) {
+    return (
+      <div className="email-code mb-2">
+        <div className="muted xs">{t.label}</div>
+        <div className="email-code-value mono">{code.code}</div>
+        <div className="muted xs">{t.from(code.from ?? "?", relativeTime(code.receivedAt, lang))}</div>
+        <p className="small mt-1">{t.instructions}</p>
+      </div>
+    );
+  }
+  const line = code.subject ? t.unrecognized(code.subject) : code.noMailbox ? t.noMailbox : code.watching ? t.watching : t.notFound;
+  return <p className="muted small mb-2">{line}</p>;
 }
 
 async function uploadDocument(key: string, file: File): Promise<DocumentRow> {
@@ -455,8 +486,10 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
             );
 
             if (kind === "action") {
+              const ec = row.emailCode?.key === q.key ? row.emailCode : undefined;
               return (
                 <Field key={q.key} label={label} hint={q.hint}>
+                  {ec ? <EmailCode code={ec} /> : null}
                   <Checkbox label={m.apply.todo.field.actionDone} checked={d.value === "done"} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.checked ? "done" : "" })} />
                 </Field>
               );

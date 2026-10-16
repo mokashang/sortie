@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { dispatchAttended, attendedStatus } from "@/executor/attended";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
-import { reclaimStrandedPrepared } from "@/apply/followup";
+import { reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
+import { autoAnswerParkedText } from "@/apply/auto-answer";
+import { pollEmailCodes } from "@/apply/email-code";
 import { ownerId } from "@/lib/users";
 import { withInternal } from "@/lib/actor";
 
@@ -29,10 +31,19 @@ export const POST = withInternal(async () => {
     const reclaimed = owner ? reclaimStrandedPrepared(db, owner) : undefined;
     if (reclaimed && reclaimed.reclaimed.length > 0)
       console.log(`[attended] reclaimed ${reclaimed.reclaimed.length} stranded prepared row(s); requeued ${reclaimed.requeued.join(",") || "none"}`);
+    // Errors whose automatic-retry wait is over go back as a targeted run (src/apply/followup.ts).
+    const retried = owner ? retryDueErrors(db, owner) : undefined;
+    if (retried && retried.retried.length > 0) console.log(`[attended] auto-retrying ${retried.retried.join(",")} (run #${retried.followup?.runId ?? "?"})`);
+    // Parked cards left with only text questions (a login was resolved, an old card) get the
+    // App's own answers, and come back as work when nothing else is left (src/apply/auto-answer.ts).
+    if (owner) void autoAnswerParkedText(db, owner);
+    // An emailed verification code step: watch the mailbox for that company's code mail and show
+    // it on the card for the user to type (src/apply/email-code.ts).
+    if (owner) void pollEmailCodes(db, owner);
     const stranded = owner ? requeueStrandedApprovals(db, owner) : undefined;
     if (stranded?.autoStarted) console.log(`[attended] queued resume run #${stranded.runId}: approved applications nobody was acting on`);
     const r = dispatchAttended(db);
-    return NextResponse.json({ ok: true, ...r, stranded, reclaimed });
+    return NextResponse.json({ ok: true, ...r, stranded, reclaimed, retried });
   } catch (e) {
     const msg = String(e);
     const now = Date.now();

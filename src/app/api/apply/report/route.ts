@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/request-body";
 import { getDb } from "@/lib/db";
-import { reportFill, reportSubmitted, pausesImmediately, normalizeQuestions, ReportFillInput } from "@/apply/queue";
+import { reportFill, reportSubmitted, pausesImmediately, normalizeQuestions, infoKind, ReportFillInput } from "@/apply/queue";
 import { reportNoContact } from "@/apply/referral";
 import { resolveReferrals, afterReferralSubmitted } from "@/apply/referral-auto";
 import { needsInfoNotification } from "@/apply/info";
@@ -84,6 +84,13 @@ export const POST = withUser(async (req, { userId }) => {
           return NextResponse.json({ ok: true, autoAnswered, infoAnswers });
         }
         if (Object.keys(r.answered).length > 0) autoAnswered = "partial";
+        questions = r.remaining.length > 0 ? r.remaining : questions;
+      } else if (questions.some((q) => infoKind(q) === "text")) {
+        // A login / manual card the assistant hung a question on (would you move to Houston?):
+        // the App answers it now, so the card only says what the user really has to do and the
+        // answer is on the row when the job comes back after the login (2026-10-06: Gunvor and
+        // NISA sat on 「愿意搬去 …?」 after the user had logged in).
+        const r = await autoAnswerPending(db, userId, jobId, { backend: getBackend() });
         questions = r.remaining.length > 0 ? r.remaining : questions;
       }
       const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;

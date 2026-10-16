@@ -632,6 +632,22 @@ td.company {
   overflow-wrap: anywhere;
 }
 
+/* An emailed verification code the App found, for the user to type into the tab. */
+.email-code {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.email-code-value {
+  font-size: 26px;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  user-select: all;
+  margin: 2px 0;
+}
+
 .todo-jobs {
   list-style: none;
   margin: 0;

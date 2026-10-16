@@ -140,8 +140,9 @@ Whenever the assistant has to stop for the user it leaves a card with a clear ac
 the card automatically continues the work — there is no dead end:
 - **Needs info** — a form question with no known answer (or a decision only the user can make):
   answer it on the card; answers are remembered as standard answers. "Skip this job" archives it.
-- **Upload a file** — the form wants a transcript / portfolio / cover letter: upload once, it is
-  kept under Profile → Files for every later form.
+- **Upload a file** — the form wants a record only the user holds (a transcript, a certificate):
+  upload once, it is kept under Profile → Files for every later form. A portfolio, work sample or
+  cover letter is not a card: the assistant writes it from the user's real experience.
 - **Sign in once** — a login wall or a "create candidate account" step: the assistant first looks
   for a guest route or the same posting on an account-free board; it never types passwords, clicks
   Chrome's suggested password or creates accounts. The user signs in once in the job-search Chrome
@@ -149,14 +150,23 @@ the card automatically continues the work — there is no dead end:
   waiting, a bar on top has "Open all sign-in pages" (opens every sign-in page as tabs of the
   job-search Chrome on the always-on machine) and "All signed in" (releases them all at once).
 - **Do it here** — a captcha or 2-step verification in the tab the assistant left open: do it,
-  press Done, the assistant continues.
+  press Done, the assistant continues. For a code the site emailed, the app watches the connected
+  inbox (Settings → Inbox sync) for that company's mail and shows the code on the card, with a
+  push notification (the code itself is never in the notification). The user types it into the
+  tab; the assistant never reads mail or fills in codes, even when asked — a code is a sign-in
+  credential, like a password.
 - **Finish yourself** — something only the user can do: it needs them in person (their own
   video or voice, a live interview, a webcam-proctored test, ID verification), the assessment
   explicitly forbids AI help, or the form never renders in the browser. "I applied myself"
   records it, or skip. Take-home tasks, coding exercises, reports and writing samples are NOT
   cards: the assistant does them from the user's real experience and they show up on the To
   confirm card for review.
-- **Assistant error** — a tool failure: "Let the assistant try again".
+- **Assistant error** — a tool failure or a page that would not render. The app retries an error
+  by itself (after an hour, then after six more hours) without showing a card; only a third
+  failure becomes a card ("Let the assistant try again").
+- A doubt about fit (more years asked than the user has, a new city, a soft "ideally no visa
+  needed") is never a card: the assistant applies. A question it attached to a sign-in card
+  (e.g. "would you move to Houston?") is answered by the app from the profile.
 - A rejected fill also becomes a card (the note goes to the next attempt).
 Cards from a waiting assistant time out after 30 minutes; the card stays and re-queues once
 answered.

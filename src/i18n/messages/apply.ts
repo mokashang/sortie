@@ -124,6 +124,16 @@ export const apply = defineMessages({
         answerPlaceholder: "你的答案",
         onlyOnce: "仅本次",
       },
+      // An emailed verification code the App found in the user's mailbox (src/apply/email-code.ts).
+      code: {
+        label: "这家公司发来的验证码",
+        instructions: "在求职 Chrome 里那个标签页输入它,再勾「完成了」;助手不会替你填验证码。",
+        from: (sender: string, when: string) => `来自 ${sender} · ${when}`,
+        unrecognized: (subject: string) => `邮件到了(${subject}),但没认出里面的验证码,去邮箱里看一下。`,
+        watching: "正在你的邮箱里等这家公司的验证码邮件…",
+        notFound: "半小时内没在邮箱里找到这家公司的验证码邮件。码要是过期了,点「让助手重新来」重新发一封。",
+        noMailbox: "在设置 → 邮箱同步连上收验证码的邮箱,验证码会直接显示在这里。",
+      },
     },
     confirm: {
       sectionTitle: "待确认",
@@ -388,6 +398,15 @@ export const apply = defineMessages({
         choose: "Choose…",
         answerPlaceholder: "Your answer",
         onlyOnce: "This time only",
+      },
+      code: {
+        label: "The code this company emailed you",
+        instructions: "Type it into that tab in the job-search Chrome, then tick Done. The assistant never fills in verification codes for you.",
+        from: (sender: string, when: string) => `From ${sender} · ${when}`,
+        unrecognized: (subject: string) => `The email is here ("${subject}") but no code could be read from it — check your inbox.`,
+        watching: "Watching your inbox for this company's code…",
+        notFound: "No code from this company turned up in your inbox within half an hour. If it has expired, press Have the assistant start over to get a new one.",
+        noMailbox: "Connect the inbox that receives the code under Settings → Inbox sync and the code will show up here.",
       },
     },
     confirm: {

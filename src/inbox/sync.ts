@@ -88,7 +88,8 @@ export function resetInboxCachesForTests(): void {
   g.__sortieInboxBusy = new Set();
 }
 
-async function accessTokenFor(account: MailAccountRow, deps: SyncDeps): Promise<string> {
+// Also used by the verification-code watcher (src/apply/email-code.ts), so both share one token.
+export async function accessTokenFor(account: MailAccountRow, deps: Pick<SyncDeps, "fetcher" | "now">): Promise<string> {
   const now = deps.now ? deps.now() : Date.now();
   const cached = tokenCache().get(account.id);
   if (cached && cached.expiresAt > now) return cached.token;

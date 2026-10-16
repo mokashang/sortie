@@ -179,6 +179,20 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    resolve (rare), `a.setAttribute('target','_self')` does stick — set it, then click the link
    with `computer`/`find` so it opens in place. Easy Apply postings (no external link) are filled
    on LinkedIn itself. Only if neither route works is it a `manual` card.
+   The same goes for **any** Apply link or button that would open a new tab or window, on any
+   site (IBM's Avature hop, Manatal `careers-page.com`, SuccessFactors "Apply now"): read its
+   `href` (or a `data-*` / `onclick` URL) and `navigate` your own tab there; failing that, search
+   the company's careers site for the same requisition and open that.
+
+   **A job description that won't render is not a reason to stop** (2026-10-06: eight LinkedIn
+   postings went to cards in one night because LinkedIn showed grey placeholders for a few hours
+   and the session "would not apply blind"). The App already screened this job against the
+   description it stored at scan time (all eight had one) before handing it to you. The
+   live-page check only looks for an explicit no-sponsorship / citizens-only / PhD-only line; if
+   the description isn't there to read, skip that check and fill the application. Only when the application itself can't be reached (no Apply / Easy Apply control
+   renders, the page is a skeleton after a reload) report `status: "error"` with what you saw —
+   the App retries it by itself an hour later and again six hours after that, so don't keep
+   reloading LinkedIn; move on to the next task.
 
 3. **Detect the ATS and fill (tiered strategy).** See §3 below for the full procedure.
 
@@ -214,9 +228,11 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
      and mutes the board when `boardGone`. Never a card, never an error. Close the tab, next task.
    - "You have already applied" page: `{ "jobId", "status": "already_applied", "reason" }` — the
      App records it in /history as submitted (date unknown). Close the tab, next task.
-   - Something broke unexpectedly (page crashed, a tool errored repeatedly, the App itself returned
-     an unexpected error): report `{ "jobId": task.jobId, "status": "error", "reason": "..." }`
-     instead, close the tab, and count it toward the error circuit breaker in §7. Don't use
+   - Something broke unexpectedly (page crashed, a tool errored repeatedly, the site would not
+     render, the App itself returned an unexpected error): report
+     `{ "jobId": task.jobId, "status": "error", "reason": "..." }` instead, close the tab, and
+     count it toward the error circuit breaker in §7. The App retries an error by itself (after
+     an hour, then after six more); only a third failure becomes a card. Don't use
      `error` for things that are really just "this application needs a human" (see §5) — that
      miscounts against the wrong breaker and stops the session early for no good reason.
 
@@ -444,7 +460,7 @@ Never power through any of these. Fill everything you safely can first, then rep
 | Situation | Item | Then |
 | --- | --- | --- |
 | A required question asking for a personal fact the answer pack truly lacks (high school, GPA, an ID number). Preference / willingness / start-date / "have you used X" questions are NOT this: answer them yourself from `answerPack.custom` and `answerPack.experiences` (the user wants a card only when you are really stuck; the App also re-answers any text item from the profile before a card appears) | `text` (default): `{ key: <standard_answers key>, label, hint?, options?: [exact option texts], multiple?: true, optional?: true }` | keep the tab open, poll |
-| A required attachment (transcript, portfolio, headshot) not in `answerPack.documents` | `file`: `{ kind: "file", key: "transcript", label, accept: ".pdf" }` — the answer you get back is an absolute path for `file_upload` | keep the tab open, poll |
+| A required attachment that is a record only the user holds (transcript, headshot, a certificate) and is not in `answerPack.documents` — check every key, not just the one you'd pick: `transcript`, `transcript_graduate` and `transcript_undergrad` are all transcripts. A portfolio / work sample / cover letter is not this: you make it (below) | `file`: `{ kind: "file", key: "transcript", label, accept: ".pdf" }` — the answer you get back is an absolute path for `file_upload` | keep the tab open, poll |
 | A CAPTCHA / bot check / 2FA prompt the user can clear in the open tab | `action`: `{ kind: "action", key: "captcha", label, hint }` | keep the tab open, poll |
 | A login wall or "create a candidate account" (Workday, SuccessFactors, iCIMS, Apple Jobs...) with no guest route or account-free board for the same posting (§3 Tier B/C step 4) — you never type passwords or create accounts | `login`: `{ kind: "login", host: <hostname of task.applyUrl — for a LinkedIn posting, the company site's hostname>, url: <sign-in / registration page>, label: "在求职 Chrome 里登录 …", hint }` | close the tab, next task (the App pauses every job on that host; 「我登好了」 / 「全部登好了」 re-queues them) |
 | Truly only the user can do it — and only these three: (1) it needs the user in person: recording their own video or voice, a live interview, a proctored test with webcam / screen monitoring, ID or face verification; (2) an assessment whose page explicitly forbids AI or outside help (doing it for them would be cheating and can get them blacklisted); (3) a form that never renders in this browser | `manual`: `{ kind: "manual", key, label, hint, url? }` | close the tab, next task |
@@ -460,6 +476,18 @@ user skipped it or handed it back — close the tab, next task. Log a heartbeat 
 5 minutes while waiting. After 30 minutes with no answer report
 `{ "status": "needs_manual", "reason": "info request timed out after 30 minutes" }` (the items stay
 on the card; the App re-queues the job when the user answers) and move on.
+
+**A doubt about fit is never a stop and never a question** (2026-10-06, the user: "值不值得投这种
+当然值得,这又不是硬性卡住的"). More years asked than the user has (short of the standing 5+-year
+rule), a city the standing answers don't cover, a hardware-leaning, consulting or rotational
+role, a staffing firm, an unusual start date, "ideal candidates have unrestricted work
+authorization" (soft wording, not a stated bar): if no live-page disqualifier above and no
+standing answer rules the job out, it is worth applying — apply. Location / relocation /
+start-date questions on the form are yours to answer (relocation within the US: yes, unless
+`answerPack.custom` says no for that place). And when something else does stop you — a login
+wall most often — the card says only what the user has to do: no "is it worth it?" pitch, no
+ranking against other cards, no "skip without guilt", and never a preference question hung on a
+`login` / `manual` card.
 
 Not items at all (the App handles these without a card): a job the user's own standing answers
 rule out (`answerPack.custom` says Summer 2027 internships are skipped, senior 5+-year roles are
@@ -480,7 +508,19 @@ prose only from `answerPack.experiences` and the profile facts (never invent exp
 results); when a file is due, generate it under `data/generated/<jobId>/` (PDF, Markdown,
 a zip of code) and `file_upload` it. Timed ones too — log a line before you start. Put the
 work (or the file path plus a summary) in `filledFields` and report `awaiting_confirm` as
-usual; submitting still waits for the App's approval. Only the three cases in the `manual`
+usual; submitting still waits for the App's approval.
+
+The same holds for a **portfolio / work sample / project summary** the form requires
+(2026-10-06, Reflect Orbital): when `answerPack.documents.portfolio` is missing, build a 1–2
+page PDF from `answerPack.experiences` — each project's name, what was built and with what,
+the outcome as the bullets state it, and only links the profile already has (GitHub,
+LinkedIn) — never a screenshot, metric or link that isn't in the facts. Write it as HTML and
+print it with headless Chrome (verified on the Windows box 2026-10-06):
+```
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --disable-gpu --no-pdf-header-footer --user-data-dir=E:\sortie\data\generated\.chrome-pdf --print-to-pdf=E:\sortie\data\generated\<jobId>\portfolio.pdf file:///E:/sortie/data/generated/<jobId>/portfolio.html
+```
+(the separate `--user-data-dir` keeps it off the job-search Chrome profile). Upload it and name
+the file in `filledFields`. Only the three cases in the `manual`
 row above are a card; a login wall, a captcha, a personal fact the profile lacks or a file
 found nowhere are their own items. Everything else: do it.
 

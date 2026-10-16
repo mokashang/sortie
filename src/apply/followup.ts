@@ -1,6 +1,6 @@
 import { DB, logEvent } from "@/lib/db";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
-import { manualItem, parkWithItems } from "@/apply/queue";
+import { parkErrorForRetry, AUTO_RETRY_PREFIX, AUTO_RETRY_DELAYS_MIN, AUTO_RETRY_EVENT, autoRetriesDone } from "@/apply/queue";
 import { isJobSessionReachable } from "@/executor/attended";
 
 // What a resolved 待处理 card turns into (2026-09-17). The user answered / uploaded / logged in /
@@ -140,7 +140,8 @@ export interface ReclaimResult {
 // (takeNextApplication reclaims them after 30 minutes, but only when something asks it for a
 // job). Run from the dispatcher tick and at every run's end: back to 'matched', and the ones
 // carrying the user's answers become a targeted run — once. If the run that dropped them was
-// already targeted at them, they become a card instead (让助手再试一次), so no loop.
+// already targeted at them, they are parked as an error (parkErrorForRetry): a bounded number of
+// automatic retries, then a card (让助手再试一次), so no loop.
 //
 // "Nobody working on it": when no reachable attended session holds the row's tab, a row whose run
 // is over (or that never had one and is 30 minutes old). While the session holding it is alive
@@ -187,11 +188,12 @@ export function reclaimStrandedPrepared(db: DB, userId: string, deps: FollowupDe
           targetedAtIt = false;
         }
         if (targetedAtIt) {
-          parkWithItems(
+          parkErrorForRetry(
             db,
             userId,
             r.job_id,
-            [manualItem("error", "助手没填完这份申请", `任务 #${r.run_id} 拿到了这个岗但没有回报结果。`)],
+            "助手没填完这份申请",
+            `任务 #${r.run_id} 拿到了这个岗但没有回报结果。`,
             `error: run #${r.run_id} took the job and never reported`
           );
           result.parked.push(r.job_id);
@@ -207,6 +209,52 @@ export function reclaimStrandedPrepared(db: DB, userId: string, deps: FollowupDe
     }
   } catch (e) {
     console.error("[apply followup] reclaim failed", e);
+  }
+  return result;
+}
+
+export interface RetryResult {
+  retried: number[];
+  followup: FollowupResult | null;
+}
+
+// Errors parked for an automatic retry (parkErrorForRetry in src/apply/queue.ts) whose wait is
+// over go back as one targeted run, from the dispatcher tick. The wait after the n-th failure is
+// AUTO_RETRY_DELAYS_MIN[n] minutes, counted from the row's last change (the failure itself); the
+// row is cleared like 「让助手再试一次」 does (answers and the user's note stay), so a fresh take
+// starts clean. A failure after the last retry is a card, never another silent round.
+export function retryDueErrors(db: DB, userId: string, deps: FollowupDeps & { now?: () => Date } = {}): RetryResult {
+  const result: RetryResult = { retried: [], followup: null };
+  try {
+    // updated_at is SQLite UTC text ('YYYY-MM-DD HH:MM:SS'); compare in the same clock.
+    const now = (deps.now ?? (() => new Date()))().toISOString().replace("T", " ").slice(0, 19);
+    const rows = db
+      .prepare(
+        `SELECT job_id, needs_manual_reason AS reason, (julianday(?) - julianday(updated_at)) * 1440 AS waited_min
+         FROM applications WHERE user_id = ? AND status = 'matched' AND needs_manual_reason LIKE ?`
+      )
+      .all(now, userId, AUTO_RETRY_PREFIX + "%") as { job_id: number; reason: string; waited_min: number }[];
+    const due: number[] = [];
+    for (const r of rows) {
+      const done = autoRetriesDone(db, userId, r.job_id);
+      const delay = AUTO_RETRY_DELAYS_MIN[Math.min(done, AUTO_RETRY_DELAYS_MIN.length - 1)];
+      if (r.waited_min < delay) continue;
+      db.prepare(
+        "UPDATE applications SET needs_manual_reason = NULL, pending_questions = NULL WHERE user_id = ? AND job_id = ? AND status = 'matched' AND needs_manual_reason LIKE ?"
+      ).run(userId, r.job_id, AUTO_RETRY_PREFIX + "%");
+      logEvent(db, AUTO_RETRY_EVENT, {
+        userId,
+        entity: "application",
+        entityId: r.job_id,
+        payload: { attempt: done + 1, reason: r.reason.slice(AUTO_RETRY_PREFIX.length, AUTO_RETRY_PREFIX.length + 300) },
+      });
+      due.push(r.job_id);
+    }
+    if (due.length === 0) return result;
+    result.retried = due;
+    result.followup = queueTargetedRun(db, userId, due, "direct", deps);
+  } catch (e) {
+    console.error("[apply followup] auto-retry failed", e);
   }
   return result;
 }

@@ -355,7 +355,7 @@ describe("reportFill", () => {
     expect(row.needs_manual_reason).toBe("registration wall");
   });
 
-  it("error prefixes the reason with 'error: ' and parks status back to matched", () => {
+  it("error prefixes the reason with 'error: ' and parks status back to matched, waiting on an automatic retry", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
@@ -363,7 +363,7 @@ describe("reportFill", () => {
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("matched");
-    expect(row.needs_manual_reason).toBe("error: upload timed out");
+    expect(row.needs_manual_reason).toBe("retry: error: upload timed out");
   });
 
   it("needs_manual with failing eligibility archives the job and its cluster instead of parking it", () => {
