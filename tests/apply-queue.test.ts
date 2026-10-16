@@ -13,6 +13,7 @@ import {
   getApplyTask,
   unpark,
   queueByDirection,
+  queueMatchedCount,
   ApplyTask,
 } from "@/apply/queue";
 
@@ -763,6 +764,19 @@ describe("queueByDirection", () => {
 
     expect(groups).toEqual([{ direction: "quant", tier: 1, matched: 1, referralSuggested: 0, directSuggested: 1, top: expect.any(Array) }]);
     expect(groups[0].matched).toBe(1);
+  });
+
+  it("queueMatchedCount is the sum of every group's matched count", () => {
+    const db = openDb(":memory:");
+    expect(queueMatchedCount(db, U)).toBe(0);
+    seedJob(db, { company: "QuantCo", direction: "quant", tier: 2, score: 80 });
+    seedJob(db, { company: "AiCo1", direction: "ai_infra", tier: 1, score: 90 });
+    const parked = seedJob(db, { company: "ParkedCo", direction: "quant", tier: 1, score: 50 });
+    db.prepare("UPDATE applications SET needs_manual_reason = 'x' WHERE job_id = ?").run(parked);
+    seedJob(db, { company: "NonUsCo", direction: "quant", tier: 1, score: 60, locFlag: "non_us" });
+
+    expect(queueMatchedCount(db, U)).toBe(queueByDirection(db, U).reduce((n, g) => n + g.matched, 0));
+    expect(queueMatchedCount(db, U)).toBe(2);
   });
 
   it("includes up to the top 3 rows (score desc) per direction with score/company/title", () => {
