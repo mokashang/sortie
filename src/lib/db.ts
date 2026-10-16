@@ -110,6 +110,13 @@ export function openDb(file?: string): DB {
   const db = new Database(dbFile);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+  // Read through the OS file cache instead of SQLite's 2 MB page cache. The columns every
+  // eligibility filter reads (duplicate_of, sponsorship, role_kind, …) were added after jd_text,
+  // so reading them walks each row's JD overflow pages; at 178k jobs (800 MB, 2026-10-15) the
+  // per-minute backlog check, consolidate and the 5-second overview each took 0.7–5 s with the
+  // event loop blocked, and stacked up into 30 s page loads and 502s. Mapped: about 5× faster.
+  // SQLite clamps this to its compile-time ceiling (~2 GB); beyond that it reads normally.
+  if (dbFile !== ":memory:") db.pragma("mmap_size = 2147483648");
 
   // Migration hook: read the schema version actually on disk before touching it, so future
   // plans can branch on `found` to run incremental migrations instead of blindly overwriting.

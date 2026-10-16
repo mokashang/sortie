@@ -879,16 +879,18 @@ interface TopRawRow {
 // (status='matched', not parked, not loc-flagged) so the "队列中" count shown to the user matches
 // what the picker can actually offer. NULL direction (unmatched/unscored jobs that somehow
 // reached 'matched') is bucketed as "未分类" and always sorts last.
+const QUEUE_SUMMARY_FROM = `FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+       WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}`;
+
 export function queueByDirection(db: DB, userId: string): DirectionQueueGroup[] {
   const groups = db
     .prepare(
       `SELECT m.direction as direction, MIN(m.tier) as tier, COUNT(*) as matched,
               SUM(CASE WHEN ${EFFECTIVE_MODE_SQL} = 'referral' THEN 1 ELSE 0 END) as referral_suggested,
               SUM(CASE WHEN ${EFFECTIVE_MODE_SQL} = 'direct' THEN 1 ELSE 0 END) as direct_suggested
-       FROM applications a
-       JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
-       WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
+       ${QUEUE_SUMMARY_FROM}
        GROUP BY m.direction
        ORDER BY COALESCE(m.tier, 9) ASC, COUNT(*) DESC`
     )
@@ -899,10 +901,7 @@ export function queueByDirection(db: DB, userId: string): DirectionQueueGroup[] 
   const topRows = db
     .prepare(
       `SELECT m.direction as direction, m.score as score, j.company as company, j.title as title
-       FROM applications a
-       JOIN jobs j ON j.id = a.job_id
-       JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
-       WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
+       ${QUEUE_SUMMARY_FROM}
        ORDER BY m.score DESC, j.created_at DESC`
     )
     .all(userId) as TopRawRow[];
@@ -934,6 +933,12 @@ export function queueByDirection(db: DB, userId: string): DirectionQueueGroup[] 
     directSuggested: g.direct_suggested,
     top: topByDirection.get(g.direction) ?? [],
   }));
+}
+
+// The total of queueByDirection's `matched` column in one count — the overview polls this every
+// 5 s, and the per-direction top rows it doesn't show cost as much as the count itself.
+export function queueMatchedCount(db: DB, userId: string): number {
+  return (db.prepare(`SELECT COUNT(*) n ${QUEUE_SUMMARY_FROM}`).get(userId) as { n: number }).n;
 }
 
 // User -> App from the interactive /queue page's row-level "跳过/归档" action. Only valid from

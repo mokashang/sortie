@@ -2,7 +2,7 @@ import type { DB } from "@/lib/db";
 import { executorStatus } from "@/executor/runner";
 import { pendingInfo } from "@/apply/info";
 import { referralBoard } from "@/apply/referral";
-import { queueByDirection } from "@/apply/queue";
+import { queueMatchedCount } from "@/apply/queue";
 import { todaySubmitted } from "@/apply/history";
 import { weekly } from "@/network/stats";
 import { JOB_LINKED_SQL } from "@/network/crm";
@@ -60,7 +60,7 @@ export function overview(db: DB, userId: string): Overview {
       `SELECT COUNT(*) n FROM outreach o WHERE o.user_id = ? AND o.status = 'pending_send' AND NOT ${JOB_LINKED_SQL}`,
       userId
     ),
-    queueMatched: queueByDirection(db, userId).reduce((n, g) => n + g.matched, 0),
+    queueMatched: queueMatchedCount(db, userId),
     submittedToday: todaySubmitted(db, userId).length,
     submittedThisWeek: weekly(db, userId).thisWeek.submittedApplications,
   };
