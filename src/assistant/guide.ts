@@ -183,9 +183,17 @@ and 200 characters per note; 2nd/3rd-degree "Message" is a paid InMail wall the 
 uses. Jobs then sit under **Referrals in progress** per company with each contact's stage
 (pending / accepted / replied / asked for resume / will refer / referred / declined / no
 headcount); a "check replies" task runs at 9:00, 13:00 and 18:00 (or from the card) and reads the
-conversations. The user decides: "Got a referral" (then the application is filled with the
-referral link / code), "Apply directly", or "Cast again" (different people). If nobody at the
-company can be contacted, the card says so and the job goes back to direct.
+conversations. **The app settles each company by itself** (2026-10-15): as soon as someone says
+they will refer (or did), it marks "Got a referral" and queues the applications with that person
+in the referral fields (their email / referral link / code when they gave one); when everyone
+contacted is out — declined, no headcount, two follow-ups unanswered, or the connection invite
+still not accepted after 14 days — or nobody could be found, it applies directly; and after 30
+days with nothing settled it applies directly anyway. The card says when that will happen ("applies
+directly in N days if nothing changes"), and a phone notification says what it did. Applying
+directly doesn't end the conversation: if someone writes later, the assistant still answers. Once
+an application with a referral is submitted, the referrer gets one short "it's in, thank you"
+message. The buttons ("Got a referral", "Apply directly", "Cast again" — different people) are
+still there to decide earlier.
 
 **The conversation keeps going until it lands** (follow-ups). Every time a check reads a thread,
 the app decides whether the user owes the next message and drafts it: when someone accepts a

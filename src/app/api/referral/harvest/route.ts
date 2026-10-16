@@ -7,6 +7,7 @@ import { serverLang } from "@/lib/prefs";
 import { notify } from "@/lib/notify";
 import { harvestOutreach, HarvestMessage } from "@/network/harvest";
 import { followUpAfterHarvest, followupNotification, AfterHarvestResult } from "@/network/followup";
+import { resolveReferrals } from "@/apply/referral-auto";
 import { leaseSendables, FOLLOWUP_LEASE_KEY } from "@/network/send-lease";
 import { sessionOfCaller } from "@/executor/sessions";
 import { isSessionReachable } from "@/executor/attended";
@@ -51,6 +52,13 @@ export const POST = withUser(async (req, actor) => {
     } catch (e) {
       // An incomplete profile or a drafting hiccup never fails the harvest itself.
       console.warn("[referral harvest] follow-up step failed:", e);
+    }
+    // What they said may settle the company: a yes → apply with the referral, everyone out →
+    // apply directly (src/apply/referral-auto.ts). Never fails the harvest.
+    try {
+      resolveReferrals(db, userId);
+    } catch (e) {
+      console.warn("[referral harvest] auto-resolve failed:", e);
     }
     let followup = after?.followup ?? null;
     let heldElsewhere = false;

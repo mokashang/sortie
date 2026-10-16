@@ -3,6 +3,7 @@ import { readJsonBody } from "@/lib/request-body";
 import { getDb } from "@/lib/db";
 import { reportFill, reportSubmitted, pausesImmediately, normalizeQuestions, ReportFillInput } from "@/apply/queue";
 import { reportNoContact } from "@/apply/referral";
+import { resolveReferrals, afterReferralSubmitted } from "@/apply/referral-auto";
 import { needsInfoNotification } from "@/apply/info";
 import { getAutoSubmit, autoApproveIfEnabled } from "@/apply/auto-submit";
 import { autoAnswerPending } from "@/apply/auto-answer";
@@ -27,16 +28,19 @@ export const POST = withUser(async (req, { userId }) => {
   try {
     const db = getDb();
     const lang = langFromRequest(req);
-    // Referral mode: nobody reachable at this company — jobs stay referral_seeking with the
-    // reason shown on the board for the user to decide (直接投 / 微信找 / 放弃).
+    // Referral mode: nobody reachable at this company — the reason goes on the board card and
+    // the App applies directly (src/apply/referral-auto.ts).
     if (body.status === "referral_no_contact") {
       const ids = (Array.isArray(body.jobIds) ? body.jobIds : [body.jobId]).map(Number);
       reportNoContact(db, userId, ids, String(body.reason ?? ""));
-      return NextResponse.json({ ok: true });
+      const resolved = resolveReferrals(db, userId);
+      return NextResponse.json({ ok: true, resolved });
     }
     if (body.status === "submitted") {
       const jobId = Number(body.jobId);
       reportSubmitted(db, userId, jobId);
+      // Went in with a referral: the referrer hears about it from the next conversation check.
+      afterReferralSubmitted(db, userId, jobId);
       // The user never saw this one go by: tell them it went out.
       if (getAutoSubmit(db, userId)) {
         const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;

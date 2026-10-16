@@ -3,12 +3,14 @@ import { DB, logEvent } from "@/lib/db";
 import { LlmBackend, LlmRequest } from "@/llm/types";
 import { extractJson } from "@/llm/extract";
 import { ThreadEntry, JOB_LINKED_SQL, messageKey } from "@/network/crm";
+import { announcePending } from "@/network/followup";
 
 // Referral-conversation monitor. The attended session reads LinkedIn (read-only: invite state +
 // the message thread) and reports what it saw here; the App merges new messages into thread_log,
 // moves status (sent → accepted → replied), and asks Claude where the conversation stands so the
 // /apply card can show a stage badge, a one-line summary and the next thing the user should do.
-// The user still confirms 「有内推了」 themself. What to say next is followup.ts's job: the harvest
+// The stage drives src/apply/referral-auto.ts (will_refer / referred → 有内推了 and apply; everyone
+// out → apply directly), 2026-10-15. What to say next is followup.ts's job: the harvest
 // route hands every merged thread to followUpAfterHarvest, which drafts the next message.
 
 export const REFERRAL_STAGES = [
@@ -82,7 +84,7 @@ export function buildStagePrompt(
   const prompt =
     `Employee: ${person.name}${person.relation ? ` (${person.relation})` : ""}${person.company ? ` at ${person.company}` : ""}\n\n` +
     `Conversation, oldest first:\n${lines}\n\n` +
-    'Reply as {"stage": "<stage>", "summary": "<one sentence, Chinese, what they said / where it stands>", "action": "<one short sentence, Chinese, what the candidate should do next, or null>", "link": "<referral URL or code the employee sent, or null>"}.';
+    'Reply as {"stage": "<stage>", "summary": "<one sentence, Chinese, what they said / where it stands>", "action": "<one short sentence, Chinese, what the candidate should do next, or null>", "link": "<the referral URL or referral code the employee sent, or the email address they asked the candidate to list as referrer, copied exactly, or null>"}.';
   return { system, prompt, tier: "fast", maxTokens: 400 };
 }
 
@@ -221,7 +223,8 @@ export function referralChecklist(db: DB, userId: string, now: () => number = ()
     const lastEntryAt = thread.length ? thread[thread.length - 1].at : null;
     if (r.status === "referral_won" && !r.followup_status) {
       const last = lastEntryAt ? Date.parse(lastEntryAt) : NaN;
-      if (!(now() - last < WON_WATCH_DAYS * 86_400_000)) return [];
+      // …and while the referrer is still owed the news that the application went in.
+      if (!(now() - last < WON_WATCH_DAYS * 86_400_000) && !announcePending(db, userId, r.id)) return [];
     }
     return [
       {

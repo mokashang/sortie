@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { getJson, postJson, putJson, errorMessage } from "@/app/lib/api";
 import { directionName, labelOf } from "@/app/lib/labels";
-import { cx } from "@/app/lib/cx";
 import { Button, Card, Chip, ConfirmDialog, EmptyState, SkeletonCard, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
 import { useLang, useMessages } from "@/i18n/client";
@@ -18,7 +17,7 @@ interface CardJob {
   score: number | null;
   status: string;
   noContactReason: string | null;
-  referralInfo: { source: string; link?: string; code?: string; note?: string; at: string } | null;
+  referralInfo: { source: string; link?: string; code?: string; email?: string; note?: string; at: string } | null;
   referralPersonName: string | null;
 }
 
@@ -28,8 +27,11 @@ interface ReferralCardData {
   outreaches: CardOutreach[];
   daysWaiting: number | null;
   overdue: boolean;
+  autoDirectAt: string | null;
   conversationOnly?: boolean;
 }
+
+const daysUntil = (at: string | null): number | null => (at ? Math.ceil((Date.parse(at) - Date.now()) / 86_400_000) : null);
 
 type Action = "direct" | "won" | "retry" | "archive";
 
@@ -241,7 +243,7 @@ export function ReferralBoard({ onlyAttention = false }: { onlyAttention?: boole
               {c.conversationOnly ? (
                 <span className="muted small">{m.apply.referrals.conversationOnly}</span>
               ) : c.daysWaiting != null ? (
-                <span className={cx("small", c.overdue ? "text-danger strong" : "muted")}>{m.apply.referrals.waiting(c.daysWaiting, c.overdue)}</span>
+                <span className="small muted">{m.apply.referrals.waiting(c.daysWaiting, daysUntil(c.autoDirectAt))}</span>
               ) : null}
             </div>
             {noContact && c.outreaches.length === 0 ? <p className="muted small mt-2">{noContact.replace(/^no contact found: /, "")}</p> : null}

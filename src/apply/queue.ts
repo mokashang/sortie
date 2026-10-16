@@ -62,12 +62,13 @@ interface CandidateRow {
 export function parseReferral(json: string | null, personName: string | null): AnswerPackReferral | undefined {
   if (!json) return undefined;
   try {
-    const o = JSON.parse(json) as { source?: string; link?: string; code?: string; note?: string };
+    const o = JSON.parse(json) as { source?: string; link?: string; code?: string; email?: string; note?: string };
     return {
       source: o.source ?? "other",
       person_name: personName ?? "",
       link: o.link ?? "",
       code: o.code ?? "",
+      email: o.email ?? "",
       note: o.note ?? "",
     };
   } catch {

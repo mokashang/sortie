@@ -6,12 +6,15 @@ import { EFFECTIVE_MODE_SQL } from "@/apply/mode";
 import { upsertPerson, PersonInput, Channel, outreachesForJobs, outreachJobIds } from "@/network/crm";
 import { generateDraft } from "@/network/draft";
 import { activeFollowup, archiveActiveFollowups, followupPlan, FollowupView, PlanNoneReason } from "@/network/followup";
+import { companyFacts, decideCompany } from "@/apply/referral-policy";
 
 // The referral half of the apply pipeline (spec §1.4, §4). A job the user (or Claude) tagged
 // as "worth a referral" leaves the queue through takeNextReferral → status 'referral_seeking';
 // the attended session finds a person and creates an outreach (createReferralOutreach); the user
 // approves it on /apply (existing gate.ts red line); once actually sent, markReached stamps the
-// jobs; the user then resolves each company card with referralDecide. The direct picker in
+// jobs; each company card is then resolved with referralDecide — by the App itself once the
+// conversations settle it (src/apply/referral-auto.ts, 2026-10-15), or by the user's buttons
+// before that. The direct picker in
 // queue.ts never sees referral_seeking/referral_ready rows, so the two modes can't collide.
 // Everything here is per account (userId): applications, matches, people and outreach are all
 // tenant rows (spec 2026-09-13 accounts §3).
@@ -137,8 +140,8 @@ export function takeNextReferral(
   }
 }
 
-// Session -> App: nobody reachable at this company. Stays referral_seeking (the user decides:
-// 直接投 / fill a WeChat referral / retry later); the reason surfaces on the board card.
+// Session -> App: nobody reachable at this company. The reason surfaces on the board card, and
+// the report route then has referral-auto.ts apply directly.
 export function reportNoContact(db: DB, userId: string, jobIds: number[], reason: string): void {
   const stmt = db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE user_id = ? AND job_id = ? AND status = 'referral_seeking'");
   db.transaction(() => {
@@ -185,6 +188,8 @@ export interface ReferralInfo {
   source: "linkedin" | "email" | "wechat" | "other";
   link?: string;
   code?: string;
+  // The address the referrer asked to be listed under (Salesforce's Rohith, 2026-10-07).
+  email?: string;
   note?: string;
   at: string;
 }
@@ -231,6 +236,9 @@ export interface ReferralCard {
   outreaches: ReferralCardOutreach[];
   daysWaiting: number | null;
   overdue: boolean;
+  // When the App applies directly if nothing changes (src/apply/referral-policy.ts); null when
+  // it can't say yet (a conversation is going) or the card isn't waiting.
+  autoDirectAt: string | null;
   // The jobs have left the referral pipeline (applied directly, given up, already applied with
   // the referral) but a message in one of these conversations still waits on the user or the
   // assistant — shown so it never waits where nobody can see it. No job-level buttons.
@@ -274,9 +282,9 @@ export function referralBoard(db: DB, userId: string, now: () => number = () => 
   const rows = db
     .prepare(
       `SELECT j.id as job_id, j.company, j.title, j.apply_url, m.direction, m.score, a.status, a.needs_manual_reason,
-              a.referral_info, a.referral_reached_at, p.name as referral_person_name
+              a.referral_info, a.referral_reached_at, p.name as referral_person_name, r.status AS run_status
        FROM applications a JOIN jobs j ON j.id = a.job_id LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
-       LEFT JOIN people p ON p.id = a.referral_person_id
+       LEFT JOIN people p ON p.id = a.referral_person_id LEFT JOIN executor_runs r ON r.id = a.run_id
        WHERE a.user_id = ? AND a.status IN ('referral_seeking','referral_ready')
        ORDER BY j.company COLLATE NOCASE, m.score DESC`
     )
@@ -286,6 +294,7 @@ export function referralBoard(db: DB, userId: string, now: () => number = () => 
     referral_info: string | null;
     referral_reached_at: string | null;
     referral_person_name: string | null;
+    run_status: string | null;
   })[];
 
   const byCompany = new Map<string, typeof rows>();
@@ -301,6 +310,17 @@ export function referralBoard(db: DB, userId: string, now: () => number = () => 
       .map((o) => toCardOutreach(db, userId, o, now()));
     const reached = group.map((r) => r.referral_reached_at).filter((x): x is string => !!x).sort()[0] ?? null;
     const daysWaiting = reached ? Math.floor((now() - Date.parse(reached.replace(" ", "T") + "Z")) / 86400_000) : null;
+    const seeking = group.filter((r) => r.status === "referral_seeking");
+    const decision = seeking.length
+      ? decideCompany(
+          companyFacts(
+            db,
+            userId,
+            seeking.map((r) => ({ jobId: r.job_id, reachedAt: r.referral_reached_at, noContactReason: r.needs_manual_reason, runStatus: r.run_status })),
+            now()
+          )
+        )
+      : null;
     cards.push({
       company: group[0].company,
       jobs: group.map((r) => ({
@@ -317,6 +337,7 @@ export function referralBoard(db: DB, userId: string, now: () => number = () => 
       outreaches,
       daysWaiting,
       overdue: daysWaiting != null && daysWaiting > OVERDUE_DAYS,
+      autoDirectAt: decision?.action === "wait" ? decision.directAt : null,
     });
   }
   // Conversations whose jobs left the board but which still owe a message (see conversationOnly).
@@ -362,7 +383,7 @@ export function referralBoard(db: DB, userId: string, now: () => number = () => 
       regular.outreaches.push(toCardOutreach(db, userId, o, now()));
       continue;
     }
-    const card = orphanByCompany.get(key) ?? { company, jobs: [], outreaches: [], daysWaiting: null, overdue: false, conversationOnly: true };
+    const card = orphanByCompany.get(key) ?? { company, jobs: [], outreaches: [], daysWaiting: null, overdue: false, autoDirectAt: null, conversationOnly: true };
     for (const { company: _c, ...j } of jobs) if (!card.jobs.some((x) => x.jobId === j.jobId)) card.jobs.push(j);
     card.outreaches.push(toCardOutreach(db, userId, o, now()));
     orphanByCompany.set(key, card);
@@ -386,6 +407,8 @@ export interface ReferralDecideInput {
   action: ReferralAction;
   info?: Omit<ReferralInfo, "at">;
   personName?: string;
+  // The referrer when already known (referral-auto.ts: the person who agreed).
+  personId?: number;
 }
 export interface ReferralDecideResult {
   jobIds: number[];
@@ -422,13 +445,18 @@ export function referralDecide(db: DB, userId: string, input: ReferralDecideInpu
         break;
       case "won": {
         if (!input.info) throw new Error("referralDecide: action 'won' requires info");
-        let personId: number | null = null;
-        if (input.personName?.trim()) {
+        let personId: number | null = input.personId ?? null;
+        if (personId == null && input.personName?.trim()) {
           personId = upsertPerson(db, userId, { name: input.personName.trim(), company: rows[0].company, relation: "other", source: "referral_won" });
-        } else {
-          for (const oid of outreachIds) {
-            personId = (db.prepare("SELECT person_id FROM outreach WHERE id = ?").get(oid) as { person_id: number }).person_id;
-          }
+        } else if (personId == null) {
+          // The person who said yes, if the classifier saw one; else the most recent contact.
+          const pick = db
+            .prepare(
+              `SELECT person_id FROM outreach WHERE user_id = ? AND id IN (${[...outreachIds].map(() => "?").join(",") || "NULL"})
+               ORDER BY (referral_stage IN ('referred','will_refer')) DESC, id DESC LIMIT 1`
+            )
+            .get(userId, ...outreachIds) as { person_id: number } | undefined;
+          personId = pick?.person_id ?? null;
         }
         const info: ReferralInfo = { ...input.info, at: new Date().toISOString() };
         for (const r of rows) {

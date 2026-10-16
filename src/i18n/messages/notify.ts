@@ -41,6 +41,18 @@ export const notify = defineMessages({
       approve: "助手起草好了下一条消息,打开投递页「内推进行中」看一眼、批准后助手发出。",
       question: (q: string) => `需要你来定:${q} — 打开投递页「内推进行中」回答,助手按你的回答起草回复。`,
       body: (summary: string | null, next: string) => [summary, next].filter(Boolean).join(" — "),
+      // src/apply/referral-auto.ts: the App settled a company's referral hunt on its own.
+      autoWon: {
+        title: (company: string) => `Sortie · ${company} 有内推了`,
+        body: (person: string, n: number) => `${person} 答应内推,助手已带上内推排队投这 ${n} 个岗;投完会告诉对方一声。`,
+      },
+      autoDirect: {
+        title: (company: string) => `Sortie · ${company} 改为直接投`,
+        body: (n: number, why: "all_out" | "no_contact" | "timeout") =>
+          `${
+            why === "all_out" ? "联系的人都没戏了(邀请 14 天没接受 / 婉拒 / 两次跟进没回)" : why === "no_contact" ? "找不到能联系的人" : "等内推已满 30 天"
+          },这 ${n} 个岗已排队直接投;之后谁回了话,助手照样回复。`,
+      },
     },
     // 邮箱同步 (spec 2026-09-21): a mail moved an application's stage, or carries a next step.
     inbox: {
@@ -95,6 +107,22 @@ export const notify = defineMessages({
       approve: "The assistant drafted the next message — approve it under Referrals in progress on the Apply page and it goes out.",
       question: (q: string) => `Your call: ${q} — answer it under Referrals in progress on the Apply page and the assistant drafts the reply from it.`,
       body: (summary: string | null, next: string) => [summary, next].filter(Boolean).join(" — "),
+      autoWon: {
+        title: (company: string) => `Sortie · referral at ${company}`,
+        body: (person: string, n: number) =>
+          `${person} agreed to refer you — the assistant has queued ${n === 1 ? "this job" : `these ${n} jobs`} with the referral, and will let them know once it's in.`,
+      },
+      autoDirect: {
+        title: (company: string) => `Sortie · applying directly at ${company}`,
+        body: (n: number, why: "all_out" | "no_contact" | "timeout") =>
+          `${
+            why === "all_out"
+              ? "Nobody you contacted came through (invite not accepted in 14 days / declined / two follow-ups unanswered)"
+              : why === "no_contact"
+              ? "No one could be found to contact"
+              : "Waited 30 days for a referral"
+          } — ${n === 1 ? "the job is" : `the ${n} jobs are`} queued to apply directly; if anyone writes later, the assistant still answers.`,
+      },
     },
     inbox: {
       changed: (company: string, stage: string) => `Sortie · ${company} → ${stage}`,

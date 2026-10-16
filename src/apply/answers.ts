@@ -36,6 +36,7 @@ export interface AnswerPackReferral {
   person_name: string;  // the referrer, as the user entered/selected it
   link: string;         // referral URL — when non-empty the executor opens THIS instead of job.apply_url
   code: string;         // referral code, if the ATS asks for one
+  email: string;        // the referrer's email, for "referrer / employee email" fields
   note: string;
 }
 

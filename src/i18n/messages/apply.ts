@@ -162,7 +162,9 @@ export const apply = defineMessages({
       peopleSummary: (n: number, summary: string) => `${n} 人 · ${summary}`,
       noContactChip: "找不到人",
       searchingChip: "助手找人中…",
-      waiting: (days: number, overdue: boolean) => `已等 ${days} 天${overdue ? " · 建议直接投" : ""}`,
+      // autoInDays: days until the App applies directly on its own if nothing changes (null = while a conversation decides it).
+      waiting: (days: number, autoInDays: number | null) =>
+        `已等 ${days} 天${autoInDays == null ? "" : autoInDays <= 0 ? " · 马上自动直接投" : ` · ${autoInDays} 天后没进展就自动直接投`}`,
       referralLine: (person: string, source: string, hasLink: boolean, code?: string) =>
         `内推:${person} · ${source}${hasLink ? " · 有链接" : ""}${code ? ` · 码 ${code}` : ""}`,
       approveAll: (n: number) => `全部批准(${n} 条)`,
@@ -222,7 +224,7 @@ export const apply = defineMessages({
       conversation: (n: number) => `对话 · ${n} 条`,
       you: "你",
       followup: {
-        kind: { intro: "接受邀请后的下一条", reply: "回复", nudge: "跟进提醒" },
+        kind: { intro: "接受邀请后的下一条", reply: "回复", nudge: "跟进提醒", applied: "告诉对方已投递" },
         status: { needs_user: "等你回答", draft: "等你批准", pending_send: "已批准 · 助手下次看对话时发出" },
         attachResume: "会附上简历",
         textLabel: "下一条消息",
@@ -426,7 +428,10 @@ export const apply = defineMessages({
       peopleSummary: (n: number, summary: string) => `${n === 1 ? "1 person" : `${n} people`} · ${summary}`,
       noContactChip: "No one to contact",
       searchingChip: "Assistant looking for people…",
-      waiting: (days: number, overdue: boolean) => `Waiting ${days === 1 ? "1 day" : `${days} days`}${overdue ? " · consider applying directly" : ""}`,
+      waiting: (days: number, autoInDays: number | null) =>
+        `Waiting ${days === 1 ? "1 day" : `${days} days`}${
+          autoInDays == null ? "" : autoInDays <= 0 ? " · applying directly now" : ` · applies directly in ${autoInDays === 1 ? "1 day" : `${autoInDays} days`} if nothing changes`
+        }`,
       referralLine: (person: string, source: string, hasLink: boolean, code?: string) =>
         `Referral: ${person} · ${source}${hasLink ? " · has link" : ""}${code ? ` · code ${code}` : ""}`,
       approveAll: (n: number) => `Approve all (${n})`,
@@ -485,7 +490,7 @@ export const apply = defineMessages({
       conversation: (n: number) => `Conversation · ${n} ${n === 1 ? "message" : "messages"}`,
       you: "You",
       followup: {
-        kind: { intro: "After they accepted", reply: "Reply", nudge: "Follow-up" },
+        kind: { intro: "After they accepted", reply: "Reply", nudge: "Follow-up", applied: "Telling them it's in" },
         status: { needs_user: "Needs your answer", draft: "Waiting for your approval", pending_send: "Approved · goes out at the assistant's next look" },
         attachResume: "Resume attached",
         textLabel: "Next message",

@@ -7,7 +7,7 @@ import { useMessages } from "@/i18n/client";
 
 export interface CardFollowup {
   id: number;
-  kind: "intro" | "reply" | "nudge";
+  kind: "intro" | "reply" | "nudge" | "applied";
   status: "needs_user" | "draft" | "pending_send";
   text: string | null;
   attachResume: boolean;

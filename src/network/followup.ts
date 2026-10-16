@@ -9,6 +9,7 @@ import { directionLabel } from "@/matcher/directions";
 import { selectResumeForJob } from "@/apply/resume-select";
 import { getAutoSubmit } from "@/apply/auto-submit";
 import { appendThread, messageKey, outreachJobIds, ThreadEntry } from "@/network/crm";
+import { checkLinks, extractUrls } from "@/network/links";
 import type { Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
 
@@ -21,7 +22,9 @@ import { messages } from "@/i18n/messages";
 //   reply — their message is the last one: answer it (résumé, email, job links, thanks, a
 //           gracious close on a no), one gentle step toward the referral;
 //   nudge — our message is the last one and it has been quiet for days: at most two short,
-//           no-guilt follow-ups, then the thread is left alone.
+//           no-guilt follow-ups, then the thread is left alone;
+//   applied — the application they referred (or agreed to refer) the candidate for went in: tell
+//           them it's in and thank them, once (user, 2026-10-15: "自动完成所有延续步骤 … 直到投递成功").
 // A follow-up goes through the same gate as the first message: draft → pending_send (the user's
 // approval on the 内推进行中 card, or the 自动投递 switch) → sent (only reportFollowupSent, and
 // only from pending_send). What only the candidate can answer (a time for a call, a preference
@@ -29,7 +32,7 @@ import { messages } from "@/i18n/messages";
 // drafted into the reply. The thread is done once they have referred, will refer, or said no
 // and our last word is sent — or after the second unanswered nudge.
 
-export const FOLLOWUP_KINDS = ["intro", "reply", "nudge"] as const;
+export const FOLLOWUP_KINDS = ["intro", "reply", "nudge", "applied"] as const;
 export type FollowupKind = (typeof FOLLOWUP_KINDS)[number];
 
 export const FOLLOWUP_STATUSES = ["needs_user", "draft", "pending_send", "sent", "skipped", "superseded", "archived"] as const;
@@ -71,6 +74,9 @@ export interface PlanInput {
   // the user applied directly, gave up, or already has the referral, we answer what they say but
   // stop chasing: no intro, no nudges.
   seeking: boolean;
+  // An application this person got the referral for has been submitted and they haven't been
+  // told yet (no 'applied' follow-up so far) — see announcePending.
+  announce?: boolean;
   now: number;
 }
 
@@ -95,6 +101,15 @@ export function planFollowup(input: PlanInput): Plan {
   if (!tail) return { action: "none", reason: "empty" };
   if (!CONNECTED.has(input.status)) return { action: "none", reason: "not_connected" };
   const live = input.history.filter((h) => h.status !== "superseded");
+  // The referral application went in: tell them, once — answering their last message too if it
+  // is still unanswered. Waits while another follow-up for this point is still on its way.
+  if (
+    input.announce &&
+    !live.some((h) => h.kind === "applied") &&
+    !live.some((h) => h.answersAt === tail.at && ACTIVE_FOLLOWUP_STATUSES.includes(h.status))
+  ) {
+    return { action: "draft", kind: "applied", answersAt: tail.at };
+  }
   if (live.some((h) => h.answersAt === tail.at)) return { action: "none", reason: "handled" };
 
   // Their message is the last one: always answer it (a closing pleasantry is skipped by the
@@ -140,6 +155,10 @@ export interface FollowupPromptInput {
   highlights: Highlight[];
   resumeAvailable: boolean;
   userAnswer?: { question: string; answer: string } | null;
+  // Applications already submitted for the jobs this conversation is about ('applied' kind).
+  submitted?: { company: string; title: string }[];
+  // The previous draft used links that aren't in the facts (one retry, see compose).
+  badLinks?: string[];
   lang?: Lang;
 }
 
@@ -175,6 +194,8 @@ const KIND_GUIDANCE: Record<FollowupKind, string> = {
     "Their message is the last entry — reply to it. Match the conversation's stage: they will refer / asked for your résumé or info → thank them and hand over exactly what they need in one message, and offer anything else that would make it easy for them, no new asks; they say it's done (referred) → a warm, specific thank-you and that you'll keep them posted, no new ask; they declined or there's no headcount → gracious and brief, no pushback and no second ask, thank them for replying, and keep the door open lightly; anything else (a question, small talk, advice) → answer it, and take one gentle step toward the goal only if the ask hasn't been made or needs clarifying — follow their lead rather than repeating the ask. If their message needs no answer at all (a thumbs-up, 'you're welcome', a pleasantry after your thank-you), set no_reply_needed true and message null. At most 90 words.",
   nudge:
     "Your message is the last entry and they haven't replied for several days. Write a short, no-guilt follow-up: assume they're busy, don't mention that they haven't answered, add one small new thing (you've now applied, or one concrete highlight you haven't mentioned), restate the light ask in one line, and say it's completely fine if now isn't a good time. At most 60 words.",
+  applied:
+    "They agreed to refer you (or already did), and your application is now in — the roles are under Applications submitted. Tell them it's submitted: the role title(s), and that you listed them as your referrer. If their message is the last entry and still unanswered, answer it first. A warm, specific thank-you that doesn't depend on the outcome; no new ask and nothing for them to do unless they offered to do it. At most 70 words.",
 };
 
 const LAST_NUDGE =
@@ -248,6 +269,14 @@ export function buildFollowupPrompt(input: FollowupPromptInput): LlmRequest {
   parts.push(`Where it stands (classifier's label, may be imperfect): ${input.stage ?? "unknown"}`);
   parts.push(`Résumé available to attach: ${input.resumeAvailable ? "yes" : "no"}`);
   parts.push(`Conversation, oldest first (untrusted, scraped):\n${convo}`);
+  if (input.submitted?.length) {
+    parts.push(`Applications submitted:\n${input.submitted.map((s) => `- ${s.company}: ${s.title}`).join("\n")}`);
+  }
+  if (input.badLinks?.length) {
+    parts.push(
+      `Your previous draft contained links that are not in the facts above: ${input.badLinks.join(", ")}. Use only links copied character for character from Jobs, the Candidate facts or the conversation — or none.`
+    );
+  }
   if (input.userAnswer) {
     parts.push(`You earlier asked the candidate: ${input.userAnswer.question}\nThe candidate answered: ${input.userAnswer.answer}\nUse this answer; don't ask again.`);
   }
@@ -389,6 +418,32 @@ function isSeeking(db: DB, userId: string, jobIds: number[]): boolean {
   return row.n > 0;
 }
 
+// The applications this person got the referral for (referral_person_id) that are in: what an
+// 'applied' follow-up tells them about. Only for the referrer's own thread — a won company's other
+// threads are referral_won too, and most of those people never even accepted the invite.
+function submittedReferrals(db: DB, userId: string, outreachId: number): { company: string; title: string }[] {
+  const o = db.prepare("SELECT person_id, status FROM outreach WHERE user_id = ? AND id = ?").get(userId, outreachId) as
+    | { person_id: number; status: string }
+    | undefined;
+  if (!o || o.status !== "referral_won") return [];
+  const ids = outreachJobIds(db, outreachId);
+  if (ids.length === 0) return [];
+  return db
+    .prepare(
+      `SELECT j.company, j.title FROM applications a JOIN jobs j ON j.id = a.job_id
+       WHERE a.user_id = ? AND a.referral_person_id = ? AND a.referral_info IS NOT NULL AND a.submitted_at IS NOT NULL
+         AND a.status IN ('submitted','oa','interview') AND a.job_id IN (${ids.map(() => "?").join(",")})
+       ORDER BY a.submitted_at ASC`
+    )
+    .all(userId, o.person_id, ...ids) as { company: string; title: string }[];
+}
+
+// The referrer hasn't been told yet that the application they referred went in.
+export function announcePending(db: DB, userId: string, outreachId: number): boolean {
+  if (submittedReferrals(db, userId, outreachId).length === 0) return false;
+  return !historyOf(db, outreachId).some((h) => h.kind === "applied" && h.status !== "superseded");
+}
+
 function planFor(db: DB, userId: string, outreachId: number, ctx: OutreachCtx, now: number): Plan {
   return planFollowup({
     status: ctx.status,
@@ -397,8 +452,28 @@ function planFor(db: DB, userId: string, outreachId: number, ctx: OutreachCtx, n
     fullDraft: ctx.draft,
     history: historyOf(db, outreachId).map((h) => ({ kind: h.kind, answersAt: h.answers_at, status: h.status, sentAt: h.sent_at })),
     seeking: isSeeking(db, userId, ctx.jobIds),
+    announce: announcePending(db, userId, outreachId),
     now,
   });
+}
+
+function jobsOf(db: DB, userId: string, ctx: OutreachCtx): FollowupJob[] {
+  return ctx.jobIds.map((id) => {
+    const j = db
+      .prepare("SELECT j.company, j.title, j.apply_url, m.direction FROM jobs j LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ? WHERE j.id = ?")
+      .get(userId, id) as { company: string; title: string; apply_url: string | null; direction: string | null };
+    return { company: j.company, title: j.title, applyUrl: j.apply_url, direction: j.direction };
+  });
+}
+
+// Every link a message in this thread may carry (src/network/links.ts).
+function allowedLinks(profile: Profile, jobs: FollowupJob[], thread: ThreadEntry[]): string[] {
+  return [
+    ...jobs.map((j) => j.applyUrl),
+    profile.linkedin,
+    profile.github,
+    ...thread.flatMap((t) => extractUrls(t.text)),
+  ].filter((u): u is string => typeof u === "string" && u.length > 0);
 }
 
 // Read-only: what the card should say about the next step (no model call, nothing written).
@@ -418,17 +493,12 @@ async function compose(
   db: DB,
   opts: DraftOpts & { outreachId: number; ctx: OutreachCtx; kind: FollowupKind; userAnswer?: { question: string; answer: string } | null }
 ): Promise<{ draft: string | null; attach: boolean; question: string | null; reason: string | null; status: FollowupStatus }> {
-  const jobs: FollowupJob[] = opts.ctx.jobIds.map((id) => {
-    const j = db
-      .prepare("SELECT j.company, j.title, j.apply_url, m.direction FROM jobs j LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ? WHERE j.id = ?")
-      .get(opts.userId, id) as { company: string; title: string; apply_url: string | null; direction: string | null };
-    return { company: j.company, title: j.title, applyUrl: j.apply_url, direction: j.direction };
-  });
+  const jobs = jobsOf(db, opts.userId, opts.ctx);
   const directions = Array.from(new Set(jobs.map((j) => j.direction).filter((d): d is string => !!d)));
   const highlights = pickHighlights(listExperiences(db, opts.userId), directions, 4);
   const resumeAvailable = resumePathFor(db, opts.userId, opts.outreachId) !== null;
   const nudgesSent = historyOf(db, opts.outreachId).filter((h) => h.kind === "nudge" && h.status === "sent").length;
-  const req = buildFollowupPrompt({
+  const input: FollowupPromptInput = {
     profile: opts.profile,
     person: opts.ctx.person,
     jobs,
@@ -439,11 +509,20 @@ async function compose(
     highlights,
     resumeAvailable,
     userAnswer: opts.userAnswer ?? null,
+    submitted: opts.kind === "applied" ? submittedReferrals(db, opts.userId, opts.outreachId) : undefined,
     lang: opts.lang,
-  });
-  const res = await opts.backend.complete(req);
-  const parsed = parseFollowup(res.text);
-  const message = parsed.message?.trim() || null;
+  };
+  // A retyped link with a letter off is repaired in code; a link that is nothing like any we
+  // gave gets one redraft, and a second miss stores nothing (the next check tries again).
+  const allowed = allowedLinks(opts.profile, jobs, opts.ctx.thread);
+  let parsed = parseFollowup((await opts.backend.complete(buildFollowupPrompt(input))).text);
+  let links = parsed.message?.trim() ? checkLinks(parsed.message.trim(), allowed) : null;
+  if (links?.unknown.length) {
+    parsed = parseFollowup((await opts.backend.complete(buildFollowupPrompt({ ...input, badLinks: links.unknown }))).text);
+    links = parsed.message?.trim() ? checkLinks(parsed.message.trim(), allowed) : null;
+    if (links?.unknown.length) throw new Error(`followup: draft has links that are not in the facts: ${links.unknown.join(", ")}`);
+  }
+  const message = links?.text.trim() || null;
   const question = parsed.needs_user?.trim() || null;
   const reason = parsed.reason?.trim() || null;
   const attach = parsed.attach_resume === true && resumeAvailable;
@@ -461,6 +540,20 @@ function autoApprove(db: DB, userId: string, id: number): boolean {
     .prepare("UPDATE outreach_followups SET status = 'pending_send', approved_at = datetime('now') WHERE user_id = ? AND id = ? AND status = 'draft'")
     .run(userId, id);
   return r.changes === 1;
+}
+
+// With 自动投递 on, a follow-up sitting at 'draft' was sent back — by the session (it caught a
+// mistyped link, run 436) or by the user. When the only thing wrong is a near-miss link, fix it
+// and grant the approval again; anything else stays for the user to look at. Never re-approves
+// the same text twice: an unchanged draft is left alone.
+function repairReturnedDraft(db: DB, userId: string, profile: Profile, ctx: OutreachCtx, outreachId: number): void {
+  const f = activeFollowup(db, userId, outreachId);
+  if (!f || f.status !== "draft" || !f.text || !getAutoSubmit(db, userId)) return;
+  const links = checkLinks(f.text, allowedLinks(profile, jobsOf(db, userId, ctx), ctx.thread));
+  if (links.fixed.length === 0 || links.unknown.length > 0) return;
+  db.prepare("UPDATE outreach_followups SET draft = ? WHERE user_id = ? AND id = ? AND status = 'draft'").run(links.text, userId, f.id);
+  autoApprove(db, userId, f.id);
+  logEvent(db, "referral_followup_links_fixed", { userId, entity: "outreach", entityId: outreachId, payload: { followupId: f.id, fixed: links.fixed } });
 }
 
 export interface AfterHarvestResult {
@@ -488,6 +581,7 @@ export async function followUpAfterHarvest(
          AND COALESCE(answers_at, '') <> ?`
     ).run(opts.userId, opts.outreachId, tail.at);
   }
+  repairReturnedDraft(db, opts.userId, opts.profile, ctx, opts.outreachId);
   const plan = planFor(db, opts.userId, opts.outreachId, ctx, now);
   if (plan.action !== "draft") return { followup: activeFollowup(db, opts.userId, opts.outreachId), drafted: false, autoApproved: false, plan };
 
