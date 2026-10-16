@@ -27,6 +27,11 @@ export const notify = defineMessages({
         body: (jobTitle: string, labels: string) => `${jobTitle}:${labels} — 做完后打开 App 投递页「待处理」点「完成了」。`,
       },
     },
+    // An emailed verification code arrived for a card (src/apply/email-code.ts). Never the code itself.
+    emailCode: {
+      title: (company: string) => `Sortie · ${company} 的验证码到了`,
+      body: "打开投递页「待处理」看验证码,在求职 Chrome 的那个标签页里输入,再点「完成了」。",
+    },
     // 自动投递 on: the assistant submitted without a confirmation — a heads-up, not a to-do.
     autoSubmitted: {
       title: (company: string) => `Sortie · 已自动投出 ${company}`,
@@ -82,6 +87,10 @@ export const notify = defineMessages({
         title: (company: string, _n: number) => `Sortie · ${company} needs a quick action in its tab`,
         body: (jobTitle: string, labels: string) => `${jobTitle}: ${labels} — when it is done, press Done under To do on the Apply page.`,
       },
+    },
+    emailCode: {
+      title: (company: string) => `Sortie · ${company}'s verification code is in`,
+      body: "Open To do on the Apply page to see the code, type it into that tab in the job-search Chrome, then press Done.",
     },
     autoSubmitted: {
       title: (company: string) => `Sortie · auto-submitted to ${company}`,

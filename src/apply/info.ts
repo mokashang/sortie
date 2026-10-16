@@ -32,6 +32,7 @@ export interface PendingInfoRow {
   needsManualReason: string | null;
   questions: InfoQuestion[];
   askedAt: string; // local "MM-DD HH:MM"
+  askedAtUtc: string; // the row's updated_at, SQLite UTC text
 }
 
 interface PendingInfoRaw {
@@ -44,6 +45,7 @@ interface PendingInfoRaw {
   needs_manual_reason: string | null;
   pending_questions: string | null;
   asked_at: string;
+  asked_at_utc: string;
 }
 
 // The cards' data source. A paused row that somehow carries only a reason (an old-protocol
@@ -54,7 +56,7 @@ export function pendingInfo(db: DB, userId: string, lang: Lang = serverLang()): 
   const rows = db
     .prepare(
       `SELECT a.job_id, j.company, j.title, j.apply_url, m.direction, a.status, a.needs_manual_reason,
-              a.pending_questions, strftime('%m-%d %H:%M', a.updated_at, 'localtime') as asked_at
+              a.pending_questions, strftime('%m-%d %H:%M', a.updated_at, 'localtime') as asked_at, a.updated_at as asked_at_utc
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
@@ -86,6 +88,7 @@ export function pendingInfo(db: DB, userId: string, lang: Lang = serverLang()): 
       needsManualReason: r.needs_manual_reason,
       questions,
       askedAt: r.asked_at,
+      askedAtUtc: r.asked_at_utc,
     };
   });
 }

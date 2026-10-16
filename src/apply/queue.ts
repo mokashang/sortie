@@ -238,6 +238,7 @@ export interface InfoQuestion {
   url?: string; // login: the sign-in / registration page; manual: the page to finish by hand (default: the job's apply_url)
   host?: string; // login: apply_url host the wall belongs to — 「我登好了」 resolves every paused job on it
   accept?: string; // file: accepted extensions, e.g. ".pdf"
+  sender?: string; // action (an emailed verification code): who the page says the mail comes from, e.g. "scalis.ai"
 }
 
 export const MULTI_ANSWER_SEP = "; ";
@@ -287,6 +288,7 @@ export function normalizeQuestions(input: unknown): InfoQuestion[] {
     if (raw.multiple === true && q.options) q.multiple = true;
     if (typeof raw.url === "string" && raw.url) q.url = raw.url;
     if (typeof raw.accept === "string" && raw.accept) q.accept = raw.accept;
+    if (kind === "action" && typeof raw.sender === "string" && raw.sender.trim()) q.sender = raw.sender.trim().slice(0, 120);
     if (kind === "login") {
       let host = typeof raw.host === "string" && raw.host.trim() ? raw.host.trim().toLowerCase() : hostOf(q.url);
       // A LinkedIn posting's applyUrl is linkedin.com, but the wall is on the company site the

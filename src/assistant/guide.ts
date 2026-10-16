@@ -150,7 +150,11 @@ the card automatically continues the work — there is no dead end:
   waiting, a bar on top has "Open all sign-in pages" (opens every sign-in page as tabs of the
   job-search Chrome on the always-on machine) and "All signed in" (releases them all at once).
 - **Do it here** — a captcha or 2-step verification in the tab the assistant left open: do it,
-  press Done, the assistant continues.
+  press Done, the assistant continues. For a code the site emailed, the app watches the connected
+  inbox (Settings → Inbox sync) for that company's mail and shows the code on the card, with a
+  push notification (the code itself is never in the notification). The user types it into the
+  tab; the assistant never reads mail or fills in codes, even when asked — a code is a sign-in
+  credential, like a password.
 - **Finish yourself** — something only the user can do: it needs them in person (their own
   video or voice, a live interview, a webcam-proctored test, ID verification), the assessment
   explicitly forbids AI help, or the form never renders in the browser. "I applied myself"

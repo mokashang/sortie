@@ -4,6 +4,7 @@ import { dispatchAttended, attendedStatus } from "@/executor/attended";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
 import { autoAnswerParkedText } from "@/apply/auto-answer";
+import { pollEmailCodes } from "@/apply/email-code";
 import { ownerId } from "@/lib/users";
 import { withInternal } from "@/lib/actor";
 
@@ -36,6 +37,9 @@ export const POST = withInternal(async () => {
     // Parked cards left with only text questions (a login was resolved, an old card) get the
     // App's own answers, and come back as work when nothing else is left (src/apply/auto-answer.ts).
     if (owner) void autoAnswerParkedText(db, owner);
+    // An emailed verification code step: watch the mailbox for that company's code mail and show
+    // it on the card for the user to type (src/apply/email-code.ts).
+    if (owner) void pollEmailCodes(db, owner);
     const stranded = owner ? requeueStrandedApprovals(db, owner) : undefined;
     if (stranded?.autoStarted) console.log(`[attended] queued resume run #${stranded.runId}: approved applications nobody was acting on`);
     const r = dispatchAttended(db);
