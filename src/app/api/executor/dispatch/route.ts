@@ -5,6 +5,7 @@ import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
 import { autoAnswerParkedText } from "@/apply/auto-answer";
 import { pollEmailCodes } from "@/apply/email-code";
+import { resumeDuePausedChains } from "@/apply/continue";
 import { ownerId } from "@/lib/users";
 import { withInternal } from "@/lib/actor";
 
@@ -40,6 +41,10 @@ export const POST = withInternal(async () => {
     // An emailed verification code step: watch the mailbox for that company's code mail and show
     // it on the card for the user to type (src/apply/email-code.ts).
     if (owner) void pollEmailCodes(db, owner);
+    // A plan parked until tomorrow (today's LinkedIn invite budget spent, src/apply/continue.ts)
+    // has no approval or finish to wake it: it is picked up here once its time has come.
+    const resumed = resumeDuePausedChains(db);
+    for (const r of resumed) if (r.action === "queued") console.log(`[attended] paused plan resumed as run #${r.runId}`);
     const stranded = owner ? requeueStrandedApprovals(db, owner) : undefined;
     if (stranded?.autoStarted) console.log(`[attended] queued resume run #${stranded.runId}: approved applications nobody was acting on`);
     const r = dispatchAttended(db);

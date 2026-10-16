@@ -57,6 +57,9 @@ export interface StartOptions {
   // 寻找,合计),做满就正常 finish,App 再排下一段;chain = 这段属于哪条接力链(root / 第几段 / 累计)。
   chunk?: number;
   chain?: ChainInfo;
+  // A paused segment that waits for a time, not for the confirmation backlog: today's LinkedIn
+  // invite budget is spent and only referral entries are left (ISO, the next local midnight).
+  notBefore?: string;
   // scan kind only — 要扫哪些站、时间窗、每站最多抄多少个新岗(默认 全部 / 24h / 40)。
   sites?: ("linkedin" | "handshake" | "tesla")[];
   window?: "24h" | "7d";

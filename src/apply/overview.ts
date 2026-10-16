@@ -1,6 +1,7 @@
 import type { DB } from "@/lib/db";
 import { executorStatus } from "@/executor/runner";
 import { pendingInfo } from "@/apply/info";
+import { planAlerts } from "@/apply/plan-alerts";
 import { referralBoard } from "@/apply/referral";
 import { queueMatchedCount } from "@/apply/queue";
 import { todaySubmitted } from "@/apply/history";
@@ -47,6 +48,7 @@ export function overview(db: DB, userId: string): Overview {
       userId
     ),
     needsInfo: pendingInfo(db, userId).length,
+    planAlerts: planAlerts(db, userId).length,
     // First messages to approve plus later ones in a conversation (a reply to approve, or a
     // question only the user can answer — src/network/followup.ts).
     referralDrafts:

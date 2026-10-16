@@ -632,6 +632,15 @@ td.company {
   overflow-wrap: anywhere;
 }
 
+/* A plan card's last summary from the assistant: three lines, the rest on a click. */
+.todo-hint.is-clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+}
+
 /* An emailed verification code the App found, for the user to type into the tab. */
 .email-code {
   padding: 10px 12px;

@@ -113,7 +113,20 @@ submitting already-approved applications, then filling new ones. A track that pr
 a segment is dropped from the rest of the plan; two empty segments in a row end the relay. If 10
 or more filled applications are waiting unconfirmed, the next segment waits as **Paused** until
 the user brings the backlog down to 5 or fewer (then every paused relay continues); starting a
-new plan does not end a paused relay; pressing Stop ends the chain. A session may be recycled
+new plan does not end a paused relay; pressing Stop ends the chain — **only the user can end a
+plan**: a session that tries to stop on its own is recorded as finished and the relay goes on
+(2026-10-16), and a failed segment still queues the next one. The relay's length limit grows with
+the plan. **Referral pacing**: at most 20 LinkedIn invitations a day (first messages to new
+contacts, sent or drafted today; the server's local day). Once they are used, segments skip the
+plan's referral tracks and do its direct ones; referrals pick up again after midnight. When only
+referral tracks are left, the next segment waits as **Paused** until midnight ("today's LinkedIn
+invite budget is used up"). If LinkedIn itself shows a limit or a verification check, the
+assistant reports it and no more invites go out that day. **A plan that stops short** — two empty
+segments in a row, or the length limit — is a card on To-do ("Plan #N stopped", with what is left
+and the assistant's last words; **Run the rest** starts a new plan with the remainder, **Never
+mind** dismisses it) plus a phone notification; every plan's end (done / ran out of jobs) also
+sends one. A targeted task that failed with jobs it never touched is a To-do card too ("Task #N
+didn't finish", **Have the assistant try again**). A session may be recycled
 after 15 idle minutes (nothing running, queued or waiting), and a session that stops writing steps
 for 10 minutes is nudged.
 
@@ -190,7 +203,8 @@ first (one specific true thing about the person or their team, one concrete thin
 asks small with an easy out, thanks regardless. **The user approves every message** on the card
 (or sends it back to draft to edit). Free LinkedIn allows 5 invitations with a note per month
 and 200 characters per note; 2nd/3rd-degree "Message" is a paid InMail wall the assistant never
-uses. Jobs then sit under **Referrals in progress** per company with each contact's stage
+uses. The app caps new LinkedIn contacts at 20 a day across all tasks (then the plan's direct
+tracks go first; referrals continue the next day). Jobs then sit under **Referrals in progress** per company with each contact's stage
 (pending / accepted / replied / asked for resume / will refer / referred / declined / no
 headcount); a "check replies" task runs at 9:00, 13:00 and 18:00 (or from the card) and reads the
 conversations. **The app settles each company by itself** (2026-10-15): as soon as someone says

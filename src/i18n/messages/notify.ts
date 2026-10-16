@@ -37,6 +37,22 @@ export const notify = defineMessages({
       title: (company: string) => `Sortie · 已自动投出 ${company}`,
       body: (jobTitle: string) => `${jobTitle} — 自动投递已开启,助手填好后直接提交了;记录在「历史」里。`,
     },
+    // How a plan (接力链) ended, and a task that gave up with jobs untouched (src/apply/continue.ts,
+    // src/apply/plan-alerts.ts). Only stuckTitle / failedTitle come with a 待处理 card.
+    plan: {
+      doneTitle: (root: number) => `Sortie · 投递计划 #${root} 跑完了`,
+      exhaustedTitle: (root: number) => `Sortie · 投递计划 #${root} 没有更多可投的岗了`,
+      stuckTitle: (root: number) => `Sortie · 投递计划 #${root} 停了,需要你看一下`,
+      failedTitle: (runId: number) => `Sortie · 任务 #${runId} 没做完`,
+      direct: (done: number, planned: number) => `海投 ${done}/${planned}`,
+      referral: (done: number, planned: number) => `内推 ${done}/${planned}`,
+      doneBody: (progress: string) => `${progress}。`,
+      exhaustedBody: (progress: string) => `${progress}。剩下的方向暂时没有符合条件的岗位,之后有新岗可以再开计划。`,
+      noProgress: "连续两段什么都没做成",
+      tooLong: "接力段数到了上限",
+      stuckBody: (progress: string, why: string) => `${progress}。${why}。打开投递页「待处理」看一下,点「继续跑剩下的」接着做。`,
+      failedBody: (left: number) => `还有 ${left} 个岗没动。打开投递页「待处理」,点「让助手再试一次」接着做。`,
+    },
     // 内推对话跟进 (spec 2026-09-30): someone replied / accepted, and what the assistant does about it.
     referral: {
       replied: (person: string, company: string) => `Sortie · ${person}(${company})回复了你`,
@@ -107,6 +123,20 @@ export const notify = defineMessages({
     autoSubmitted: {
       title: (company: string) => `Sortie · auto-submitted to ${company}`,
       body: (jobTitle: string) => `${jobTitle} — auto-apply is on, so the assistant submitted as soon as the form was filled; it is in History.`,
+    },
+    plan: {
+      doneTitle: (root: number) => `Sortie · plan #${root} is done`,
+      exhaustedTitle: (root: number) => `Sortie · plan #${root} ran out of jobs`,
+      stuckTitle: (root: number) => `Sortie · plan #${root} stopped and needs a look`,
+      failedTitle: (runId: number) => `Sortie · task #${runId} didn't finish`,
+      direct: (done: number, planned: number) => `direct ${done}/${planned}`,
+      referral: (done: number, planned: number) => `referral ${done}/${planned}`,
+      doneBody: (progress: string) => `${progress}.`,
+      exhaustedBody: (progress: string) => `${progress}. The remaining directions have nothing eligible right now; start another plan when new jobs come in.`,
+      noProgress: "Two segments in a row got nothing done",
+      tooLong: "The plan hit its limit on segments",
+      stuckBody: (progress: string, why: string) => `${progress}. ${why}. Open To do on the Apply page and press Run the rest to carry on.`,
+      failedBody: (left: number) => `${left} jobs were never touched. Open To do on the Apply page and press Have the assistant try again.`,
     },
     referral: {
       replied: (person: string, company: string) => `Sortie · ${person} (${company}) replied`,

@@ -8,6 +8,7 @@ import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Sel
 import { useOverview } from "@/app/components/overview-context";
 import { useLang, useMessages } from "@/i18n/client";
 import type { Messages } from "@/i18n/messages";
+import { PlanAlertCard, type PlanAlertRow } from "./plan-alert-card";
 
 type Kind = "text" | "file" | "login" | "action" | "manual";
 
@@ -152,6 +153,8 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   const m = useMessages();
   const lang = useLang();
   const [rows, setRows] = useState<InfoRow[]>([]);
+  // Task-level cards (a plan that stopped short, a task that gave up) ride on the same poll.
+  const [alerts, setAlerts] = useState<PlanAlertRow[]>([]);
   const [docs, setDocs] = useState<DocumentRow[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Record<string, Draft>>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -166,8 +169,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
 
   const refresh = useCallback(async () => {
     try {
-      const j = await getJson<{ needsInfo: InfoRow[] }>("/api/apply/pending");
+      const j = await getJson<{ needsInfo: InfoRow[]; planAlerts?: PlanAlertRow[] }>("/api/apply/pending");
       setRows(j.needsInfo ?? []);
+      setAlerts(j.planAlerts ?? []);
     } catch {
       // keep last known list
     }
@@ -642,11 +646,24 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
         </div>
       </Card>
     ) : null;
-  const allCards = loginAll ? [loginAll, ...cards] : cards;
+  const alertCards = alerts.map((a) => (
+    <PlanAlertCard
+      key={`plan-${a.runId}`}
+      alert={a}
+      busy={busyKey}
+      setBusy={setBusyKey}
+      onDone={async () => {
+        await refresh();
+        await refreshOverview();
+      }}
+    />
+  ));
+  const allCards = [...alertCards, ...(loginAll ? [loginAll] : []), ...cards];
+  const empty = rows.length === 0 && alerts.length === 0;
 
-  if (compact) return rows.length === 0 ? null : <div className="col gap-3">{allCards}</div>;
+  if (compact) return empty ? null : <div className="col gap-3">{allCards}</div>;
 
-  if (rows.length === 0) return <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />;
+  if (empty) return <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />;
 
   return (
     <>
