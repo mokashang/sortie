@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { listOutreach } from "@/network/crm";
 import { updateDraft } from "@/network/gate";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // GET ?personId=&jobId=&status= — the CRM UI's outreach history / draft-approval feed.
 export const GET = withUser(async (req, { userId }) => {
@@ -32,7 +33,7 @@ export const GET = withUser(async (req, { userId }) => {
 // flow, implemented here on the outreach route per the plan's note.
 export const PUT = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     updateDraft(
       getDb(),
       userId,

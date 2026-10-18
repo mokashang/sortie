@@ -29,12 +29,22 @@ interface Row {
   start_date: string | null; end_date: string | null; bullets: string; sort_order: number;
 }
 
+// One unreadable row must not fail the whole experience bank (档案 page, every résumé and draft).
+function parseBullets(raw: string | null): Experience["bullets"] {
+  try {
+    const v: unknown = JSON.parse(raw ?? "[]");
+    return Array.isArray(v) ? (v.filter((b) => b && typeof b === "object") as Experience["bullets"]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function rowToExperience(r: Row): Experience {
   return {
     id: r.id, kind: r.kind as ExperienceInput["kind"], title: r.title,
     organization: r.organization, location: r.location,
     start_date: r.start_date, end_date: r.end_date,
-    bullets: JSON.parse(r.bullets), sort_order: r.sort_order,
+    bullets: parseBullets(r.bullets), sort_order: r.sort_order,
   };
 }
 

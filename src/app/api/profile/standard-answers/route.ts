@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getProfileData, saveStandardAnswers } from "@/lib/profile";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // The /profile 标准答案 editor. GET returns the current map; PUT {answers: {key: value}}
 // replaces it on the account's stored profile (see saveStandardAnswers). These answers are what
@@ -14,7 +15,7 @@ export const GET = withUser(async (_req, { userId }) => {
 
 export const PUT = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     if (!body || typeof body.answers !== "object" || Array.isArray(body.answers)) {
       return NextResponse.json({ error: "answers must be an object" }, { status: 400 });
     }

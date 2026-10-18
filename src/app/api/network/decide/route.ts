@@ -3,11 +3,12 @@ import { getDb } from "@/lib/db";
 import { rejectOutreach, unapproveOutreach } from "@/network/gate";
 import { approveOutreachAndMaybeAutoStart } from "@/apply/referral-glue";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // POST {outreachId, decision: 'approve'|'reject'} — user's decision from the draft-approval UI.
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const outreachId = Number(body.outreachId);
     const db = getDb();
     if (body.decision === "approve") {

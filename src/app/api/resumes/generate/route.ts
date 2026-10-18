@@ -9,9 +9,10 @@ import { makeTectonicCompiler } from "@/resume/compile";
 import { isKnownDirection } from "@/matcher/directions";
 import { ownerId, userDataDir } from "@/lib/users";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 export const POST = withUser(async (req, { userId }) => {
-  const { direction, versionName } = await req.json();
+  const { direction, versionName } = await readJsonBody(req);
   if (!isKnownDirection(direction)) return NextResponse.json({ error: "unknown direction" }, { status: 400 });
   const name = (versionName && String(versionName)) || `${direction}_${Date.now()}`;
   if (!isSafeVersionName(name)) return NextResponse.json({ error: "invalid version name" }, { status: 400 });

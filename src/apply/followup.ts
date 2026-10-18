@@ -234,6 +234,12 @@ export function retryDueErrors(db: DB, userId: string, deps: FollowupDeps & { no
          FROM applications WHERE user_id = ? AND status = 'matched' AND needs_manual_reason LIKE ?`
       )
       .all(now, userId, AUTO_RETRY_PREFIX + "%") as { job_id: number; reason: string; waited_min: number }[];
+    if (rows.length === 0) return result;
+    // On the headless channel nothing can queue behind a live run (queueTargetedRun stands down).
+    // Clearing the reasons first would leave plain 'matched' rows with no run and no card, so the
+    // retry waits for a later tick instead.
+    const headless = (deps.lastRunChannel ?? lastRunChannel)(db, userId, "apply") === "headless";
+    if (headless && (deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun)(db, userId, "apply")) return result;
     const due: number[] = [];
     for (const r of rows) {
       const done = autoRetriesDone(db, userId, r.job_id);

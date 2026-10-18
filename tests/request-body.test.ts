@@ -122,3 +122,39 @@ describe("session-facing routes accept a GBK body", () => {
     expect(row).toEqual({ status: "matched", needs_manual_reason: REASON });
   });
 });
+
+describe("bad bodies are a 400 that says what is wrong, never a 500", () => {
+  it("readJsonBody refuses form-encoded, broken, empty and non-object bodies", async () => {
+    await expect(readJsonBody(post("/x", "jobId=2090&status=submitted"))).rejects.toThrow(/form-encoded/);
+    await expect(readJsonBody(post("/x", '{"jobId": 1'))).rejects.toThrow(/not valid JSON/);
+    await expect(readJsonBody(post("/x", ""))).rejects.toThrow(/empty/);
+    await expect(readJsonBody(post("/x", ""), { allowEmpty: true })).resolves.toEqual({});
+    await expect(readJsonBody(post("/x", "[1,2]"))).rejects.toThrow(/JSON object/);
+    await expect(readJsonBody(post("/x", "null"))).rejects.toThrow(/JSON object/);
+  });
+  it("POST /api/apply/report answers a form-encoded body with 400 (2026-10-15: it was a 500)", async () => {
+    const res = await postReport(post("/api/apply/report", "jobId=2090&status=submitted"));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/form-encoded/);
+  });
+  it("POST /api/apply/report refuses an unknown status instead of parking the job", async () => {
+    const db = getDb();
+    const jobId = db
+      .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source) VALUES (?,?,?,?,?,?)")
+      .run("fp-typo", "Acme", "SWE", "https://acme.example/apply2", "workday", "manual").lastInsertRowid as number;
+    db.prepare("INSERT INTO applications (job_id, status) VALUES (?, 'prepared')").run(jobId);
+    const res = await postReport(post("/api/apply/report", JSON.stringify({ jobId, status: "awaiting_confirmation", filledFields: {} })));
+    expect(res.status).toBe(400);
+    expect(db.prepare("SELECT status, needs_manual_reason FROM applications WHERE job_id=?").get(jobId)).toEqual({ status: "prepared", needs_manual_reason: null });
+  });
+  it("a string \"false\" flag is false", async () => {
+    const db = getDb();
+    const jobId = db
+      .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source) VALUES (?,?,?,?,?,?)")
+      .run("fp-flag", "Acme", "SWE 2", "https://acme.example/apply3", "workday", "manual").lastInsertRowid as number;
+    db.prepare("INSERT INTO applications (job_id, status) VALUES (?, 'prepared')").run(jobId);
+    const res = await postReport(post("/api/apply/report", JSON.stringify({ jobId, status: "needs_manual", reason: "timed out", archive: "false" })));
+    expect(res.status).toBe(200);
+    expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(jobId) as { status: string }).status).toBe("matched");
+  });
+});

@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db";
 import { getAiProvider, parseAiProvider, providerStatuses, setAiProvider } from "@/ai/config";
 import { getAutoSubmit } from "@/apply/auto-submit";
 import { getChatProvider } from "@/assistant/provider";
+import { readJsonBody } from "@/lib/request-body";
 
 // GET — read-only facts the 设置 page shows (nothing secret: whether phone push and mail are
 // configured, whether Google sign-in is available, who is signed in).
@@ -24,7 +25,7 @@ export const GET = withUser(async (_req, { user, via, userId }) => {
 export const POST = withUser(async (req, actor) => {
   try {
     requireOwner(actor);
-    const body = (await req.json()) as { provider?: unknown };
+    const body = (await readJsonBody(req)) as { provider?: unknown };
     const provider = parseAiProvider(body.provider);
     if (!provider) return NextResponse.json({ error: "provider must be claude, codex, or gpt" }, { status: 400 });
     const status = providerStatuses().find((item) => item.provider === provider);

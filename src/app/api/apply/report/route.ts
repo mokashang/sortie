@@ -12,6 +12,8 @@ import { langFromRequest, messagesFor } from "@/i18n/server";
 import { notify } from "@/lib/notify";
 import { withUser, failResponse } from "@/lib/actor";
 
+const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "needs_manual", "error", "closed", "already_applied"]);
+
 // Executor -> App: status reports during and after a fill attempt.
 // body.status === 'submitted' is routed to reportSubmitted (the red-line gate) instead of
 // reportFill, since 'submitted' isn't one of reportFill's accepted statuses.
@@ -50,7 +52,20 @@ export const POST = withUser(async (req, { userId }) => {
       return NextResponse.json({ ok: true });
     }
 
-    reportFill(db, userId, body as ReportFillInput);
+    // Refuse what the protocol doesn't have instead of guessing: an unknown status used to fall
+    // through to the catch-all and park a finished form as 「助手没能完成这份申请」, and a flag sent
+    // as the string "false" was truthy (archived the job / muted its whole board).
+    if (!REPORT_STATUSES.has(body.status)) {
+      return NextResponse.json(
+        { error: `unknown status '${String(body.status)}' (one of ${[...REPORT_STATUSES, "submitted", "referral_no_contact"].join(", ")})`, code: "bad_request" },
+        { status: 400 }
+      );
+    }
+    if (!Number.isInteger(Number(body.jobId)) || Number(body.jobId) <= 0) {
+      return NextResponse.json({ error: "jobId must be a positive integer", code: "bad_request" }, { status: 400 });
+    }
+    const flag = (v: unknown) => v === true || v === "true" || v === 1;
+    reportFill(db, userId, { ...body, jobId: Number(body.jobId), archive: flag(body.archive), boardGone: flag(body.boardGone) } as ReportFillInput);
     const jobId = Number(body.jobId);
     const autoSubmit = getAutoSubmit(db, userId);
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { listPeople, upsertPerson, PersonInputSchema } from "@/network/crm";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 export const GET = withUser(async (req, { userId }) => {
   const url = new URL(req.url);
@@ -15,7 +16,7 @@ export const GET = withUser(async (req, { userId }) => {
 });
 
 export const POST = withUser(async (req, { userId }) => {
-  const body = await req.json();
+  const body = await readJsonBody(req);
   const parsed = PersonInputSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
   try {

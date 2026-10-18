@@ -1,5 +1,6 @@
 import { Fetcher } from "@/scanner/types";
 import { htmlToText } from "@/scanner/html";
+import { fetchPublic } from "@/lib/public-url";
 
 // Backfill-only JD fetcher: given an apply_url already sitting in the DB (from a scan pass
 // that only captured "[listing metadata]" or an empty jd_text), GET the live page and try to
@@ -10,13 +11,11 @@ const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) " +
   "Chrome/128.0.0.0 Safari/537.36";
 
-export async function fetchJdText(url: string, fetcher: Fetcher = fetch): Promise<string | null> {
+// The URL may come from outside (问助手's read_posting / add_job), so the fetch only reaches
+// public hosts, redirects included (src/lib/public-url.ts).
+export async function fetchJdText(url: string, fetcher?: Fetcher): Promise<string | null> {
   try {
-    const res = await fetcher(url, {
-      redirect: "follow",
-      signal: AbortSignal.timeout(15_000),
-      headers: { "user-agent": USER_AGENT },
-    });
+    const res = await fetchPublic(url, { signal: AbortSignal.timeout(15_000), headers: { "user-agent": USER_AGENT } }, { fetcher });
     if (!res.ok) return null;
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("html")) return null;

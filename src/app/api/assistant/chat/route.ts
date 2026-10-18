@@ -4,6 +4,7 @@ import { withUser, failResponse, requestLang } from "@/lib/actor";
 import { answerChat, ChatInputError, normalizeMessages } from "@/assistant/chat";
 import { chatBackend } from "@/assistant/provider";
 import { getBackend } from "@/llm/registry";
+import { readJsonBody } from "@/lib/request-body";
 
 // POST /api/assistant/chat {messages:[{role,content}]} — one turn of the in-app 问助手 chat
 // (spec 2026-09-18 §6). Streams newline-delimited JSON: {"delta":"…"} as the answer arrives,
@@ -14,7 +15,7 @@ import { getBackend } from "@/llm/registry";
 export const POST = withUser(async (req, { userId }) => {
   let input;
   try {
-    const body = (await req.json()) as { messages?: unknown };
+    const body = (await readJsonBody(req)) as { messages?: unknown };
     input = normalizeMessages(body.messages);
   } catch (e) {
     if (e instanceof ChatInputError) return NextResponse.json({ error: e.message }, { status: 400 });
@@ -24,9 +25,23 @@ export const POST = withUser(async (req, { userId }) => {
   const db = getDb();
   const backend = chatBackend(db, userId);
   const encoder = new TextEncoder();
+  // The user can close the drawer mid-answer: from then on enqueue() throws, and it throws inside
+  // the model process's stdout listener — an uncaughtException per streamed delta. Stop writing
+  // once the reader is gone; the turn itself finishes quietly.
+  let closed = false;
   const stream = new ReadableStream<Uint8Array>({
+    cancel() {
+      closed = true;
+    },
     async start(controller) {
-      const send = (obj: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+      const send = (obj: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        } catch {
+          closed = true;
+        }
+      };
       try {
         const r = await answerChat(db, userId, lang, input, {
           backend,
@@ -39,7 +54,14 @@ export const POST = withUser(async (req, { userId }) => {
       } catch (e) {
         send({ error: e instanceof Error ? e.message : String(e) });
       } finally {
-        controller.close();
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            /* reader already gone */
+          }
+        }
       }
     },
   });

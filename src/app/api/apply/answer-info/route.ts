@@ -10,6 +10,7 @@ import { notifyJobSession } from "@/executor/attended";
 import { answeredNotice } from "@/executor/attended-session";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
+import { readJsonBody } from "@/lib/request-body";
 
 // User -> App from a 待处理 card's form: {jobId, answers: {key: {value, remember?}}, note?}.
 // Remembered text answers are merged into the account's standard_answers (so the next
@@ -18,7 +19,7 @@ import { langFromRequest, messagesFor } from "@/i18n/server";
 // (status back to 'matched') is re-queued as a targeted run so the user never has to start
 // anything by hand; a waiting row ('prepared') is picked up by the executor still on the form.
 export const POST = withUser(async (req, { userId }) => {
-  const body = await req.json();
+  const body = await readJsonBody(req);
   try {
     const db = getDb();
     const jobId = Number(body.jobId);

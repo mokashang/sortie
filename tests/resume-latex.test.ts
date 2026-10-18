@@ -141,3 +141,26 @@ describe("linkParts URL normalization", () => {
     expect(p.display).toBe("github.com/mokashang");
   });
 });
+
+import { hrefArg } from "@/resume/latex";
+describe("hrefArg: profile links cannot break out of \\href", () => {
+  it("leaves an ordinary URL alone", () => {
+    expect(hrefArg("https://www.linkedin.com/in/mengjia-shang-b5123029a")).toBe("https://www.linkedin.com/in/mengjia-shang-b5123029a");
+    expect(hrefArg("mailto:a.b+c@usc.edu")).toBe("mailto:a.b+c@usc.edu");
+  });
+  it("percent-encodes braces, backslashes and other TeX specials", () => {
+    const out = hrefArg("https://github.com/x}\\input{C:/data/internal-token}#~ %_$&^");
+    // Only the URL alphabet and TeX-escaped percent signs remain.
+    expect(out.replace(/\\%[0-9A-F]{2}/g, "")).toMatch(/^[A-Za-z0-9\-./:?=@+]*$/);
+    expect(out).toContain("\\%7D");
+    expect(out).toContain("\\%5C");
+  });
+  it("renders a hostile github field as inert text in the resume", () => {
+    const t = renderResumeLatex({
+      contact: { name: "A", email: "a@b.co", phone: "1", linkedin: "", github: "github.com/x}}\\input{/etc/passwd}{" },
+      sections: [],
+    });
+    expect(t).not.toContain("\\input{/etc/passwd}");
+  });
+});
+

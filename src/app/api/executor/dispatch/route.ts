@@ -7,6 +7,7 @@ import { autoAnswerParkedText } from "@/apply/auto-answer";
 import { pollEmailCodes } from "@/apply/email-code";
 import { ownerId } from "@/lib/users";
 import { withInternal } from "@/lib/actor";
+import { reapStaleRuns } from "@/executor/runner";
 
 // The dispatcher tick (instrumentation.ts, every 10s): spawn a terminal `claude --chrome` session
 // for the owner's queued user_chrome run when no attended session is alive; reap it when its run
@@ -26,6 +27,10 @@ export const POST = withInternal(async () => {
   try {
     const db = getDb();
     const owner = ownerId(db);
+    // Dead or hung runs are retired here too, not only when an App tab polls /api/overview: with
+    // no browser open (nights, days away) a hung headless claude -p kept its process and Chrome
+    // forever, and its 'running' row held back every auto-start guard.
+    reapStaleRuns(db);
     // Jobs taken by a run that is over and never reported (src/apply/followup.ts): back to the
     // queue, and the ones the user answered questions for become a targeted run.
     const reclaimed = owner ? reclaimStrandedPrepared(db, owner) : undefined;

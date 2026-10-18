@@ -6,6 +6,7 @@ import { PersonInputSchema } from "@/network/crm";
 import { createReferralOutreach } from "@/apply/referral";
 import { withUser, failResponse } from "@/lib/actor";
 import { autoApproveOutreachIfEnabled } from "@/apply/auto-submit";
+import { readJsonBody } from "@/lib/request-body";
 
 // Session -> App: found a person at the company; upsert them, draft the referral request
 // (App-side draft engine, ~30s), link the jobs. The draft then waits for the user's approval on
@@ -14,7 +15,7 @@ import { autoApproveOutreachIfEnabled } from "@/apply/auto-submit";
 // 'pending_send', so the session sends it right away instead of polling.
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const person = PersonInputSchema.parse(body.person);
     const jobIds = (body.jobIds as unknown[]).map(Number);
     const db = getDb();

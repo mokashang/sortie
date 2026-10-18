@@ -406,6 +406,46 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(row.summary).toMatch(/attended session ended/);
   });
 
+  it("backs off, then fails the run, when the assistant keeps exiting before it claims anything", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    let clock = Date.parse("2026-10-16T18:00:00Z");
+    let alive = true;
+    let pid = 100;
+    const deps = {
+      now: () => new Date(clock),
+      isAlive: () => alive,
+      reachable: () => true,
+      spawnExpect: () => ({ pid: ++pid }),
+      kill: () => {},
+      claudeBin: "/fake/claude",
+      logDir,
+      cwd: "/fake",
+      platform: "darwin" as const,
+    };
+    const exitOnce = () => {
+      alive = true;
+      expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+      alive = false; // quits before claim-next
+      expect(dispatchAttended(db, deps).decision.action).toBe("reap");
+    };
+    exitOnce();
+    // Right after the first early exit: no respawn until the backoff is over.
+    expect(dispatchAttended(db, deps).spawned).toBeUndefined();
+    clock += 61_000;
+    exitOnce();
+    clock += 121_000;
+    exitOnce();
+    clock += 241_000;
+    const r = dispatchAttended(db, deps);
+    expect(r.spawned).toBeUndefined();
+    const row = db.prepare("SELECT status, summary FROM executor_runs WHERE id=?").get(run.id) as { status: string; summary: string };
+    expect(row.status).toBe("failed");
+    expect(row.summary).toMatch(/exited 3 times/);
+  });
+
   it("types a stall reminder into a child whose run has been silent, once per STALL_NUDGE_MS, and stops once the run ends", () => {
     clearNotices();
     const db = openDb(":memory:");
@@ -457,6 +497,44 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     now += 2 * STALL_NUDGE_MS;
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
     expect(typed).toHaveLength(2);
+  });
+
+  it("reaps a session that stays silent through three reminders, and its run chains on", () => {
+    clearNotices();
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const logDir = tmp();
+    const run = startExecutor(db, U, "apply", { plan: [{ direction: "swe_general", count: 10, mode: "direct" }], chunk: 10 }, { logDir }, "user_chrome");
+    const typed: string[] = [];
+    const killed: number[] = [];
+    const t0 = Date.parse("2026-10-16T18:00:00Z");
+    let now = t0;
+    const deps = {
+      now: () => new Date(now),
+      isAlive: (pid: number) => !killed.includes(pid),
+      reachable: () => true,
+      write: (_pid: number, line: string) => { typed.push(line); return true; },
+      mtime: () => t0,
+      spawnExpect: () => ({ pid: 7 }),
+      kill: (pid: number) => { killed.push(pid); },
+      claudeBin: "/fake/claude",
+      logDir,
+      cwd: "/fake",
+      platform: "darwin" as const,
+    };
+    expect(dispatchAttended(db, deps).decision.action).toBe("spawn");
+    claimNextRun(db, U, "user_chrome");
+    for (let i = 1; i <= 3; i++) {
+      now = t0 + (i + 1) * STALL_NUDGE_MS;
+      expect(dispatchAttended(db, deps).decision.action).toBe("nudge");
+    }
+    expect(typed).toHaveLength(3);
+    now += STALL_NUDGE_MS;
+    const r = dispatchAttended(db, deps);
+    expect(r.decision).toMatchObject({ action: "reap", pid: 7 });
+    expect(killed).toEqual([7]);
+    const row = db.prepare("SELECT status FROM executor_runs WHERE id = ?").get(run.id) as { status: string };
+    expect(row.status).toBe("failed");
   });
 
   it("a reaped child's mid-segment plan chains on to a fresh session instead of dying with it", () => {

@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { createToken, listPersonalTokens, revokeToken } from "@/lib/api-tokens";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
+import { readJsonBody } from "@/lib/request-body";
 
 // 设置 → 账号 → 助手令牌 (spec 2026-09-13 accounts §2): personal bearer tokens for an attended
 // session or script on the user's own machine. The plaintext is returned exactly once, on create.
@@ -15,7 +16,7 @@ export const POST = withUser(async (req, { userId, via }) => {
     // Minting a long-lived credential needs the person, not one of their tokens.
     const t = messagesFor(langFromRequest(req)).errors;
     if (via !== "session") return NextResponse.json({ error: t.tokenCreateInBrowser }, { status: 403 });
-    const body = await req.json().catch(() => ({}));
+    const body = await readJsonBody(req, { allowEmpty: true });
     const name = String(body.name ?? "").trim() || t.defaultTokenName;
     const { token, row } = createToken(getDb(), { userId, kind: "personal", name });
     return NextResponse.json({ token, row }, { status: 201 });

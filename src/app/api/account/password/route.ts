@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuth } from "@/lib/auth";
 import { withUser } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
+import { readJsonBody } from "@/lib/request-body";
 
 // POST {newPassword} — give an account that signed up with Google (no credential row yet) a
 // password, so it can also sign in by email. Better Auth's setPassword is server-only; it
@@ -10,7 +11,7 @@ import { langFromRequest, messagesFor } from "@/i18n/server";
 export const POST = withUser(async (req, { via }) => {
   const t = messagesFor(langFromRequest(req)).errors;
   if (via !== "session") return NextResponse.json({ error: t.browserSessionRequired }, { status: 403 });
-  const body = await req.json().catch(() => ({}));
+  const body = await readJsonBody(req, { allowEmpty: true });
   const newPassword = String(body.newPassword ?? "");
   try {
     await getAuth().api.setPassword({ body: { newPassword }, headers: req.headers });

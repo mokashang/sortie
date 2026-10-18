@@ -40,7 +40,9 @@ export function middleware(req: NextRequest) {
     // A signed-in user landing on /login goes home (the reset/verify pages stay reachable).
     if (hasSession && (pathname === "/login" || pathname === "/signup")) {
       const next = req.nextUrl.searchParams.get("next");
-      return NextResponse.redirect(new URL(next && next.startsWith("/") ? next : "/", requestOrigin(req)));
+      // Same-site paths only: "//evil.com" and "/\evil.com" would leave the site (same rule as safeNext).
+      const local = next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\");
+      return NextResponse.redirect(new URL(local ? next : "/", requestOrigin(req)));
     }
     return NextResponse.next();
   }

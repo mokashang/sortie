@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { startExecutor, ExecutorKind, ExecutorChannel, StartOptions, ExecutorStartError } from "@/executor/runner";
 import { APPLY_CHUNK_SIZE } from "@/apply/continue";
-import { withUser, failResponse } from "@/lib/actor";
+import { withUser, failResponse, requireOwner } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
+import { readJsonBody } from "@/lib/request-body";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
 const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
@@ -31,13 +32,17 @@ const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 // A channel/mode mismatch (referrals or scanning on the headless channel) comes back as an
 // ExecutorStartError with a code; the message shown in the App's toast is picked in the UI
 // language of the request.
-export const POST = withUser(async (req, { userId }) => {
+export const POST = withUser(async (req, actor) => {
+  const { userId } = actor;
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const kind = body.kind as string;
     if (!VALID_KINDS.includes(kind as ExecutorKind)) {
       return NextResponse.json({ error: `invalid kind '${kind}' (must be one of ${VALID_KINDS.join(", ")})` }, { status: 400 });
     }
+    // JD review rewrites the shared jobs table for every account: the owner's runs only
+    // (its batch / report routes refuse anyone else).
+    if (kind === "jd_review") requireOwner(actor);
     const channel = kind === "jd_review" ? "headless" : ((body.channel as string) ?? "user_chrome");
     if (!VALID_CHANNELS.includes(channel as ExecutorChannel)) {
       return NextResponse.json(

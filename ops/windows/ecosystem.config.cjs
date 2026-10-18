@@ -22,8 +22,13 @@ module.exports = {
       restart_delay: 5000,
       kill_timeout: 10000,
       // Safety net for the always-on box: if the server process itself ever leaks past this,
-      // pm2 restarts it (detached executor children are unaffected). Normal footprint is ~300 MB.
-      max_memory_restart: "1500M",
+      // pm2 restarts it (detached executor children are unaffected). pm2 reads the working set,
+      // and since the DB is read through mmap (2214241) the resident pages of jobseeker.db count
+      // in it: heap ~500 MB + a ~1 GB database peaked at 1.58 GB on 2026-10-16, past the old
+      // 1500M limit, so a healthy server would have been restarted mid-run as the table grew.
+      // Changing this needs `pm2 delete sortie; pm2 start ops\windows\ecosystem.config.cjs --only sortie; pm2 save`
+      // (a plain `pm2 restart` keeps the options the app was started with).
+      max_memory_restart: "3500M",
       out_file: path.join(root, "data", "pm2-out.log"),
       error_file: path.join(root, "data", "pm2-err.log"),
       merge_logs: true,

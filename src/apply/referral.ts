@@ -246,13 +246,19 @@ export interface ReferralCard {
 }
 
 function toCardOutreach(db: DB, userId: string, o: ReturnType<typeof outreachesForJobs>[number], nowMs: number): ReferralCardOutreach {
-  const person = db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as {
-    relation: string | null;
-    linkedin_url: string | null;
-    notes: string | null;
-  };
+  const person = (db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as
+    | { relation: string | null; linkedin_url: string | null; notes: string | null }
+    | undefined) ?? { relation: null, linkedin_url: null, notes: null };
   const sent = o.threadLog.find((t) => t.dir === "sent");
-  const plan = followupPlan(db, userId, o.id, nowMs);
+  // One odd conversation must not take the whole board down (the board feeds 今日, 投递 and the
+  // 5-second overview poll): a plan that throws shows as "waiting".
+  let plan: ReturnType<typeof followupPlan>;
+  try {
+    plan = followupPlan(db, userId, o.id, nowMs);
+  } catch (e) {
+    console.error(`[referral] follow-up plan for outreach ${o.id} failed`, e);
+    plan = { action: "none", reason: "waiting" };
+  }
   return {
     id: o.id,
     personId: o.personId,

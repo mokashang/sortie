@@ -49,6 +49,7 @@ export function GoogleButton({ onClick, loading, children }: { onClick: () => vo
 
 // Only same-site paths are honoured as a post-login destination.
 export function safeNext(raw: string | null | undefined, fallback = "/"): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return fallback;
+  // "/\evil.com" counts too: browsers read a backslash after the first slash as a second slash.
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return fallback;
   return raw;
 }
