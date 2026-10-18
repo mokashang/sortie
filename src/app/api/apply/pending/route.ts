@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { pendingConfirmations, confirmStatus } from "@/apply/queue";
 import { pendingInfo } from "@/apply/info";
+import { planAlerts } from "@/apply/plan-alerts";
 import { withEmailCodes } from "@/apply/email-code";
 import { sessionOfCaller } from "@/executor/sessions";
 import { heldByOtherSession } from "@/executor/attended";
@@ -28,11 +29,16 @@ export const GET = withUser(async (req, actor) => {
     let pending = pendingConfirmations(db, userId);
     const caller = sessionOfCaller(db, actor);
     if (caller) pending = pending.filter((p) => !heldByOtherSession(db, userId, p.jobId, caller));
-    // needsInfo: the 待处理 cards (executor waiting on the user, or paused with its to-do items kept).
+    // needsInfo: the 待处理 cards (executor waiting on the user, or paused with its to-do items kept);
+    // planAlerts: the task-level ones (a plan that stopped short, a task that gave up — plan-alerts.ts).
     // An emailed verification code the App found (src/apply/email-code.ts) rides along only for the
     // signed-in user's browser — never for an assistant's token: the code is for the user to type.
     const needsInfo = pendingInfo(db, userId, langFromRequest(req));
-    return NextResponse.json({ pending, needsInfo: actor.via === "session" ? withEmailCodes(needsInfo, userId) : needsInfo });
+    return NextResponse.json({
+      pending,
+      needsInfo: actor.via === "session" ? withEmailCodes(needsInfo, userId) : needsInfo,
+      planAlerts: planAlerts(db, userId),
+    });
   } catch (e) {
     return failResponse(e);
   }

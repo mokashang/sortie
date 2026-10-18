@@ -12,7 +12,7 @@ export function isApplyTab(v: unknown): v is ApplyTab {
 
 // The number on each tab: the same figures the shell badge and the 今日 ledger already show.
 export function applyTabCounts(c: OverviewCounts): ApplyTabCounts {
-  return { todo: c.needsInfo, confirm: c.awaitingConfirm, referrals: c.referralInFlight, submitted: c.submittedToday };
+  return { todo: c.needsInfo + c.planAlerts, confirm: c.awaitingConfirm, referrals: c.referralInFlight, submitted: c.submittedToday };
 }
 
 // Where the page opens without ?tab=: the first inbox with something in it, in the order the

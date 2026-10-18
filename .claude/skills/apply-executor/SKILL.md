@@ -118,6 +118,15 @@ Only once both checks pass, tell the user you're starting and begin the loop bel
 
 **Segments (接力, CLAUDE.md §3.3b).** If the run's `options.chunk` is set (the App sets 10 for every plan run), stop the loop once that many applications are filled-and-reported (`awaiting_confirm`) plus referral jobs claimed (`referral_seeking`), and finish normally with `status: "done"` — the App queues the next segment itself with the remaining plan (`options.chain` tells you which segment this is and the cumulative progress; log that on your first line). Never quit early because the plan looks too big, and never push past the chunk.
 
+**Only the user stops a task (2026-10-16).** Task #453 halted a 1530-job plan on its own over
+LinkedIn pacing and wrote three options into its summary "for the user to choose" — nobody reads
+summaries, and the plan sat dead for 11 hours. Never finish with `status: "stopped"` (the App
+records it as `done` and queues the next segment anyway) and never ask the user anything in a
+summary or log line. Pacing is the App's job (the daily LinkedIn invite budget, §2b); anything
+only the user can do is a per-job `needs_info` card (§5). If you must end a segment early (the §7
+breakers), finish it `done` with a plain account of what happened — the App decides what comes
+next.
+
 Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-breaker condition in
 §7 fires:
 
@@ -259,8 +268,15 @@ The authoritative protocol is **CLAUDE.md §3.10** — read it before the first 
 short, per company:
 
 1. `POST /api/apply/next {"direction": "<slug>", "mode": "referral"}` → `ReferralTask`
-   `{company, jobs:[{jobId,title,applyUrl,direction,score}], knownPeople:[…], skipPersonIds:[…]}`.
+   `{company, jobs:[{jobId,title,applyUrl,direction,score}], knownPeople:[…], skipPersonIds:[…], maxPeople, inviteBudget}`.
    Those jobs are now `referral_seeking`; each one counts toward the entry's `count`.
+   **The App paces LinkedIn (2026-10-16): 20 invites a day.** `maxPeople` is how many people to
+   contact at this company (fewer than three when the day's budget is nearly spent). A response
+   `{"done": true, "reason": "invite_budget", "message": …}` means today's budget is spent: skip
+   every remaining referral entry of the plan and go on with its direct entries — do not stop the
+   task; the App picks referrals up again tomorrow. `POST /api/referral/outreach` answering 409
+   `invite_budget_exhausted` means the same mid-company: draft for nobody else (the App puts a
+   company nobody was asked at back in the queue), then move on to the direct entries.
 2. Find up to **THREE** people per company (a net, not a single bet), in this order, in the
    user's Chrome (read-only on LinkedIn until the send step): uncontacted USC alumni from
    `knownPeople` → the USC alumni page filtered by company
@@ -302,8 +318,11 @@ short, per company:
    c/d → `POST /api/network/report {"outreachId":<id>,"event":"sent","text":"<what went out>"}`.
    `archived` → skip. Timeout → leave it; a later approval auto-enqueues a resume run.
 6. ≥30s between people and between companies; ≤10 connection requests and ≤15 DMs per run
-   (three companies × three people is already near the cap — leave the rest for the next run);
-   stop on any CAPTCHA/rate-limit/verification signal.
+   (three companies × three people is already near the cap — leave the rest for the next run).
+   On any LinkedIn CAPTCHA / rate-limit / "weekly invitation limit" / verification / unusual-activity
+   signal: don't retry or work around it — `POST /api/referral/invite-budget
+   {"limited":true,"reason":"<what LinkedIn showed, ASCII>"}` (no more invites today), then carry on
+   with the plan's direct entries and finish the segment `done` as usual.
 
 Resume runs (`options.resume`) must also send `GET /api/network/sendables?jobLinked=true` rows with
 `channel: "linkedin"` the same way, after re-submitting approved fills.
@@ -575,7 +594,8 @@ Always write a short, specific `label`/`hint` — it's what the user reads on th
   from looking like a bot hammering ATS endpoints back to back.
 - **3 consecutive pauses** (login / manual items, info-request timeouts, hard-no archives) or
   **2 consecutive `error` reports** → stop the loop immediately, do not take another task, and
-  report a summary to the user: what got submitted so far this session, and what the last few
-  stops were. `closed` / `already_applied` never count.
+  finish the segment `done` with a summary of what got submitted so far and what the last few
+  stops were (a record, not a question — the App queues the next segment and raises a 待处理
+  card itself if the plan stops making progress). `closed` / `already_applied` never count.
 - A single pause or `error` in isolation does not trip the breaker — only a run of consecutive
   ones. A successful `awaiting_confirm` report resets the consecutive counters.
