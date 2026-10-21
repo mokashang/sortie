@@ -3,8 +3,10 @@ import { BoardRow } from "@/scanner/boards";
 import { FetchCtx } from "@/scanner/sources/types";
 import { htmlToText } from "@/scanner/html";
 import { isEntryLevelTitle } from "@/scanner/entry-level";
+import { httpError, pastDeadline, rotate, wanted } from "@/scanner/sources/util";
 
-// iCIMS 只有网页:搜索页解析职位卡片,再开每个岗的 iframe 页取正文和头部字段。请求慢,并发 2。
+// iCIMS 只有网页:搜索页解析职位卡片,再开每个岗的 iframe 页取正文和头部字段。请求慢,并发 2;
+// 整个板块受调度器的截止时刻约束(ctx.deadline),详情只给过得了标题门的新岗拉。
 const KEYWORDS = ["engineer", "software", "graduate", "intern"];
 export interface IcimsCard { id: string; url: string; title: string; location: string | null; }
 
@@ -40,10 +42,12 @@ export async function fetchIcims(board: BoardRow, ctx: FetchCtx): Promise<RawJob
   const host = board.ident;
   const pages = ctx.depth === "core" ? 5 : 2;
   const cards = new Map<string, IcimsCard>();
-  for (const kw of KEYWORDS) {
+  let cut = false, requests = 0;
+  search: for (const kw of rotate(KEYWORDS, ctx.now)) {
     for (let p = 0; p < pages; p++) {
+      if (requests++ > 0 && pastDeadline(ctx)) { cut = true; break search; }
       const res = await ctx.fetcher(`https://${host}/jobs/search?ss=1&searchKeyword=${encodeURIComponent(kw)}&in_iframe=1&pr=${p}`, { headers: { accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
-      if (!res.ok) throw new Error(`icims ${host}: HTTP ${res.status}`);
+      if (!res.ok) throw httpError(`icims ${host}`, res);
       const found = parseIcimsSearch(await res.text(), host);
       for (const c of found) if (!cards.has(c.id)) cards.set(c.id, c);
       if (found.length === 0) break;
@@ -51,7 +55,8 @@ export async function fetchIcims(board: BoardRow, ctx: FetchCtx): Promise<RawJob
   }
   const out: RawJob[] = [];
   for (const c of cards.values()) {
-    if (!isEntryLevelTitle(c.title) || ctx.isKnownUrl(c.url)) continue;
+    if (!isEntryLevelTitle(c.title) || !wanted(ctx, c.title) || ctx.isKnownUrl(c.url)) continue;
+    if (pastDeadline(ctx)) { cut = true; break; }             // 剩下的新岗这次不返回,下次轮询再拉
     let jdText = "", location = c.location, postedAt: string | null = null;
     try {
       const d = await ctx.fetcher(`${c.url}?in_iframe=1`, { headers: { accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
@@ -65,5 +70,6 @@ export async function fetchIcims(board: BoardRow, ctx: FetchCtx): Promise<RawJob
     } catch { /* 空正文入库 */ }
     out.push({ company: board.company ?? host, title: c.title, location, jdText, applyUrl: c.url, source: "icims", ats: "icims", postedAt });
   }
+  if (cut) ctx.truncated?.();
   return out;
 }
