@@ -8,6 +8,7 @@ import { useMediaQuery } from "@/app/lib/use-media";
 import { cx } from "@/app/lib/cx";
 import { Button, EmptyState, Field, Input, Segmented, Select, SkeletonRows, Tabs, useToast } from "@/app/components/ui";
 import { ScanMenu } from "@/app/components/scan-menu";
+import { useOverview } from "@/app/components/overview-context";
 import { useLang, useMessages } from "@/i18n/client";
 import { JobRow, type JobRowData, type RowMode } from "./job-row";
 import { JobDrawer, JobPanel } from "./job-drawer";
@@ -61,6 +62,7 @@ export interface QueueClientProps {
 
 export function QueueClient(props: QueueClientProps) {
   const m = useMessages();
+  const { data: overview } = useOverview();
   const lang = useLang();
   const { pageSize } = props;
   const [tabs, setTabs] = useState<TabInfo[]>(props.tabs);
@@ -370,7 +372,9 @@ export function QueueClient(props: QueueClientProps) {
   const pageSelectedCount = result.rows.reduce((n, r) => n + (selectedIds.has(r.id) ? 1 : 0), 0);
   const pageAllSelected = result.rows.length > 0 && pageSelectedCount === result.rows.length;
   const pageSomeSelected = pageSelectedCount > 0;
-  const rowHandlers = { onPin: togglePin, onMode: setRowMode, onSkip: skipRow };
+  // No 内推 / 海投 controls for an account that cannot look for referrals (not the server's owner).
+  const noReferrals = overview?.isOwner === false;
+  const rowHandlers = { onPin: togglePin, onMode: noReferrals ? undefined : setRowMode, onSkip: skipRow };
   const detailProps = {
     row: activeRow,
     rows: result.rows,
@@ -436,7 +440,7 @@ export function QueueClient(props: QueueClientProps) {
                 }}
               />
             </div>
-            {!isAllTab ? (
+            {!isAllTab && !noReferrals ? (
               <Segmented<QueueModeKey>
                 size="sm"
                 ariaLabel={m.queue.toolbar.modeAriaLabel}
@@ -490,7 +494,7 @@ export function QueueClient(props: QueueClientProps) {
                   active={r.id === activeId}
                   busy={busyIds.has(r.id)}
                   onOpen={setActiveId}
-                  selectable={!isAllTab}
+                  selectable={!isAllTab && !noReferrals}
                   selected={selectedIds.has(r.id)}
                   onSelect={selectRow}
                   {...rowHandlers}
@@ -527,7 +531,7 @@ export function QueueClient(props: QueueClientProps) {
 
       {!wide ? <JobDrawer {...detailProps} /> : null}
 
-      {selectedIds.size > 0 && !isAllTab ? (
+      {selectedIds.size > 0 && !isAllTab && !noReferrals ? (
         <div className="select-bar" role="region" aria-label={m.queue.select.selected(selectedIds.size)}>
           <span className="select-bar-count">{m.queue.select.selected(selectedIds.size)}</span>
           <Button size="sm" variant="primary" icon={<Handshake size={14} />} loading={bulkBusy} onClick={() => bulkMode("referral")}>

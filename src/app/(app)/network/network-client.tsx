@@ -28,7 +28,7 @@ export function NetworkClient() {
   const [draftOpen, setDraftOpen] = useState(false);
   const isMobile = useIsMobile();
   const { toast } = useToast();
-  const { refresh: refreshOverview } = useOverview();
+  const { data: overview, refresh: refreshOverview } = useOverview();
 
   const jobMap = useMemo(() => new Map(jobs.map((j) => [j.id, j])), [jobs]);
 
@@ -122,7 +122,7 @@ export function NetworkClient() {
 
   return (
     <>
-      <DraftsCards drafts={drafts} sendables={sendables} edited={edited} onEdit={(id, text) => setEdited((p) => ({ ...p, [id]: text }))} onApprove={approve} onReject={reject} onMarkSent={markSent} busyId={busyId} />
+      <DraftsCards drafts={drafts} sendables={sendables} edited={edited} onEdit={(id, text) => setEdited((p) => ({ ...p, [id]: text }))} onApprove={approve} onReject={reject} onMarkSent={markSent} busyId={busyId} selfSend={overview?.chromeAvailable === false} />
 
       <Section title={m.network.contacts.title} count={people.length}>
         <div className="network-grid">

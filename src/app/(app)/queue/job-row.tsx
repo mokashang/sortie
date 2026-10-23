@@ -40,7 +40,9 @@ export type RowMode = "referral" | "direct" | null;
 
 export interface RowHandlers {
   onPin: (row: JobRowData, pinned: boolean) => void;
-  onMode: (row: JobRowData, mode: RowMode) => void;
+  // Absent for an account that cannot look for referrals (src/executor/channel.ts referralsPossible):
+  // no 内推 / 海投 chip, menu item or switch anywhere on the page.
+  onMode?: (row: JobRowData, mode: RowMode) => void;
   onSkip: (row: JobRowData) => void;
 }
 
@@ -71,14 +73,17 @@ export function rowMenuItems(row: JobRowData, allTab: boolean, busy: boolean, h:
       onSelect: () => h.onPin(row, !row.pinned),
       disabled: busy,
     });
-    items.push({
-      label: referral ? m.queue.actions.switchToDirect : m.queue.actions.switchToReferral,
-      icon: referral ? <Send size={14} /> : <Handshake size={14} />,
-      onSelect: () => h.onMode(row, referral ? "direct" : "referral"),
-      disabled: busy,
-    });
-    if (row.apply_mode) {
-      items.push({ label: m.queue.actions.followSuggestion, icon: <Undo2 size={14} />, onSelect: () => h.onMode(row, null), disabled: busy });
+    const onMode = h.onMode;
+    if (onMode) {
+      items.push({
+        label: referral ? m.queue.actions.switchToDirect : m.queue.actions.switchToReferral,
+        icon: referral ? <Send size={14} /> : <Handshake size={14} />,
+        onSelect: () => onMode(row, referral ? "direct" : "referral"),
+        disabled: busy,
+      });
+      if (row.apply_mode) {
+        items.push({ label: m.queue.actions.followSuggestion, icon: <Undo2 size={14} />, onSelect: () => onMode(row, null), disabled: busy });
+      }
     }
     items.push("sep");
     items.push({ label: m.common.skip, icon: <SkipForward size={14} />, danger: true, onSelect: () => h.onSkip(row), disabled: busy });
@@ -187,7 +192,7 @@ export function JobRow({ row, allTab, active, busy, onOpen, onPin, onMode, onSki
           {allTab ? localShort(row.created_at ?? null) : rel.label}
         </span>
         {!allTab && rel.fresh ? <Chip tone="good">{m.queue.row.fresh}</Chip> : null}
-        {mode && inQueue ? (
+        {mode && inQueue && onMode ? (
           <Chip tone={mode === "referral" ? "good" : "neutral"} title={row.referral_reason ?? undefined}>
             {row.apply_mode ? m.queue.row.manualMode(modeText) : modeText}
           </Chip>

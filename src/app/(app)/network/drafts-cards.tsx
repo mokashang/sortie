@@ -1,7 +1,7 @@
 "use client";
-import { Mail } from "lucide-react";
+import { Copy, ExternalLink, Mail } from "lucide-react";
 import { labelOf } from "@/app/lib/labels";
-import { Button, Card, Chip, EmptyState, LinkButton, Section, Textarea } from "@/app/components/ui";
+import { Button, Card, Chip, EmptyState, LinkButton, Section, Textarea, useToast } from "@/app/components/ui";
 import { useMessages } from "@/i18n/client";
 import { mailtoFor, type OutreachRow, type SendableRow } from "./network-types";
 
@@ -13,11 +13,23 @@ export interface DraftsCardsProps {
   onApprove: (row: OutreachRow) => void;
   onReject: (row: OutreachRow) => void;
   onMarkSent: (row: SendableRow) => void;
+  // The account has no assistant that can drive its LinkedIn (not the server's owner, nothing of its
+  // own connected): approved LinkedIn messages are the user's to send by hand.
+  selfSend?: boolean;
   busyId: number | null;
 }
 
 // 草稿待批 + 已批准待发 for coffee-chat / exploratory outreach (not job-linked).
-export function DraftsCards({ drafts, sendables, edited, onEdit, onApprove, onReject, onMarkSent, busyId }: DraftsCardsProps) {
+export function DraftsCards({ drafts, sendables, edited, onEdit, onApprove, onReject, onMarkSent, busyId, selfSend }: DraftsCardsProps) {
+  const { toast } = useToast();
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: m.network.drafts.copied, tone: "good" });
+    } catch {
+      toast({ title: m.network.drafts.copyFailed, tone: "warn" });
+    }
+  }
   const m = useMessages();
   return (
     <>
@@ -58,7 +70,7 @@ export function DraftsCards({ drafts, sendables, edited, onEdit, onApprove, onRe
       </Section>
 
       {sendables.length > 0 ? (
-        <Section title={m.network.drafts.sendablesTitle} count={sendables.length} description={m.network.drafts.sendablesDescription}>
+        <Section title={m.network.drafts.sendablesTitle} count={sendables.length} description={selfSend ? m.network.drafts.sendablesDescriptionSelf : m.network.drafts.sendablesDescription}>
           <div className="col gap-3">
             {sendables.map((row) => {
               const mailto = mailtoFor(row);
@@ -72,7 +84,22 @@ export function DraftsCards({ drafts, sendables, edited, onEdit, onApprove, onRe
                   </div>
                   <div className="msg-quote mt-3">{row.draft}</div>
                   <div className="row mt-3">
-                    {row.channel === "linkedin" ? (
+                    {row.channel === "linkedin" && selfSend ? (
+                      <>
+                        <Button size="sm" icon={<Copy size={13} />} onClick={() => void copy(row.draft ?? "")}>
+                          {m.network.drafts.copy}
+                        </Button>
+                        {row.linkedinUrl ? (
+                          <LinkButton href={row.linkedinUrl} external size="sm" variant="ghost" icon={<ExternalLink size={13} />}>
+                            {m.network.drafts.openProfile}
+                          </LinkButton>
+                        ) : null}
+                        <Button variant="ghost" size="sm" onClick={() => onMarkSent(row)} loading={busyId === row.id}>
+                          {m.network.drafts.markSent}
+                        </Button>
+                        <span className="muted xs">{m.network.drafts.selfSendHint}</span>
+                      </>
+                    ) : row.channel === "linkedin" ? (
                       <Chip tone="info" size="md">
                         {m.network.drafts.waitingForAssistant}
                       </Chip>

@@ -128,7 +128,7 @@ export function DetailBody({
   row: JobRowData;
   allTab: boolean;
   busy: boolean;
-  onMode: RowHandlers["onMode"];
+  onMode?: RowHandlers["onMode"];
 }) {
   const m = useMessages();
   const lang = useLang();
@@ -205,7 +205,7 @@ export function DetailBody({
         </section>
       ) : null}
 
-      {inQueue ? (
+      {inQueue && onMode ? (
         <section className="detail-section">
           <h4>{m.queue.detail.referral}</h4>
           <div className="row">

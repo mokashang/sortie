@@ -237,7 +237,9 @@ export function buildFollowupPrompt(input: FollowupPromptInput): LlmRequest {
   const system = [
     ...FOLLOWUP_VOICE,
     guidance,
-    input.person.relation === "alum" ? "They are a fellow USC alum; the shared school was already mentioned — don't lean on it again." : "",
+    input.person.relation === "alum"
+      ? `They are a fellow alum of ${input.profile.school?.trim() || "the candidate's school"}; the shared school was already mentioned — don't lean on it again.`
+      : "",
     "Return ONLY JSON in the shape given in the prompt — no commentary, no markdown fences.",
   ]
     .filter(Boolean)
