@@ -651,7 +651,7 @@ export function executorStatus(db: DB, userId: string): RunStatusRow[] {
 // A start refused because the channel cannot do what was asked (referrals or scanning on the
 // headless channel). The code lets the API route pick a message in the UI language
 // (src/i18n/messages/errors.ts); the English text is for logs and tests.
-export type ExecutorStartErrorCode = "referral_needs_attended" | "scan_needs_attended";
+export type ExecutorStartErrorCode = "referral_needs_attended" | "scan_needs_attended" | "attended_needs_session";
 export class ExecutorStartError extends Error {
   code: ExecutorStartErrorCode;
   constructor(code: ExecutorStartErrorCode, message: string) {

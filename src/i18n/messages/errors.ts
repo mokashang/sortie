@@ -7,6 +7,7 @@ export const errors = defineMessages({
   zh: {
     referral_needs_attended: "找内推只能「在我的 Chrome 里」进行——后台浏览器只做海投。",
     scan_needs_attended: "扫描只能「在我的 Chrome 里」进行——LinkedIn、Handshake、Tesla 需要你已登录的浏览器。",
+    attended_needs_session: "「在我的 Chrome 里」只会自动为主账号接单——这台电脑上的 Chrome 是主账号的。请改用后台浏览器,或先在你自己的电脑上用设置页的助手令牌连上一个会话,再开始。",
     applyRunBusy: "已有投递任务在跑,结束后请在卡片上再点一次「开始投」。",
     signInFirst: "登录后再试",
     ownerOnly: "只有这台机器的主账号可以改这个",
@@ -27,6 +28,7 @@ export const errors = defineMessages({
   en: {
     referral_needs_attended: "Finding referrals only works in your own Chrome — the background browser can only apply directly.",
     scan_needs_attended: "Scanning only works in your own Chrome — LinkedIn, Handshake and Tesla need your logged-in browser.",
+    attended_needs_session: "Tasks in your own Chrome start automatically only for the owner account — the Chrome on this computer is theirs. Use the background browser, or first connect a session on your own computer with an assistant token from Settings.",
     applyRunBusy: "An apply task is already running. Press Start applying on the card again once it finishes.",
     signInFirst: "Sign in and try again",
     ownerOnly: "Only this machine's owner account can change this",

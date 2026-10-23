@@ -651,3 +651,26 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(attendedSpawnModeFromEnv({ ATTENDED_SPAWN_MODE: "bogus" })).toBe("pty");
   });
 });
+
+import { failUnservableMemberRuns, MEMBER_QUEUED_GIVE_UP_MS, recordHeartbeat } from "@/executor/attended";
+import { seedUser } from "./helpers";
+describe("another account's Chrome task with no session of its own", () => {
+  it("is failed after the give-up window instead of sitting queued forever; the owner's and a connected member's stay", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    seedUser(db, "m1", "m1@example.com", { role: "member" });
+    seedUser(db, "m2", "m2@example.com", { role: "member" });
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "sortie-member-"));
+    const ownerRun = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    const lonely = startExecutor(db, "m1", "apply", {}, { logDir }, "user_chrome");
+    const connected = startExecutor(db, "m2", "apply", {}, { logDir }, "user_chrome");
+    const later = new Date(Date.now() + MEMBER_QUEUED_GIVE_UP_MS + 60_000);
+    recordHeartbeat(db, "m2", "desktop-1", "desktop", later);
+    expect(failUnservableMemberRuns(db, new Date())).toEqual([]); // too early for anyone
+    expect(failUnservableMemberRuns(db, later)).toEqual([lonely.id]);
+    const status = (id: number) => (db.prepare("SELECT status FROM executor_runs WHERE id = ?").get(id) as { status: string }).status;
+    expect(status(lonely.id)).toBe("failed");
+    expect(status(connected.id)).toBe("queued");
+    expect(status(ownerRun.id)).toBe("queued");
+  });
+});

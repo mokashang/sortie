@@ -159,6 +159,35 @@ export function heartbeatAgeMs(db: DB, userId: string, now = new Date()): number
   const t = Date.parse(hb.at);
   return Number.isNaN(t) ? null : Math.max(0, now.getTime() - t);
 }
+
+// Another account's task in its own Chrome is only ever taken by a session of that account (a
+// desktop session heartbeating with a personal token): the dispatcher launches assistants for the
+// owner alone, since this machine's Chrome is the owner's. Queued from a card, the chat or a
+// follow-up with no such session, it sat at "queued" forever (#609, 2026-10-22). After this long
+// with no heartbeat it is failed, so the task card says so instead.
+export const MEMBER_QUEUED_GIVE_UP_MS = 10 * 60 * 1000;
+export function failUnservableMemberRuns(db: DB, now = new Date()): number[] {
+  const owner = ownerId(db);
+  if (!owner) return [];
+  const rows = db
+    .prepare("SELECT id, user_id, started_at FROM executor_runs WHERE channel = 'user_chrome' AND status = 'queued' AND user_id IS NOT ?")
+    .all(owner) as { id: number; user_id: string; started_at: string | null }[];
+  const failed: number[] = [];
+  for (const r of rows) {
+    const queuedAt = r.started_at ? Date.parse(`${r.started_at.replace(" ", "T")}Z`) : NaN;
+    if (Number.isFinite(queuedAt) && now.getTime() - queuedAt < MEMBER_QUEUED_GIVE_UP_MS) continue;
+    const hb = heartbeatAgeMs(db, r.user_id, now);
+    if (hb != null && hb < HEARTBEAT_STALE_MS) continue;
+    const done = db
+      .prepare("UPDATE executor_runs SET status = 'failed', summary = ?, ended_at = datetime('now') WHERE id = ? AND status = 'queued'")
+      .run("not started: no assistant session is connected for this account (the Chrome on this computer belongs to the owner account); use the background browser, or connect a session with an assistant token from Settings", r.id);
+    if (done.changes > 0) {
+      settleRunOutcome(db, r.id);
+      failed.push(r.id);
+    }
+  }
+  return failed;
+}
 // Every spawned session, oldest first.
 export function currentSpawns(db: DB): SpawnRecord[] {
   return listSpawns(db);

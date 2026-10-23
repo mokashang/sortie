@@ -47,3 +47,12 @@ describe("owner-only routes refuse another account", () => {
     expect((await call()).status).toBe(403);
   });
 });
+
+describe("another account starting a task in its own Chrome", () => {
+  it("is told no session could take it, instead of queueing a task nobody will run", async () => {
+    const res = await executorStart(req("/api/executor/start", { kind: "apply", channel: "user_chrome", options: { plan: [{ direction: "embedded", count: 12, mode: "direct" }] } }), CTX);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/owner|主账号/);
+    expect((db.prepare("SELECT COUNT(*) n FROM executor_runs WHERE user_id = 'm1'").get() as { n: number }).n).toBe(0);
+  });
+});
