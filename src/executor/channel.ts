@@ -3,6 +3,7 @@ import { ownerId } from "@/lib/users";
 import { heartbeatAgeMs, HEARTBEAT_STALE_MS } from "@/executor/attended";
 import { isAlive, lastRunChannel, startExecutor, type ExecutorChannel, type StartOptions } from "@/executor/runner";
 import { hasResumeFor } from "@/apply/resume-select";
+import { membersMayUseBackground } from "@/executor/member-policy";
 
 // Which channel an account's tasks can actually run on (2026-10-22). The box's Chrome — the one
 // the dispatcher spawns `claude --chrome` sessions into — is the owner's: it is signed into the
@@ -54,6 +55,8 @@ function wantsReferral(o: StartOptions): boolean {
 
 export const MEMBER_HANDOFF_SUMMARY = (to: number) => `改在后台浏览器里做:任务 #${to}(这台服务器只能操作主账号的 Chrome)`;
 export const MEMBER_NO_RESUME_SUMMARY = "还没有简历,这个投递任务没法开始:先到档案页「简历」上传你的简历(PDF),再在「投递」重新开始计划。";
+export const MEMBER_NO_BACKGROUND_SUMMARY =
+  "没有开始:这台服务器只能操作主账号的 Chrome,而主账号在设置里关掉了「其他账号可以用后台浏览器」;要投递得先在你自己的电脑上用设置页的助手令牌连上一个会话,或请主账号重新打开这个开关。";
 export const MEMBER_UNSERVABLE_SUMMARY =
   "这项任务要在你自己的 Chrome 里做(找内推 / 扫描 / 找人都要用你登录好的 LinkedIn),而这台服务器只能操作主账号的 Chrome;后台浏览器能替你做的是海投。";
 
@@ -86,6 +89,14 @@ export function handOffUnservableRuns(
       options = JSON.parse(row.options ?? "{}") as StartOptions;
     } catch {
       options = {};
+    }
+    if (row.kind === "apply" && !wantsReferral(options) && !membersMayUseBackground(db)) {
+      db.prepare("UPDATE executor_runs SET status = 'failed', summary = ?, ended_at = datetime('now') WHERE id = ? AND status = 'queued'").run(
+        MEMBER_NO_BACKGROUND_SUMMARY,
+        row.id
+      );
+      out.closed.push(row.id);
+      continue;
     }
     if (row.kind === "apply" && !wantsReferral(options)) {
       // A plan no resume can go with would only run dry (the picker skips resume-less tracks):

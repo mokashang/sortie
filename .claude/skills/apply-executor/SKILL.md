@@ -452,6 +452,14 @@ never even attempt it before polling confirms approval. Concretely:
      re-filled data before trying to submit again. Never submit on an approval that was granted
      for values the form no longer holds.
 3. Click the actual final Submit/Apply button on the page.
+   - **The click is refused by your own permission check** (a denied tool call, "Real-World
+     Transactions" — dispatcher-spawned sessions hit this on 2026-10-22, every time): do not retry,
+     do not look for another way to click it, and do not stop to wait for someone to allow it.
+     `POST /api/apply/report {"jobId": …, "status": "submit_blocked", "reason": "<what refused it,
+     ASCII>"}` — the App turns it into a 「点提交」 card (the user clicks Submit in that tab and
+     presses 我提交了) and pushes a notification — keep the tab open (never close it), and carry on
+     with the next job; the segment counts it as filled. In a resume phase, an approved fill you
+     are refused on gets the same one report; a job already on such a card is the user's, leave it.
 4. Take a screenshot (or `get_page_text`) of the resulting confirmation page/state to sanity-check
    it actually went through (a "Thank you for applying" message, a confirmation number, a URL
    change to a success page, etc.).

@@ -18,6 +18,7 @@ import {
   attendedSpawnModeFromEnv,
   HEARTBEAT_STALE_MS,
   IDLE_REAP_MS,
+  SHUTDOWN_GRACE_MS,
   NOTICE_RETRY_MS,
   STALL_NUDGE_MS,
   notifyJobSession,
@@ -27,6 +28,7 @@ import type { WindowsSpawnOptions } from "@/executor/attended-win";
 import { clearNotices } from "@/executor/attended-session";
 import { startExecutor, finishRun, claimNextRun } from "@/executor/runner";
 import { seedOwner } from "./helpers";
+import { SECRET_FILE_DENY } from "@/ai/runtime";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
@@ -170,8 +172,17 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     clock = new Date(clock.getTime() + IDLE_REAP_MS - 1000);
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
     clock = new Date(clock.getTime() + 2000);
+    // It is told to close its own tabs first (a killed session leaves its tab group behind where no
+    // later session can reach it); the reap follows SHUTDOWN_GRACE_MS later.
     const r3 = dispatchAttended(db, deps);
     expect(r3.decision.action).toBe("reap");
+    expect(killed).toEqual([]);
+    expect(typed.at(-1)).toMatchObject({ pid: 4242, line: expect.stringContaining("[Sortie] shutting down") });
+    clock = new Date(clock.getTime() + SHUTDOWN_GRACE_MS - 1000);
+    dispatchAttended(db, deps);
+    expect(killed).toEqual([]);
+    clock = new Date(clock.getTime() + 1000);
+    dispatchAttended(db, deps);
     expect(killed).toEqual([4242]);
     expect(currentSpawn(db)).toBeNull();
   });
@@ -291,6 +302,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     clock = new Date(clock.getTime() + IDLE_REAP_MS - 1);
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
     clock = new Date(clock.getTime() + 1);
+    expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "reap", pid: 28236 });
+    expect(killed).toEqual([]); // told to close its tabs first
+    clock = new Date(clock.getTime() + SHUTDOWN_GRACE_MS);
     expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "reap", pid: 28236 });
     expect(killed).toEqual([28236]);
     expect(currentSpawn(db)).toBeNull();
@@ -596,7 +610,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
 
   it("buildAttendedArgs is the single argv both launchers hand to claude", () => {
     const args = buildAttendedArgs({ runId: 3, prompt: "P" });
-    expect(args).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools", ...ATTENDED_ALLOWED_TOOLS, "-n", "sortie-run-3", "P"]);
+    expect(args).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools", ...ATTENDED_ALLOWED_TOOLS, "--disallowedTools", ...SECRET_FILE_DENY, "-n", "sortie-run-3", "P"]);
+    // The server's secrets stay unreadable to the session (its run token is in its prompt).
+    expect(SECRET_FILE_DENY).toEqual(expect.arrayContaining(["Read(./.env)", "Read(./data/internal-token)", "Bash(cat data/internal-token:*)"]));
     expect(buildAttendedArgs({ runId: 3, prompt: "P", sessionName: "custom" })).toContain("custom");
     const script = buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 3, prompt: "P" });
     for (const tool of ATTENDED_ALLOWED_TOOLS) expect(script).toContain(tool);
@@ -651,3 +667,5 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(attendedSpawnModeFromEnv({ ATTENDED_SPAWN_MODE: "bogus" })).toBe("pty");
   });
 });
+
+

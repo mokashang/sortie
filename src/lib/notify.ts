@@ -1,4 +1,7 @@
 import { execFile } from "child_process";
+import type { DB } from "@/lib/db";
+import { storedNtfyTopic } from "@/lib/notify-user";
+import { ownerId } from "@/lib/users";
 
 type MacNotifier = (title: string, body: string) => void;
 
@@ -49,9 +52,24 @@ export async function notify(
     fetcher?: typeof fetch;
     execMacNotifier?: MacNotifier;
     platform?: NodeJS.Platform;
+    // Whose news this is. The machine's NTFY_TOPIC is the owner's phone, so another account's
+    // events (its companies, jobs and contacts) are never pushed there: they go to the channel that
+    // account set on 设置 → 通知 (src/lib/notify-user.ts), or nowhere.
+    account?: { db: DB; userId: string };
   } = {}
 ): Promise<void> {
-  const topic = opts.ntfyTopic ?? process.env.NTFY_TOPIC;
+  let accountTopic: string | undefined;
+  if (opts.account) {
+    try {
+      const own = storedNtfyTopic(opts.account.db, opts.account.userId);
+      const owner = ownerId(opts.account.db);
+      if (own) accountTopic = own;
+      else if (owner && owner !== opts.account.userId) return;
+    } catch {
+      return;
+    }
+  }
+  const topic = accountTopic ?? opts.ntfyTopic ?? process.env.NTFY_TOPIC;
   const fetcher = opts.fetcher ?? fetch;
   const platform = opts.platform ?? process.platform;
 

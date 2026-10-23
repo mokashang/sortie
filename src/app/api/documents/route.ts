@@ -20,6 +20,10 @@ export const GET = withUser(async (_req, { userId }) => {
 
 export const POST = withUser(async (req, { userId }) => {
   try {
+    // Refuse an oversized upload before buffering it (the form adds a little around the file).
+    if (Number(req.headers.get("content-length") ?? 0) > DOCUMENT_MAX_BYTES + 256 * 1024) {
+      return NextResponse.json({ error: "file larger than 15 MB" }, { status: 413 });
+    }
     const form = await req.formData();
     const key = String(form.get("key") ?? "").trim();
     const file = form.get("file");

@@ -3,7 +3,7 @@ import { logEvent } from "@/lib/db";
 import { messages } from "@/i18n/messages";
 import type { Lang } from "@/i18n/lang";
 import { serverLang } from "@/lib/prefs";
-import { notifyUser } from "@/lib/notify-user";
+import { notify } from "@/lib/notify";
 import { infoKind, type InfoQuestion } from "@/apply/queue";
 import type { PendingInfoRow } from "@/apply/info";
 import { listMailAccounts } from "@/inbox/store";
@@ -236,7 +236,7 @@ async function sweep(db: DB, userId: string, deps: EmailCodeDeps): Promise<void>
     state.messageId = best.mail.id;
     logEvent(db, "application_email_code_found", { userId, entity: "application", entityId: row.job_id, payload: { recognized: best.code != null } });
     const t = messages[deps.lang ?? serverLang()].notify.emailCode;
-    void (deps.notifier ?? ((title: string, body: string) => notifyUser(db, userId, title, body, { priority: "high" })))(t.title(row.company), t.body);
+    void (deps.notifier ?? ((title: string, body: string) => notify(title, body, { priority: "high", account: { db, userId } })))(t.title(row.company), t.body);
   }
 }
 

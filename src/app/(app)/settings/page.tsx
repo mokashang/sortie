@@ -13,6 +13,7 @@ import { inboxStatus } from "@/inbox/sync";
 import { attendedParallel } from "@/executor/sessions";
 import { attendedAvailable } from "@/executor/channel";
 import { storedNtfyTopic } from "@/lib/notify-user";
+import { membersMayUseBackground } from "@/executor/member-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,7 @@ export default async function SettingsPage() {
         inbox={inboxStatus(getDb(), user.id)}
         chromeAvailable={attendedAvailable(getDb(), user.id)}
         ntfyOwn={storedNtfyTopic(getDb(), user.id)}
+        membersBackground={membersMayUseBackground(getDb())}
       />
     </>
   );

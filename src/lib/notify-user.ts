@@ -1,12 +1,9 @@
 import type { DB } from "@/lib/db";
-import { notify } from "@/lib/notify";
 import { ownerId } from "@/lib/users";
 
-// Whose phone a push goes to (2026-10-22). NTFY_TOPIC in .env is the box owner's channel; before
-// this, every push about any account's work — another account's auto-submits, its 待处理 cards,
-// its plan alerts — went to the owner's phone, and the account itself heard nothing. Now the
-// owner keeps the .env channel and every other account pushes to a channel of its own, set on
-// 设置 → 通知 (or nowhere until it sets one).
+// Whose phone a push goes to (2026-10-22): notify(…, { account }) asks ntfyTopicFor. NTFY_TOPIC in
+// .env is the box owner's channel; every other account pushes to a channel of its own, set on
+// 设置 → 通知, or nowhere until it sets one (before, everything went to the owner's phone).
 
 const KEY = (userId: string) => `ntfy_topic:${userId}`;
 
@@ -43,14 +40,3 @@ export function ntfyTopicFor(db: DB, userId: string, env: Record<string, string 
   return null;
 }
 
-export async function notifyUser(
-  db: DB,
-  userId: string,
-  title: string,
-  body: string,
-  opts: { priority?: "default" | "high"; fetcher?: typeof fetch } = {}
-): Promise<void> {
-  const topic = ntfyTopicFor(db, userId);
-  if (!topic) return;
-  await notify(title, body, { ...opts, ntfyTopic: topic });
-}

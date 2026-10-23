@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { notify, escapeAppleScript, encodeNtfyTitle, resetNotifyWarningForTests } from "@/lib/notify";
+import { setNtfyTopic } from "@/lib/notify-user";
 
 describe("notify", () => {
   it("posts to ntfy when topic configured and calls macos notifier", async () => {
@@ -88,5 +89,38 @@ describe("encodeNtfyTitle", () => {
     const encoded = encodeNtfyTitle(title);
     expect(encoded).toBe(`=?UTF-8?B?${Buffer.from(title, "utf8").toString("base64")}?=`);
     expect(encoded.startsWith("=?UTF-8?B?")).toBe(true);
+  });
+});
+
+import { openDb } from "@/lib/db";
+import { seedOwner, seedUser } from "./helpers";
+describe("notify only reaches the owner's phone with the owner's news", () => {
+  it("pushes an owner event and drops another account's", async () => {
+    const db = openDb(":memory:");
+    seedOwner(db, "legacy");
+    seedUser(db, "m1", "m1@example.com", { role: "member" });
+    const sent: string[] = [];
+    const fetcher = (async (_u: string, init?: RequestInit) => {
+      sent.push(String(init?.body));
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+    await notify("t", "owner news", { ntfyTopic: "topic", fetcher, platform: "win32", account: { db, userId: "legacy" } });
+    await notify("t", "member news", { ntfyTopic: "topic", fetcher, platform: "win32", account: { db, userId: "m1" } });
+    expect(sent).toEqual(["owner news"]);
+  });
+
+  it("pushes another account's news to the channel that account set, never to the owner's", async () => {
+    const db = openDb(":memory:");
+    seedOwner(db, "legacy");
+    seedUser(db, "m1", "m1@example.com", { role: "member" });
+    setNtfyTopic(db, "m1", "brother-channel");
+    const urls: string[] = [];
+    const fetcher = (async (u: string) => {
+      urls.push(u);
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+    await notify("t", "member news", { fetcher, platform: "win32", account: { db, userId: "m1" } });
+    expect(urls).toEqual(["https://ntfy.sh/brother-channel"]);
+    expect(() => setNtfyTopic(db, "m1", "bad topic!")).toThrow();
   });
 });

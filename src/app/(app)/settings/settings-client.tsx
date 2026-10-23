@@ -36,7 +36,10 @@ export function SettingsClient({
   inbox: inboxInitial,
   chromeAvailable,
   ntfyOwn,
+  membersBackground: membersBackgroundInitial,
 }: {
+  // Owner only: may other accounts use the background browser (src/executor/member-policy.ts).
+  membersBackground: boolean;
   ntfyConfigured: boolean;
   // This account can be served in its own Chrome (src/executor/channel.ts); false for anyone but
   // the box's owner without an assistant of their own online.
@@ -74,6 +77,25 @@ export function SettingsClient({
   const [ntfySaved, setNtfySaved] = useState(ntfyOwn ?? "");
   const [ntfyBusy, setNtfyBusy] = useState<"save" | "test" | null>(null);
   const isOwner = account.role === "owner";
+  const [membersBackground, setMembersBackground] = useState<boolean>(membersBackgroundInitial);
+  const [savingMembers, setSavingMembers] = useState(false);
+
+  async function chooseMembersBackground(value: string) {
+    const next = value === "allow";
+    if (next === membersBackground || savingMembers) return;
+    const previous = membersBackground;
+    setMembersBackground(next);
+    setSavingMembers(true);
+    try {
+      await postJson("/api/settings/members", { background: next });
+      toast({ title: next ? m.settings.members.savedOn : m.settings.members.savedOff, tone: "good" });
+    } catch (e) {
+      setMembersBackground(previous);
+      toast({ title: m.settings.members.saveFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setSavingMembers(false);
+    }
+  }
   const connectHandled = useRef(false);
   const { toast } = useToast();
   const router = useRouter();
@@ -349,6 +371,22 @@ export function SettingsClient({
                   </span>
                 ),
               }))}
+            />
+          </div>
+        </Section>
+      ) : null}
+
+      {isOwner ? (
+        <Section id="members" title={m.settings.members.title} description={m.settings.members.description}>
+          <div aria-busy={savingMembers}>
+            <Segmented<string>
+              ariaLabel={m.settings.members.title}
+              value={membersBackground ? "allow" : "deny"}
+              onChange={(v) => void chooseMembersBackground(v)}
+              options={[
+                { value: "allow", label: m.settings.members.allow },
+                { value: "deny", label: m.settings.members.deny },
+              ]}
             />
           </div>
         </Section>

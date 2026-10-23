@@ -187,3 +187,18 @@ describe("profiles (db-backed)", () => {
     expect(LEGACY_USER_ID).toBe("legacy");
   });
 });
+
+describe("owner promotion never happens twice", () => {
+  it("a later sign-up does not become owner just because the owner row is gone", () => {
+    const db = openDb(":memory:");
+    seedUser(db, "first", "first@example.com", { role: "member" });
+    seedUser(db, "late", "late@example.com", { role: "member" });
+    const r = onUserCreated(db, { id: "late", email: "late@example.com" });
+    expect(r.becameOwner).toBe(false);
+  });
+  it("the very first account still becomes owner", () => {
+    const db = openDb(":memory:");
+    seedUser(db, "first", "first@example.com", { role: "member" });
+    expect(onUserCreated(db, { id: "first", email: "first@example.com" }).becameOwner).toBe(true);
+  });
+});

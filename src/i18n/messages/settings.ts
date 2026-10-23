@@ -183,6 +183,16 @@ export const settings = defineMessages({
       saved: (n: number) => (n === 1 ? "之后的投递任务一个做完再做下一个" : `之后最多同时做 ${n} 个投递任务`),
       saveFailed: "保存失败",
     },
+    members: {
+      title: "其他账号",
+      description:
+        "这台电脑的 Chrome 是你的,所以别人(比如你邀请来注册的家人朋友)的申请只能在后台浏览器里填:它在这台电脑上运行,用的是你选的 AI 提供方和你的额度。关掉之后,他们只有在自己电脑上连上助手会话时才能投递。",
+      allow: "允许用后台浏览器",
+      deny: "只给我用",
+      savedOn: "其他账号可以用后台浏览器投递了",
+      savedOff: "后台浏览器只给你自己用",
+      saveFailed: "保存失败",
+    },
     chat: {
       title: "问答助手",
       description: "顶栏「问助手」里回答问题用的模型。「上网找岗位」只有 Claude 订阅能做(它自带联网搜索)。",
@@ -429,6 +439,16 @@ export const settings = defineMessages({
         "How many apply tasks the assistant works on at the same time. Each task gets its own assistant with its own group of tabs in your Chrome, so they stay out of each other's way; any more wait in line and start as soon as one finishes. More at once uses up AI quota faster. 1 means one task after another.",
       option: (n: number) => String(n),
       saved: (n: number) => (n === 1 ? "Apply tasks will now run one after another" : `Up to ${n} apply tasks will now run at once`),
+      saveFailed: "Could not save",
+    },
+    members: {
+      title: "Other accounts",
+      description:
+        "The Chrome on this computer is yours, so other people's applications (family or friends you let sign up) can only be filled in the background browser: it runs on this computer with the AI provider you chose, on your plan. Turned off, they can apply only by connecting an assistant session on their own computer.",
+      allow: "Allow the background browser",
+      deny: "Only me",
+      savedOn: "Other accounts can now apply through the background browser",
+      savedOff: "The background browser is now yours only",
       saveFailed: "Could not save",
     },
     chat: {

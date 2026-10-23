@@ -5,7 +5,7 @@ import { maybeAutoStartApply, DecideAutoStartDeps, DecideAutoStartResult } from 
 import { enqueueReferralCheck } from "@/apply/referral-check";
 import type { startExecutor } from "@/executor/runner";
 import { listUsers } from "@/lib/users";
-import { notifyUser } from "@/lib/notify-user";
+import { notify } from "@/lib/notify";
 import { serverLang } from "@/lib/prefs";
 import { messages } from "@/i18n/messages";
 
@@ -72,7 +72,7 @@ export function resolveReferrals(db: DB, userId: string, deps: ResolveDeps = {})
 
   const lang = serverLang();
   const t = messages[lang].notify.referral;
-  const push = deps.notify ?? ((title: string, body: string) => void notifyUser(db, userId, title, body, { priority: "default" }));
+  const push = deps.notify ?? ((title: string, body: string) => void notify(title, body, { priority: "default", account: { db, userId } }));
   const start = deps.startApply ?? ((d: DB, u: string, jobIds: number[]) => maybeAutoStartApply(d, u, { jobIds, mode: "direct" }, deps.autoStart));
   const out: ResolveOutcome[] = [];
   for (const { company, jobs } of byCompany.values()) {

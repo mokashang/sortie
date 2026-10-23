@@ -44,6 +44,10 @@ export function ScanMenu({ onDone, variant = "secondary" }: { onDone?: () => voi
     }
   }
 
+  // Both sweeps are the owner's (a full scan spends this machine and the owner's AI quota, and
+  // Chrome-scan ingest writes the shared job library): another account just sees jobs arrive.
+  if (data && !data.isOwner) return null;
+
   return (
     <Menu
       text={m.scan.menu}
@@ -52,17 +56,12 @@ export function ScanMenu({ onDone, variant = "secondary" }: { onDone?: () => voi
       size="md"
       items={[
         { label: busy ? m.scan.scanning : m.scan.scanNow, icon: <RefreshCw size={14} />, onSelect: scanNow, disabled: busy },
-        // Searching LinkedIn / Handshake needs the account's own logged-in Chrome.
-        ...(data?.chromeAvailable === false
-          ? []
-          : [
-              {
-                label: scanRun ? m.scan.chromeStatus(labelOf(m.labels.runStatus, scanRun.status, scanRun.status)) : m.scan.chromeScan,
-                icon: <Globe size={14} />,
-                onSelect: chromeScan,
-                disabled: !!scanRun,
-              },
-            ]),
+        {
+          label: scanRun ? m.scan.chromeStatus(labelOf(m.labels.runStatus, scanRun.status, scanRun.status)) : m.scan.chromeScan,
+          icon: <Globe size={14} />,
+          onSelect: chromeScan,
+          disabled: !!scanRun,
+        },
       ]}
     />
   );

@@ -3,6 +3,7 @@ import { assertProviderConfigured } from "@/ai/config";
 import { resolveClaudeBin } from "@/lib/claude-bin";
 import { resolveCodexBin } from "@/lib/codex-bin";
 import type { McpServerSpec } from "@/executor/mcp-config";
+import { agentProcessEnv } from "@/lib/agent-env";
 
 export interface AgentLaunch {
   bin: string;
@@ -34,8 +35,18 @@ const CODEX_SECRET_FILTER_ARGS = [
   "shell_environment_policy.filters.OPENAI_API_KEY=\"exclude\"",
 ];
 
+// The server's own secrets are not the agent's to read (its run token is in its prompt): deny
+// rules win over the allow list, for the Read tool and the plain `cat` forms (2026-10-22).
+const SECRET_FILES = [".env", ".env.local", ".env.production", "data/internal-token", "data/auth-secret"];
+export const SECRET_FILE_DENY = [
+  ...SECRET_FILES.map((f) => `Read(./${f})`),
+  "Read(./data/*.db)",
+  ...SECRET_FILES.flatMap((f) => [`Bash(cat ${f}:*)`, `Bash(cat ./${f}:*)`]),
+];
+
 function agentEnv(provider: AiProvider, env: EnvMap): EnvMap {
-  const childEnv = { ...env };
+  // Never a nested child of whatever Claude Code session started the server (src/lib/agent-env.ts).
+  const childEnv = agentProcessEnv(env);
   delete childEnv.OPENAI_API_KEY;
   delete childEnv.CODEX_API_KEY;
   if (provider !== "gpt") return childEnv;
@@ -72,6 +83,8 @@ export function buildHeadlessAgentLaunch(opts: HeadlessLaunchOptions): AgentLaun
         env.CLAUDE_AGENT_MODEL || "claude-sonnet-5",
         "--allowedTools",
         "Bash(curl:*),mcp__playwright__*",
+        "--disallowedTools",
+        ...SECRET_FILE_DENY,
         "--mcp-config",
         JSON.stringify({ mcpServers: { playwright: opts.playwright } }),
         "--strict-mcp-config",
@@ -138,6 +151,8 @@ export function buildAttendedAgentLaunch(opts: AttendedLaunchOptions): AgentLaun
         "Bash(sleep:*)",
         "Bash(date:*)",
         "Bash(cat:*)",
+        "--disallowedTools",
+        ...SECRET_FILE_DENY,
         "-n",
         opts.sessionName ?? `sortie-run-${opts.runId}`,
         opts.prompt,

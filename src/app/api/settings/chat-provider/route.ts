@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getChatProvider, parseChatProvider, setChatProvider } from "@/assistant/provider";
-import { withUser, failResponse } from "@/lib/actor";
+import { withUser, failResponse, requireBrowser } from "@/lib/actor";
 import { readJsonBody } from "@/lib/request-body";
 
 // 设置 → 问答助手: which model answers the in-app chat (src/assistant/provider.ts). Per account.
@@ -9,7 +9,9 @@ export const GET = withUser(async (_req, { userId }) => {
   return NextResponse.json({ provider: getChatProvider(getDb(), userId) });
 });
 
-export const POST = withUser(async (req, { userId }) => {
+export const POST = withUser(async (req, actor) => {
+  requireBrowser(actor);
+  const { userId } = actor;
   try {
     const body = (await readJsonBody(req)) as { provider?: unknown };
     const provider = parseChatProvider(body.provider);

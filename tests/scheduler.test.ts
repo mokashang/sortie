@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { openDb } from "@/lib/db";
-import { runTick, runSweep } from "@/scanner/scheduler";
+import { runTick, runSweep, BOARD_MIN_MS, clearFamilyPauses, familyPausedUntil } from "@/scanner/scheduler";
 import { upsertBoards, getBoard, iso } from "@/scanner/boards";
-import type { Registry } from "@/scanner/sources/types";
+import type { FetchCtx, Registry } from "@/scanner/sources/types";
+import { isEngineeringTitle } from "@/scanner/entry-level";
 import { RawJob } from "@/scanner/types";
 
 const NOW = new Date("2026-09-06T18:00:00Z");
@@ -44,9 +45,81 @@ describe("runTick", () => {
     expect((await runTick(db, { now: NOW, registry, seed: null, localHour: 12 })).boards).toBe(0);
     expect((await runSweep(db, { now: NOW, registry, seed: null, tiers: ["longtail"], localHour: 12 })).boards).toBe(2);
   });
+  it("caps boards per family in a tick, but a sweep asks every board", async () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, ["a", "b", "c"].map((k) => ({ key: `greenhouse:${k}`, origin: "url" as const })));
+    const registry: Registry = { greenhouse: { concurrency: 1, minGapMs: 0, gated: false, fetch: async () => [] } };
+    expect((await runTick(db, { now: NOW, registry, seed: null, perFamily: 1, localHour: 12 })).boards).toBe(1);
+    expect((await runSweep(db, { now: NOW, registry, seed: null, localHour: 12 })).boards).toBe(3);
+  });
   it("syncs the seed on first tick when seed is provided", async () => {
     const db = openDb(":memory:");
     await runTick(db, { now: NOW, registry: {}, seed: [{ key: "ashby:openai", company: "OpenAI" }], localHour: 12 });
     expect(getBoard(db, "ashby:openai")!.tier).toBe("core");
+  });
+});
+
+describe("runTick: rate limits and per-board time", () => {
+  beforeEach(() => clearFamilyPauses());
+
+  it("a 429 on a shared-host family stops that family for the tick and pauses it until Retry-After", async () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, ["a", "b", "c"].map((k) => ({ key: `workable:${k}`, origin: "url" as const })));
+    upsertBoards(db, [{ key: "greenhouse:x", origin: "url" }, { key: "greenhouse:y", origin: "url" }]);
+    const asked: string[] = [];
+    const registry: Registry = {
+      workable: { concurrency: 1, minGapMs: 0, gated: false, sharedHost: true, fetch: async (b) => { asked.push(b.key); throw new Error(`workable ${b.ident}: HTTP 429 (retry-after 600s)`); } },
+      // 不共用主机的 family:一个板块 429 不影响别的板块
+      greenhouse: { concurrency: 1, minGapMs: 0, gated: false, fetch: async (b) => { asked.push(b.key); if (b.ident === "x") throw new Error("greenhouse x: HTTP 429"); return []; } },
+    };
+    const s = await runTick(db, { now: NOW, registry, seed: null, localHour: 12 });
+    expect(asked.filter((k) => k.startsWith("workable:"))).toEqual(["workable:a"]);
+    expect(asked.filter((k) => k.startsWith("greenhouse:"))).toEqual(["greenhouse:x", "greenhouse:y"]);
+    expect(s.byFamily.workable).toEqual({ boards: 1, inserted: 0, errors: 1, pausedUntil: iso(new Date(NOW.getTime() + 600_000)) });
+    expect(getBoard(db, "workable:a")!.next_due_at).toBe(iso(new Date(NOW.getTime() + 600_000)));
+    expect(getBoard(db, "workable:b")!.next_due_at).toBeNull();          // 没问过,不受罚,歇完照常到期
+    expect(getBoard(db, "greenhouse:x")!.next_due_at).toBe(iso(new Date(NOW.getTime() + 24 * 3600_000)));
+    expect(familyPausedUntil("workable", NOW)).toEqual(new Date(NOW.getTime() + 600_000));
+    // 歇着的时候整个 family 不出现在到期列表里;歇完接着问
+    expect((await runTick(db, { now: new Date(NOW.getTime() + 300_000), registry, seed: null, localHour: 12 })).byFamily.workable).toBeUndefined();
+    registry.workable!.fetch = async (b) => { asked.push(b.key); return []; };
+    const later = await runTick(db, { now: new Date(NOW.getTime() + 601_000), registry, seed: null, localHour: 12 });
+    expect(later.byFamily.workable).toEqual({ boards: 3, inserted: 0, errors: 0 });   // a 的 Retry-After 也到了
+  });
+
+  it("a board that moved: registers the new one with the old one's origin and tier, mutes the old one, polls neither again right away", async () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, [{ key: "workday:netflix.wd1/Netflix", company: "Netflix", origin: "seed", directions: ["swe_general"] }]);
+    const registry: Registry = { workday: { concurrency: 1, minGapMs: 0, gated: true, fetch: async (_b, ctx) => {
+      ctx.moved?.("workday:netflix.wd108/Netflix");
+      return [job({ company: "Netflix", source: "workday", ats: "workday", applyUrl: "https://netflix.wd108.myworkdayjobs.com/Netflix/job/R1" })];
+    } } };
+    const s = await runTick(db, { now: NOW, registry, seed: null, rand: () => 0.5, localHour: 12 });
+    expect(s.inserted).toBe(1);
+    expect(s.byFamily.workday.moved).toBe(1);
+    expect(getBoard(db, "workday:netflix.wd108/Netflix")).toMatchObject({ origin: "seed", tier: "core", company: "Netflix", directions: '["swe_general"]', next_due_at: iso(new Date(NOW.getTime() + 3 * 3600_000)) });
+    expect(getBoard(db, "workday:netflix.wd1/Netflix")).toMatchObject({ tier: "muted", tier_reason: "moved to workday:netflix.wd108/Netflix", tier_locked: 0, next_due_at: null });
+    const ev = db.prepare("SELECT payload FROM events WHERE kind='board_retier'").all() as { payload: string }[];
+    expect(ev.map((e) => JSON.parse(e.payload).reason)).toEqual(["moved to workday:netflix.wd108/Netflix"]);
+    expect((await runTick(db, { now: NOW, registry, seed: null, localHour: 12 })).boards).toBe(0);
+  });
+
+  it("hands adapters a deadline, the title gate (non-seed only) and a truncation hook", async () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, [{ key: "workday:dir.wd1/s", origin: "directory" }, { key: "workday:seed.wd1/s", origin: "seed" }]);
+    const seen: Record<string, Pick<FetchCtx, "deadline" | "wantTitle">> = {};
+    const registry: Registry = { workday: { concurrency: 2, minGapMs: 0, gated: true, fetch: async (b, ctx) => {
+      seen[b.ident] = { deadline: ctx.deadline, wantTitle: ctx.wantTitle };
+      if (b.ident === "dir.wd1/s") ctx.truncated?.();
+      return [];
+    } } };
+    const before = Date.now();
+    const s = await runTick(db, { now: NOW, registry, seed: null, localHour: 12, budgetMs: 1000 });
+    expect(seen["dir.wd1/s"].wantTitle).toBe(isEngineeringTitle);
+    expect(seen["seed.wd1/s"].wantTitle).toBeUndefined();
+    // 预算只有 1 秒,但每个板块至少有 BOARD_MIN_MS
+    expect(seen["dir.wd1/s"].deadline!).toBeGreaterThanOrEqual(before + BOARD_MIN_MS);
+    expect(s.byFamily.workday.truncated).toBe(1);
+    expect(getBoard(db, "workday:dir.wd1/s")!.next_due_at).toBe(iso(new Date(NOW.getTime() + 3600_000)));
   });
 });

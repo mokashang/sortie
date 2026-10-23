@@ -9,10 +9,11 @@ import { getAutoSubmit, autoApproveIfEnabled } from "@/apply/auto-submit";
 import { autoAnswerPending } from "@/apply/auto-answer";
 import { getBackend } from "@/llm/registry";
 import { langFromRequest, messagesFor } from "@/i18n/server";
-import { notifyUser } from "@/lib/notify-user";
+import { notify } from "@/lib/notify";
 import { withUser, failResponse } from "@/lib/actor";
+import { notifySubmitBlocked } from "@/apply/submit-blocked";
 
-const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "needs_manual", "error", "closed", "already_applied"]);
+const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "needs_manual", "error", "closed", "already_applied", "submit_blocked"]);
 
 // Executor -> App: status reports during and after a fill attempt.
 // body.status === 'submitted' is routed to reportSubmitted (the red-line gate) instead of
@@ -25,7 +26,12 @@ const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "need
 // candidate's facts (response `autoAnswered: true` + `infoAnswers` — the assistant fills them into
 // the tab it still has open). Only what the App could not answer, and the items nobody but the
 // user can do (sign in, captcha, a missing file, a manual step), still become a 待处理 card.
-export const POST = withUser(async (req, { userId }) => {
+//
+// submit_blocked (2026-10-22): the session's own permission check refused the Submit click on an
+// approved fill. The row becomes a 「点提交」 card (queue.ts parkBlockedSubmit) and the user gets a
+// push — at most one per half hour (src/apply/submit-blocked.ts); the session moves on.
+export const POST = withUser(async (req, actor) => {
+  const { userId } = actor;
   const body = await readJsonBody(req);
   try {
     const db = getDb();
@@ -47,7 +53,7 @@ export const POST = withUser(async (req, { userId }) => {
       if (getAutoSubmit(db, userId)) {
         const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;
         const t = messagesFor(lang).notify.autoSubmitted;
-        void notifyUser(db, userId, t.title(job?.company ?? "?"), t.body(job?.title ?? ""), { priority: "default" });
+        void notify(t.title(job?.company ?? "?"), t.body(job?.title ?? ""), { priority: "default", account: { db, userId } });
       }
       return NextResponse.json({ ok: true });
     }
@@ -65,9 +71,16 @@ export const POST = withUser(async (req, { userId }) => {
       return NextResponse.json({ error: "jobId must be a positive integer", code: "bad_request" }, { status: 400 });
     }
     const flag = (v: unknown) => v === true || v === "true" || v === 1;
-    reportFill(db, userId, { ...body, jobId: Number(body.jobId), archive: flag(body.archive), boardGone: flag(body.boardGone) } as ReportFillInput);
+    reportFill(db, userId, { ...body, jobId: Number(body.jobId), archive: flag(body.archive), boardGone: flag(body.boardGone) } as ReportFillInput, {
+      shared: actor.user?.role === "owner",
+    });
     const jobId = Number(body.jobId);
     const autoSubmit = getAutoSubmit(db, userId);
+
+    if (body.status === "submit_blocked") {
+      notifySubmitBlocked(db, userId, jobId, lang);
+      return NextResponse.json({ ok: true, card: "submit" });
+    }
 
     if (body.status === "awaiting_confirm" && autoSubmit) {
       const autoApproved = autoApproveIfEnabled(db, userId, jobId);
@@ -110,7 +123,7 @@ export const POST = withUser(async (req, { userId }) => {
       }
       const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;
       const n = needsInfoNotification(job?.company ?? "?", job?.title ?? "", questions, lang);
-      void notifyUser(db, userId, n.title, n.body, { priority: "high" });
+      void notify(n.title, n.body, { priority: "high", account: { db, userId } });
       return NextResponse.json({ ok: true, autoAnswered, remaining: questions.map((q) => q.key) });
     }
     return NextResponse.json({ ok: true });

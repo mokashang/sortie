@@ -119,6 +119,11 @@ export function revokeToken(db: DB, userId: string, id: number): boolean {
   return db.prepare("DELETE FROM api_tokens WHERE user_id = ? AND id = ? AND kind = 'personal'").run(userId, id).changes > 0;
 }
 
+// A new password ends every personal token too: whoever knew the old one may have minted them.
+export function revokePersonalTokens(db: DB, userId: string): number {
+  return db.prepare("DELETE FROM api_tokens WHERE user_id = ? AND kind = 'personal'").run(userId).changes;
+}
+
 export function revokeRunTokens(db: DB, runId: number): number {
   return db.prepare("DELETE FROM api_tokens WHERE kind = 'run' AND run_id = ?").run(runId).changes;
 }

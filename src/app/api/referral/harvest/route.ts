@@ -5,7 +5,7 @@ import { withKeyedLock } from "@/lib/keyed-lock";
 import { getBackend } from "@/llm/registry";
 import { loadProfile } from "@/lib/profile";
 import { serverLang } from "@/lib/prefs";
-import { notifyUser } from "@/lib/notify-user";
+import { notify } from "@/lib/notify";
 import { harvestOutreach, HarvestMessage } from "@/network/harvest";
 import { followUpAfterHarvest, followupNotification, AfterHarvestResult } from "@/network/followup";
 import { resolveReferrals } from "@/apply/referral-auto";
@@ -65,7 +65,7 @@ export const POST = withUser(async (req, actor) => {
           .prepare("SELECT p.name, p.company FROM outreach o JOIN people p ON p.id = o.person_id WHERE o.id = ?")
           .get(outreachId) as { name: string; company: string | null };
         const n = followupNotification({ person: who.name, company: who.company ?? "", newReceived: result.newReceived, summary: result.summary, after }, lang);
-        if (n) void notifyUser(db, userId, n.title, n.body, { priority: n.priority });
+        if (n) void notify(n.title, n.body, { priority: n.priority, account: { db, userId } });
       } catch (e) {
         // An incomplete profile or a drafting hiccup never fails the harvest itself.
         console.warn("[referral harvest] follow-up step failed:", e);

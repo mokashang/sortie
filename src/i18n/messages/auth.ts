@@ -16,13 +16,13 @@ export const auth = defineMessages({
       noMailerNote: {
         before: "这台服务器没有配置邮件发送:邮件内容写在服务器的 ",
         path: "data/outbox/",
-        after: " 目录里,在这台服务器上打开最新的文件点里面的链接即可。不在服务器旁边的话:用同一个邮箱的 Google 账号登录(会自动进到这个账号),或者请服务器的主人帮你打开那个链接。",
+        after: " 目录里,在这台服务器上打开最新的文件点里面的链接即可;不在服务器旁边的话,请服务器的主人帮你打开那个链接。",
       },
     },
     login: {
       title: "登录",
       subtitle: "回到你的求职作战室。",
-      googleFailed: "Google 登录没有完成,请再试一次或改用邮箱。",
+      googleFailed: "Google 登录没有完成。这个邮箱如果之前用邮箱和密码注册过,请直接用邮箱和密码登录(这台服务器不会把 Google 关联到没验证过的邮箱账号);否则再试一次。",
       emailLabel: "邮箱",
       passwordLabel: "密码",
       forgotPassword: "忘记密码?",
@@ -87,13 +87,13 @@ export const auth = defineMessages({
       noMailerNote: {
         before: "This server has no mail sending configured: the email content is written to the server's ",
         path: "data/outbox/",
-        after: " directory — on the server, open the newest file and click the link inside. Not at the server? Sign in with the Google account of the same email (it lands in this account), or ask the server's owner to open that link for you.",
+        after: " directory — on the server, open the newest file and click the link inside; not at the server, ask the server's owner to open that link for you.",
       },
     },
     login: {
       title: "Sign in",
       subtitle: "Back to your job search command center.",
-      googleFailed: "Google sign-in did not complete. Try again or use email instead.",
+      googleFailed: "Google sign-in did not complete. If this email was registered with a password before, sign in with your email and password (this server never links Google to an email account that was not verified); otherwise try again.",
       emailLabel: "Email",
       passwordLabel: "Password",
       forgotPassword: "Forgot password?",

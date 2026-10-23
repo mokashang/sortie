@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { ntfyTopicFor, notifyUser, setNtfyTopic, storedNtfyTopic, NTFY_TOPIC_RE } from "@/lib/notify-user";
+import { ntfyTopicFor, setNtfyTopic, storedNtfyTopic, NTFY_TOPIC_RE } from "@/lib/notify-user";
+import { notify } from "@/lib/notify";
 import { withUser, failResponse } from "@/lib/actor";
 import { readJsonBody } from "@/lib/request-body";
 import { langFromRequest, messagesFor } from "@/i18n/server";
@@ -15,7 +16,7 @@ export const POST = withUser(async (req, { userId }) => {
     const t = messagesFor(langFromRequest(req)).settings.notifications;
     if (body.test === true) {
       if (!ntfyTopicFor(db, userId)) return NextResponse.json({ error: t.noChannel }, { status: 400 });
-      await notifyUser(db, userId, t.testTitle, t.testBody);
+      await notify(t.testTitle, t.testBody, { account: { db, userId } });
       return NextResponse.json({ ok: true });
     }
     if (typeof body.topic !== "string") return NextResponse.json({ error: "topic must be a string" }, { status: 400 });

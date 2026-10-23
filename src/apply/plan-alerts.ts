@@ -2,7 +2,7 @@ import { DB, logEvent } from "@/lib/db";
 import type { ChainEnd, ModeCounts, RunOutcome } from "@/app/lib/run-outcome";
 import { APPLY_CHUNK_SIZE } from "@/app/lib/run-outcome";
 import { startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
-import { notifyUser } from "@/lib/notify-user";
+import { notify } from "@/lib/notify";
 import { serverLang } from "@/lib/prefs";
 import { messages } from "@/i18n/messages";
 
@@ -182,7 +182,7 @@ export function notifyFailedRun(db: DB, userId: string, runId: number, push?: (t
     const alert = planAlertFor(db, userId, runId);
     if (!alert || alert.kind !== "failed") return false;
     const t = messages[serverLang()].notify.plan;
-    const send = push ?? ((a: string, b: string) => void notifyUser(db, userId, a, b, { priority: "high" }));
+    const send = push ?? ((a: string, b: string) => void notify(a, b, { priority: "high", account: { db, userId } }));
     send(t.failedTitle(runId), t.failedBody(alert.untouched.length));
     return true;
   } catch (e) {

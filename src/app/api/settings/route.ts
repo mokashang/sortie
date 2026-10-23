@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authPublicConfig } from "@/lib/auth";
-import { failResponse, requireOwner, withUser } from "@/lib/actor";
+import { failResponse, requireOwner, withUser, requireBrowser } from "@/lib/actor";
 import { getDb } from "@/lib/db";
 import { getAiProvider, parseAiProvider, providerStatuses, setAiProvider } from "@/ai/config";
 import { getAutoSubmit } from "@/apply/auto-submit";
@@ -23,6 +23,7 @@ export const GET = withUser(async (_req, { user, via, userId }) => {
 });
 
 export const POST = withUser(async (req, actor) => {
+  requireBrowser(actor);
   try {
     requireOwner(actor);
     const body = (await readJsonBody(req)) as { provider?: unknown };

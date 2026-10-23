@@ -24,4 +24,15 @@ describe("icims source", () => {
     expect(jobs[0].applyUrl).toMatch(/^https:\/\/careers-sig\.icims\.com\/jobs\/\d+\//); expect(jobs[0].source).toBe("icims");
     expect(urls.filter((u) => u.includes("in_iframe=1") && !u.includes("/jobs/search")).length).toBe(jobs.length);
   });
+  it("stops at the deadline and skips job pages for gated-out titles", async () => {
+    const urls: string[] = [];
+    const fetcher = async (url: string) => { urls.push(url); return new Response(url.includes("/jobs/search") ? (url.includes("pr=0") ? search : "<html></html>") : job, { status: 200 }); };
+    let cut = 0;
+    const late = await fetchIcims(board, { fetcher, depth: "core", isKnownUrl: () => false, now: new Date(), deadline: Date.now() - 1, truncated: () => { cut++; } });
+    expect(urls).toHaveLength(1); expect(late).toEqual([]); expect(cut).toBe(1);
+    urls.length = 0;
+    const gated = await fetchIcims(board, { fetcher, depth: "longtail", isKnownUrl: () => false, now: new Date(), wantTitle: (t) => /software/i.test(t) });
+    expect(gated.every((j) => /software/i.test(j.title))).toBe(true);
+    expect(urls.filter((u) => !u.includes("/jobs/search"))).toHaveLength(gated.length);
+  });
 });

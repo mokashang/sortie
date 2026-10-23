@@ -43,6 +43,9 @@ export interface SpawnRecord {
   logPath: string;
   // ISO time the session was first seen idle (cleared while it has work); drives IDLE_REAP_MS.
   idleSince?: string | null;
+  // ISO time it was told to close its tabs before an idle reap (cleared when it gets work again);
+  // the reap waits SHUTDOWN_GRACE_MS after this (attended.ts).
+  closingAt?: string | null;
 }
 
 function readJson<T>(db: DB, key: string): T | null {

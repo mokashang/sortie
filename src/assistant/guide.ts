@@ -176,6 +176,15 @@ the card automatically continues the work — there is no dead end:
   records it, or skip. Take-home tasks, coding exercises, reports and writing samples are NOT
   cards: the assistant does them from the user's real experience and they show up on the To
   confirm card for review.
+- **Click Submit** (2026-10-22) — the form is filled and approved, but the assistant's own
+  permission check refused its click on the final Submit button (it treats submitting an
+  application as a real-world transaction a person has to make; this is a Claude Code setting on
+  the always-on machine, not something the app controls). The assistant reports it, leaves the tab
+  open and moves on. The user clicks Submit in that tab of the job-search Chrome and presses "I
+  submitted it"; or "Have the assistant try again" (the session holding the tab clicks again; if
+  that session is gone the form is filled afresh); or skips. A push notification goes out, at most
+  one per half hour. These cards count as filled for the plan, and 10 or more of them pause the
+  relay like unconfirmed applications do, until they are down to 5.
 - **Assistant error** — a tool failure or a page that would not render. The app retries an error
   by itself (after an hour, then after six more hours) without showing a card; only a third
   failure becomes a card ("Let the assistant try again").
@@ -263,14 +272,17 @@ up on the same site — works like this:
   sign in to the background browser from another computer.
 - **Not available to them:** finding referrals (the referral column on the plan is greyed out and
   their jobs carry no referral suggestions), scanning in Chrome, finding people / sending messages
-  on Network, fetching job descriptions. These need the person's own logged-in LinkedIn in their
-  own Chrome. Plain "Scan now", the queue, applying, History, mailbox sync and this chat all work.
+  on Network, fetching job descriptions, and the Scan menu (sources are scanned for everyone
+  automatically every minute; the owner runs the manual sweeps). The queue, applying, History,
+  mailbox sync and this chat all work.
 - **Getting started** (the checklist on Today until the first submission): fill in Profile → Basics;
   upload their resume under Profile → Resume (it is attached to every application whose track has
   no generated version); press "Import experience from resume" so Experience is filled from it;
   wait while jobs are scored in the background (a few minutes for the first ones; the queue keeps
   growing); then set counts per track on Apply and press Start applying.
 - **AI provider** is chosen by the owner for the whole server; others see which one is in use.
+- The owner can keep the background browser to themself (Settings → Other accounts); then the
+  others can apply only by connecting an assistant session on their own computer.
 - **Phone push**: their own ntfy channel under Settings → Notifications (the server's channel is
   the owner's).
 

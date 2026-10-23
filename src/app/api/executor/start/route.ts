@@ -6,6 +6,7 @@ import { withUser, failResponse, requireOwner } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 import { readJsonBody } from "@/lib/request-body";
 import { attendedAvailable } from "@/executor/channel";
+import { membersMayUseBackground } from "@/executor/member-policy";
 import { hasResumeFor } from "@/apply/resume-select";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
@@ -65,6 +66,7 @@ export const POST = withUser(async (req, actor) => {
     const wantsReferral = options.mode === "referral" || (options.plan ?? []).some((p) => p.mode === "referral");
     if (channel === "user_chrome" && !attendedAvailable(db, userId)) {
       if (kind !== "apply" || wantsReferral) return NextResponse.json({ error: msgs.attendedUnavailable, code: "attended_unavailable" }, { status: 400 });
+      if (!membersMayUseBackground(db)) return NextResponse.json({ error: msgs.membersBackgroundOff, code: "members_background_off" }, { status: 400 });
       channel = "headless";
     }
     if (kind === "apply" && Array.isArray(options.plan) && options.plan.length > 0) {

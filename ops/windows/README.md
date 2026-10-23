@@ -78,7 +78,7 @@ cd C:\sortie
 tar -xzf $env:USERPROFILE\Downloads\sortie-migrate.tgz -C C:\sortie
 Move-Item -Force C:\sortie\migrate-*.db C:\sortie\data\jobseeker.db
 Remove-Item -ErrorAction SilentlyContinue C:\sortie\data\jobseeker.db-wal, C:\sortie\data\jobseeker.db-shm
-pm2 restart sortie --update-env
+pm2 restart sortie
 ```
 验证:Mac 浏览器过一遍 /queue /apply /history /network /dashboard;/resume 生成一份 PDF(tectonic);/queue 点「补判内推建议」后 `pm2 logs sortie` 没有 "claude CLI not found";`npm run backup` 成功。
 
@@ -91,7 +91,7 @@ pgrep -fl "next start" || echo "mac server stopped"
 cd /Users/moka/Documents/job_seeker && sqlite3 data/jobseeker.db ".backup 'data/backups/final-$(date +%F).db'"
 tailscale file cp data/backups/final-$(date +%F).db <windows-机名>:
 ```
-Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobseeker.db`(同上删 -wal/-shm)→ `.env` 去掉 `SCAN_TICK_DISABLED` 与 `ATTENDED_DISPATCH_DISABLED`(也确认没有 `JD_REVIEW_RELAY_DISABLED`)→ `pm2 restart sortie --update-env`。
+Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobseeker.db`(同上删 -wal/-shm)→ `.env` 去掉 `SCAN_TICK_DISABLED` 与 `ATTENDED_DISPATCH_DISABLED`(也确认没有 `JD_REVIEW_RELAY_DISABLED`)→ `pm2 restart sortie`。
 核对:/queue 漏斗计数与 Mac 最后一次一致;`pm2 logs sortie` 每分钟出现 scan tick;做一个会发通知的动作(如让一次 needs_info 发生,或 `curl -d test https://ntfy.sh/<topic>`)手机与 Mac 都收到。
 
 ## 7. 验收清单
@@ -131,14 +131,14 @@ Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobsee
 - 备份:自动每天 04:00;手动 `npm run backup`;每周把最新一份 Taildrop 到 Mac 一次。
 - Claude 登录失效(值守会话日志 "extension not connected" / 403):终端 `claude` → `/login`;扩展掉线:`/chrome` → Reconnect extension。
 - Windows 更新重启后:看 `pm2 status` 与网址;`tzutil /g` 仍是 Pacific Standard Time。
-- 值守会话起不来且日志提到 node-pty:`.env` 设 `ATTENDED_SPAWN_MODE=console`,`pm2 restart sortie --update-env`。
+- 值守会话起不来且日志提到 node-pty:`.env` 设 `ATTENDED_SPAWN_MODE=console`,`pm2 restart sortie`。
 
 ## 10. 回滚(切换后两周内)
 Windows `pm2 stop sortie`;把 Windows 最新备份拷回 Mac 的 `data/jobseeker.db`;Mac 把 plist 移回 `~/Library/LaunchAgents/` 并 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jobseeker.os.plist`。两周稳定后再清 Mac 的 `data/`(留一份 zip 归档)。
 
 ## 11. 账号系统上线(2026-09-13)
 部署带账号系统的版本后(`deploy.ps1` 照常),第一次访问 `https://usesortie.com` 会跳到 `/login`。
-1. **先在 `.env` 写 `SORTIE_OWNER_EMAIL=<你的邮箱>`**(可选但推荐:保证只有这个邮箱能成为主账号),`pm2 restart sortie --update-env`。
+1. **先在 `.env` 写 `SORTIE_OWNER_EMAIL=<你的邮箱>`**(可选但推荐:保证只有这个邮箱能成为主账号),`pm2 restart sortie`。
 2. 打开 `/signup` 用该邮箱注册。服务器日志出现 `[auth] <邮箱> created — became owner, claimed legacy rows {...}` 即认领完成:队列、历史、人脉、简历、经历原样在;`profile/profile.yaml` 已导入档案页「基本信息」。没配邮件时验证链接在 `E:\sortie\data\outbox\*.txt`(不验证也能用)。
 3. 机器内部令牌在 `E:\sortie\data\internal-token`(首次启动自动生成):调度器、`deploy.ps1`、常开机上的桌面值守会话都用它(值守会话按 CLAUDE.md §3 每条 curl 加 `-H "$AUTH"`)。
 4. Google 登录(可选):Google Cloud Console → APIs & Services → Credentials → OAuth client ID(Web application),Authorized redirect URI 填 `https://usesortie.com/api/auth/callback/google`(老网址也要用就再加 `https://<TS_HOSTNAME>/api/auth/callback/google`),把 client id/secret 写进 `.env` 的 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`,重启。同邮箱的 Google 账号会自动关联到已有账号。
