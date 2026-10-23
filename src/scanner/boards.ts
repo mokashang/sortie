@@ -8,6 +8,13 @@ export type Origin = "seed" | "url" | "directory" | "builtin" | "manual";
 export const TIERS: Tier[] = ["core", "longtail", "dormant", "muted"];
 export const CADENCE_MS: Record<Exclude<Tier, "muted">, number> = { core: 3600_000, longtail: 24 * 3600_000, dormant: 7 * 24 * 3600_000 };
 export const MAX_404_STREAK = 5;
+// 同一个非 404 的 HTTP 错误状态连续 N 次、而且跨了至少 M 天还没好过一次:租户 / 站点坏了(Workday 的 422 =
+// 站点名不对、403 = 受限站点、一直 500 的租户),不是对方一时故障 → 静音(可在来源页改回,记 board_retier)。
+// 只数对方明确给的错误状态:429(我们问得太勤)、网络错误、超时、维护页(200 + 网页)都不算,也不打断计数。
+// Workday 每周五晚的维护一小时能让几百个板块同时 500 / 回网页(2026-10-17 一次 491 个),所以要「跨天」。
+export const PERSISTENT_FAIL_STREAK = 5;
+export const PERSISTENT_FAIL_DAYS = 7;
+interface FailStreak { status: number; n: number; since: string; }
 // 有些家族问一次很贵或对方敏感,同一层级下把周期拉长:Workday 一次要几十上百个请求、iCIMS 是网页、LinkedIn 要保守。
 export const FAMILY_CADENCE_MULTIPLIER: Partial<Record<Family, number>> = { workday: 3, icims: 3, linkedin: 2 };
 
@@ -115,7 +122,7 @@ export function getBoard(db: DB, key: string): BoardRow | undefined {
   return db.prepare("SELECT * FROM boards WHERE key = ?").get(key) as BoardRow | undefined;
 }
 
-export interface DueOpts { now: Date; limit: number; families?: Family[]; tiers?: Tier[]; keys?: string[]; localHour: number; }
+export interface DueOpts { now: Date; limit: number; families?: Family[]; skipFamilies?: Family[]; tiers?: Tier[]; keys?: string[]; localHour: number; }
 // 到期板块:静音和 chrome 家族永不入选;LinkedIn 只在本地 08:00–22:00;顺序 core → longtail → dormant,
 // 同层清单优先,再按到期时间早者先。
 export function dueBoards(db: DB, o: DueOpts): BoardRow[] {
@@ -123,6 +130,7 @@ export function dueBoards(db: DB, o: DueOpts): BoardRow[] {
   const params: unknown[] = [iso(o.now)];
   const inList = (col: string, vals?: string[]) => { if (vals?.length) { conds.push(`${col} IN (${vals.map(() => "?").join(",")})`); params.push(...vals); } };
   inList("family", o.families); inList("tier", o.tiers); inList("key", o.keys);
+  if (o.skipFamilies?.length) { conds.push(`family NOT IN (${o.skipFamilies.map(() => "?").join(",")})`); params.push(...o.skipFamilies); }
   if (o.localHour < 8 || o.localHour >= 22) conds.push("family <> 'linkedin'");
   params.push(o.limit);
   return db.prepare(
@@ -142,25 +150,61 @@ export function nextDueAfter(tier: Tier, failCount: number, now: Date, rand: () 
   return iso(new Date(now.getTime() + CADENCE_MS[tier] * mult * jitter * backoff));
 }
 
-export interface PollOutcome { ok: boolean; error?: string; httpStatus?: number | null; now: Date; rand?: () => number; }
+// retryAfterMs:429 时对方给的 Retry-After(调度器从错误消息里读出、已夹在合理范围内);没给就明天再问。
+// truncated:适配器到了截止时刻提前收手(还有新岗没拉详情)→ 最晚一小时后再问,不用等一整个周期
+// (长尾 Workday 的周期是 3 天)。
+export interface PollOutcome { ok: boolean; error?: string; httpStatus?: number | null; retryAfterMs?: number | null; truncated?: boolean; now: Date; rand?: () => number; }
+export const TRUNCATED_REDUE_MS = 3600_000;
+
+const statusIn = (msg: string | null | undefined): number | null => { const m = (msg ?? "").match(/HTTP (\d{3})/); return m ? Number(m[1]) : null; };
+const parseMeta = (meta: string | null): Record<string, unknown> => { try { return meta ? (JSON.parse(meta) as Record<string, unknown>) : {}; } catch { return {}; } };
+const dbTime = (s: string): number => new Date(s.replace(" ", "T") + "Z").getTime();
+
+// 这次失败之后的「同一状态连续失败」记录(存在 boards.meta.fail_streak)。不该计数的失败原样保留上一条。
+// 老板块第一次走到这里时还没有记录:上一次的错误就是同一个状态的话,把 fail_count 当作连续次数、
+// 上次成功(从没成功过就是建档时间)当作开始 —— 上线当天就能认出那几十个一直 422 的坏站点。
+function nextStreak(b: BoardRow, prev: FailStreak | undefined, status: number | null, now: string): FailStreak | null | undefined {
+  if (status === null || status < 400 || status === 429) return prev;
+  if (status === 404) return null;                           // 404 有自己的规则
+  if (prev && prev.status === status) return { status, n: prev.n + 1, since: prev.since };
+  if (!prev && b.fail_count > 0 && statusIn(b.last_error) === status) return { status, n: b.fail_count + 1, since: b.last_ok_at ?? b.created_at };
+  return { status, n: 1, since: now };
+}
+
 export function markBoardResult(db: DB, key: string, o: PollOutcome): void {
   const b = getBoard(db, key);
   if (!b) return;
   const now = iso(o.now);
+  const meta = parseMeta(b.meta);
+  const prevStreak = meta.fail_streak as FailStreak | undefined;
   if (o.ok) {
-    db.prepare("UPDATE boards SET fail_count=0, last_polled_at=?, last_ok_at=?, last_error=NULL, next_due_at=?, updated_at=datetime('now') WHERE key=?")
-      .run(now, now, nextDueAfter(b.tier, 0, o.now, o.rand, b.family), key);
+    let metaOut = b.meta;
+    if (prevStreak) { delete meta.fail_streak; metaOut = JSON.stringify(meta); }
+    const regular = nextDueAfter(b.tier, 0, o.now, o.rand, b.family);
+    const soon = iso(new Date(o.now.getTime() + TRUNCATED_REDUE_MS));
+    const nextDue = o.truncated && regular !== null && soon < regular ? soon : regular;
+    db.prepare("UPDATE boards SET fail_count=0, last_polled_at=?, last_ok_at=?, last_error=NULL, next_due_at=?, meta=?, updated_at=datetime('now') WHERE key=?")
+      .run(now, now, nextDue, metaOut, key);
     return;
   }
   const failCount = b.fail_count + 1;
-  const is404 = o.httpStatus === 404 || /HTTP 404/.test(o.error ?? "");
+  const status = o.httpStatus ?? statusIn(o.error);
+  const is404 = status === 404;
   const streak404 = is404 && (b.fail_count === 0 || /HTTP 404/.test(b.last_error ?? ""));
-  const mute = streak404 && failCount >= MAX_404_STREAK && b.tier_locked === 0 && b.tier !== "muted";
-  // 429 = 对方限流:今天别再问了。其余失败按 2^n 退避(封顶 8 倍)。
-  const nextDue = mute ? null : o.httpStatus === 429 ? iso(new Date(o.now.getTime() + 24 * 3600_000)) : nextDueAfter(b.tier, failCount, o.now, o.rand, b.family);
-  db.prepare("UPDATE boards SET fail_count=?, last_polled_at=?, last_error=?, next_due_at=?, tier=?, tier_reason=?, updated_at=datetime('now') WHERE key=?")
-    .run(failCount, now, (o.error ?? "error").slice(0, 300), nextDue, mute ? "muted" : b.tier, mute ? `404 x${failCount}` : b.tier_reason, key);
-  if (mute) logEvent(db, "board_retier", { entity: "board", entityId: b.id, payload: { key, from: b.tier, to: "muted", reason: `404 x${failCount}` } });
+  const canMute = b.tier_locked === 0 && b.tier !== "muted";
+  const streak = nextStreak(b, prevStreak, status, now);
+  const streakDays = streak ? (o.now.getTime() - dbTime(streak.since)) / 86_400_000 : 0;
+  let reason: string | null = null;
+  if (canMute && streak404 && failCount >= MAX_404_STREAK) reason = `404 x${failCount}`;
+  else if (canMute && streak && streak.n >= PERSISTENT_FAIL_STREAK && streakDays >= PERSISTENT_FAIL_DAYS) reason = `HTTP ${streak.status} x${streak.n} over ${Math.floor(streakDays)}d`;
+  const mute = reason !== null;
+  if (streak) meta.fail_streak = streak; else delete meta.fail_streak;
+  const metaOut = streak || prevStreak ? JSON.stringify(meta) : b.meta;
+  // 429 = 对方限流:按 Retry-After(没给就 24 小时)再问。其余失败按 2^n 退避(封顶 8 倍)。
+  const nextDue = mute ? null : status === 429 ? iso(new Date(o.now.getTime() + (o.retryAfterMs ?? 24 * 3600_000))) : nextDueAfter(b.tier, failCount, o.now, o.rand, b.family);
+  db.prepare("UPDATE boards SET fail_count=?, last_polled_at=?, last_error=?, next_due_at=?, tier=?, tier_reason=?, meta=?, updated_at=datetime('now') WHERE key=?")
+    .run(failCount, now, (o.error ?? "error").slice(0, 300), nextDue, mute ? "muted" : b.tier, mute ? reason : b.tier_reason, metaOut, key);
+  if (mute) logEvent(db, "board_retier", { entity: "board", entityId: b.id, payload: { key, from: b.tier, to: "muted", reason } });
 }
 
 export function mergeBoardMeta(db: DB, key: string, patch: Record<string, unknown>): void {

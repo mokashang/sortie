@@ -3,6 +3,7 @@ import { BoardRow } from "@/scanner/boards";
 import { FetchCtx } from "@/scanner/sources/types";
 import { htmlToText } from "@/scanner/html";
 import { isEntryLevelTitle } from "@/scanner/entry-level";
+import { wanted } from "@/scanner/sources/util";
 
 // SmartRecruiters 公开 API:列表按公司 ID + 只取美国,详情拿 JD 三段。
 interface Posting { id: string; name: string; releasedDate?: string; location?: { city?: string; region?: string; country?: string; fullLocation?: string; remote?: boolean }; }
@@ -22,7 +23,7 @@ export async function fetchSmartRecruiters(board: BoardRow, ctx: FetchCtx): Prom
   }
   const out: RawJob[] = [];
   for (const p of items) {
-    if (!isEntryLevelTitle(p.name)) continue;
+    if (!isEntryLevelTitle(p.name) || !wanted(ctx, p.name)) continue;   // 标题门外的岗不拉详情
     const applyUrl = `https://jobs.smartrecruiters.com/${id}/${p.id}`;
     if (ctx.isKnownUrl(applyUrl)) continue;
     let jdText = "";
