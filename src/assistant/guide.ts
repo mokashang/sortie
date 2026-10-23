@@ -113,7 +113,20 @@ submitting already-approved applications, then filling new ones. A track that pr
 a segment is dropped from the rest of the plan; two empty segments in a row end the relay. If 10
 or more filled applications are waiting unconfirmed, the next segment waits as **Paused** until
 the user brings the backlog down to 5 or fewer (then every paused relay continues); starting a
-new plan does not end a paused relay; pressing Stop ends the chain. A session may be recycled
+new plan does not end a paused relay; pressing Stop ends the chain — **only the user can end a
+plan**: a session that tries to stop on its own is recorded as finished and the relay goes on
+(2026-10-16), and a failed segment still queues the next one. The relay's length limit grows with
+the plan. **Referral pacing**: at most 20 LinkedIn invitations a day (first messages to new
+contacts, sent or drafted today; the server's local day). Once they are used, segments skip the
+plan's referral tracks and do its direct ones; referrals pick up again after midnight. When only
+referral tracks are left, the next segment waits as **Paused** until midnight ("today's LinkedIn
+invite budget is used up"). If LinkedIn itself shows a limit or a verification check, the
+assistant reports it and no more invites go out that day. **A plan that stops short** — two empty
+segments in a row, or the length limit — is a card on To-do ("Plan #N stopped", with what is left
+and the assistant's last words; **Run the rest** starts a new plan with the remainder, **Never
+mind** dismisses it) plus a phone notification; every plan's end (done / ran out of jobs) also
+sends one. A targeted task that failed with jobs it never touched is a To-do card too ("Task #N
+didn't finish", **Have the assistant try again**). A session may be recycled
 after 15 idle minutes (nothing running, queued or waiting), and a session that stops writing steps
 for 10 minutes is nudged.
 
@@ -140,8 +153,9 @@ Whenever the assistant has to stop for the user it leaves a card with a clear ac
 the card automatically continues the work — there is no dead end:
 - **Needs info** — a form question with no known answer (or a decision only the user can make):
   answer it on the card; answers are remembered as standard answers. "Skip this job" archives it.
-- **Upload a file** — the form wants a transcript / portfolio / cover letter: upload once, it is
-  kept under Profile → Files for every later form.
+- **Upload a file** — the form wants a record only the user holds (a transcript, a certificate):
+  upload once, it is kept under Profile → Files for every later form. A portfolio, work sample or
+  cover letter is not a card: the assistant writes it from the user's real experience.
 - **Sign in once** — a login wall or a "create candidate account" step: the assistant first looks
   for a guest route or the same posting on an account-free board; it never types passwords, clicks
   Chrome's suggested password or creates accounts. The user signs in once in the job-search Chrome
@@ -149,14 +163,32 @@ the card automatically continues the work — there is no dead end:
   waiting, a bar on top has "Open all sign-in pages" (opens every sign-in page as tabs of the
   job-search Chrome on the always-on machine) and "All signed in" (releases them all at once).
 - **Do it here** — a captcha or 2-step verification in the tab the assistant left open: do it,
-  press Done, the assistant continues.
+  press Done, the assistant continues. For a code the site emailed, the app watches the connected
+  inbox (Settings → Inbox sync) for that company's mail and shows the code on the card, with a
+  push notification (the code itself is never in the notification). The user types it into the
+  tab; the assistant never reads mail or fills in codes, even when asked — a code is a sign-in
+  credential, like a password.
 - **Finish yourself** — something only the user can do: it needs them in person (their own
   video or voice, a live interview, a webcam-proctored test, ID verification), the assessment
   explicitly forbids AI help, or the form never renders in the browser. "I applied myself"
   records it, or skip. Take-home tasks, coding exercises, reports and writing samples are NOT
   cards: the assistant does them from the user's real experience and they show up on the To
   confirm card for review.
-- **Assistant error** — a tool failure: "Let the assistant try again".
+- **Click Submit** (2026-10-22) — the form is filled and approved, but the assistant's own
+  permission check refused its click on the final Submit button (it treats submitting an
+  application as a real-world transaction a person has to make; this is a Claude Code setting on
+  the always-on machine, not something the app controls). The assistant reports it, leaves the tab
+  open and moves on. The user clicks Submit in that tab of the job-search Chrome and presses "I
+  submitted it"; or "Have the assistant try again" (the session holding the tab clicks again; if
+  that session is gone the form is filled afresh); or skips. A push notification goes out, at most
+  one per half hour. These cards count as filled for the plan, and 10 or more of them pause the
+  relay like unconfirmed applications do, until they are down to 5.
+- **Assistant error** — a tool failure or a page that would not render. The app retries an error
+  by itself (after an hour, then after six more hours) without showing a card; only a third
+  failure becomes a card ("Let the assistant try again").
+- A doubt about fit (more years asked than the user has, a new city, a soft "ideally no visa
+  needed") is never a card: the assistant applies. A question it attached to a sign-in card
+  (e.g. "would you move to Houston?") is answered by the app from the profile.
 - A rejected fill also becomes a card (the note goes to the next attempt).
 Cards from a waiting assistant time out after 30 minutes; the card stays and re-queues once
 answered.
@@ -180,7 +212,8 @@ first (one specific true thing about the person or their team, one concrete thin
 asks small with an easy out, thanks regardless. **The user approves every message** on the card
 (or sends it back to draft to edit). Free LinkedIn allows 5 invitations with a note per month
 and 200 characters per note; 2nd/3rd-degree "Message" is a paid InMail wall the assistant never
-uses. Jobs then sit under **Referrals in progress** per company with each contact's stage
+uses. The app caps new LinkedIn contacts at 20 a day across all tasks (then the plan's direct
+tracks go first; referrals continue the next day). Jobs then sit under **Referrals in progress** per company with each contact's stage
 (pending / accepted / replied / asked for resume / will refer / referred / declined / no
 headcount); a "check replies" task runs at 9:00, 13:00 and 18:00 (or from the card) and reads the
 conversations. **The app settles each company by itself** (2026-10-15): as soon as someone says

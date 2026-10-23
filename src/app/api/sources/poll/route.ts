@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { runSweep } from "@/scanner/scheduler";
 import { startPostScanPipeline } from "@/scanner/relay";
 import { withUser, requireOwner, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 const Body = z.object({ key: z.string().min(3) });
 
@@ -11,7 +12,7 @@ const Body = z.object({ key: z.string().min(3) });
 export const POST = withUser(async (req, actor) => {
   try {
     requireOwner(actor);
-    const parsed = Body.safeParse(await req.json().catch(() => null));
+    const parsed = Body.safeParse(await readJsonBody(req).catch(() => null));
     if (!parsed.success) return NextResponse.json({ error: parsed.error.message }, { status: 400 });
     const db = getDb();
     const summary = await runSweep(db, { keys: [parsed.data.key], budgetBoards: 1, budgetMs: 5 * 60_000 });

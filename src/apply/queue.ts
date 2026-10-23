@@ -98,8 +98,19 @@ export function takeNextApplication(
   // Without this they're invisible forever: 'prepared' fails the picker's 'matched' filter below,
   // and nothing else ever moves them. 30 minutes is generously past any real fill+report round
   // trip, so a still-fresh 'prepared' row (a live executor genuinely mid-fill) is left alone.
+  //
+  // Only rows whose run is over, though (2026-10-16). With tasks side by side, a long form (a
+  // Workday application, a take-home the assistant writes itself) can take session A past 30
+  // minutes; flipping it back here handed the same top-ranked job to session B mid-fill, and with
+  // 自动投递 on both could submit it. A row whose run is still live belongs to that run; the
+  // dispatcher's reclaimStrandedPrepared (src/apply/followup.ts) judges it once the run ends.
+  // Rows carrying the user's answers are left to that reclaim too: it turns them into a targeted
+  // run instead of dropping them silently back into the pool.
   db.prepare(
-    "UPDATE applications SET status = 'matched' WHERE user_id = ? AND status = 'prepared' AND updated_at < datetime('now', '-30 minutes')"
+    `UPDATE applications SET status = 'matched'
+     WHERE user_id = ? AND status = 'prepared' AND updated_at < datetime('now', '-30 minutes')
+       AND info_answers IS NULL
+       AND NOT EXISTS (SELECT 1 FROM executor_runs r WHERE r.id = applications.run_id AND r.status IN ('running','queued','paused'))`
   ).run(userId);
 
   for (;;) {
@@ -226,7 +237,9 @@ export function takeNextApplication(
 //   login  — a sign-in / registration wall; the user logs in once in their own Chrome
 //   action — something to do in the open tab right now (CAPTCHA, 2FA); the assistant waits
 //   manual — only the user can finish this one (video answer, repeated errors, a rejected fill)
-export type InfoKind = "text" | "file" | "login" | "action" | "manual";
+//   submit — the form is filled and approved, but the assistant's Submit click was refused by its
+//            own permission check (2026-10-22): the user clicks Submit in that tab
+export type InfoKind = "text" | "file" | "login" | "action" | "manual" | "submit";
 
 export interface InfoQuestion {
   key: string; // text: standard_answers key (e.g. "high_school"); file: document key (e.g. "transcript"); others: any id
@@ -239,20 +252,22 @@ export interface InfoQuestion {
   url?: string; // login: the sign-in / registration page; manual: the page to finish by hand (default: the job's apply_url)
   host?: string; // login: apply_url host the wall belongs to — 「我登好了」 resolves every paused job on it
   accept?: string; // file: accepted extensions, e.g. ".pdf"
+  sender?: string; // action (an emailed verification code): who the page says the mail comes from, e.g. "scalis.ai"
 }
 
 export const MULTI_ANSWER_SEP = "; ";
-const INFO_KINDS: InfoKind[] = ["text", "file", "login", "action", "manual"];
+const INFO_KINDS: InfoKind[] = ["text", "file", "login", "action", "manual", "submit"];
 
 export function infoKind(q: InfoQuestion): InfoKind {
   return q.kind ?? "text";
 }
 
-// Items the executor doesn't wait for: a login wall or something only the user can finish by
-// hand pause the application right away (status matched + reason + items) and the executor
-// moves on; everything else keeps it on the tab (needs_info) until answered or timed out.
+// Items the executor doesn't wait for: a login wall, something only the user can finish by hand,
+// or a Submit click the user has to make pause the application right away (status matched +
+// reason + items) and the executor moves on; everything else keeps it on the tab (needs_info)
+// until answered or timed out.
 export function pausesImmediately(questions: InfoQuestion[]): boolean {
-  return questions.some((q) => infoKind(q) === "login" || infoKind(q) === "manual");
+  return questions.some((q) => infoKind(q) === "login" || infoKind(q) === "manual" || infoKind(q) === "submit");
 }
 
 export function hostOf(url: string | null | undefined): string {
@@ -288,6 +303,7 @@ export function normalizeQuestions(input: unknown): InfoQuestion[] {
     if (raw.multiple === true && q.options) q.multiple = true;
     if (typeof raw.url === "string" && raw.url) q.url = raw.url;
     if (typeof raw.accept === "string" && raw.accept) q.accept = raw.accept;
+    if (kind === "action" && typeof raw.sender === "string" && raw.sender.trim()) q.sender = raw.sender.trim().slice(0, 120);
     if (kind === "login") {
       let host = typeof raw.host === "string" && raw.host.trim() ? raw.host.trim().toLowerCase() : hostOf(q.url);
       // A LinkedIn posting's applyUrl is linkedin.com, but the wall is on the company site the
@@ -317,6 +333,69 @@ export function parkWithItems(db: DB, userId: string, jobId: number, items: Info
   ).run(reason, JSON.stringify(items), userId, jobId);
 }
 
+// 提交被拦 (2026-10-22, the user: 「提交被拦时会话报给 App 然后继续下一个,App 出一张卡」). The
+// dispatcher-spawned sessions are Claude Code processes whose own permission check refuses the
+// final Submit click as a real-world transaction — inconsistently at first (IMC and OpenAI went
+// through on 10-16, Perpay did not), then every time (task #606: ten forms filled, auto-approved,
+// none sent). The session used to stop and wait for someone to allow the click in a terminal
+// nobody sees, and the stranded-approval guard kept queueing resume runs that refilled and got
+// refused again. Now the session reports submit_blocked and moves on; the row is parked with a
+// `submit` item: the user clicks Submit in that tab and presses 「我提交了」, or has the assistant
+// try again (src/apply/submit-blocked.ts), or skips the job. The approval stays on the row
+// (confirm_decision 'approved'): the form was filled and approved, so it counts as filled for the
+// plan (run-outcome rowResult), and a retry can hand it straight back to the session.
+export const SUBMIT_ITEM_KEY = "submit";
+export const SUBMIT_BLOCKED_PREFIX = "submit blocked: ";
+
+export function isSubmitBlockedReason(reason: string | null | undefined): boolean {
+  return !!reason && reason.startsWith(SUBMIT_BLOCKED_PREFIX);
+}
+
+export function parkBlockedSubmit(db: DB, userId: string, jobId: number, reason: string): void {
+  const row = db.prepare("SELECT a.status, a.confirm_decision, j.apply_url FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.user_id = ? AND a.job_id = ?").get(userId, jobId) as
+    | { status: string; confirm_decision: string | null; apply_url: string | null }
+    | undefined;
+  if (!row) throw new Error(`parkBlockedSubmit: no application for job ${jobId}`);
+  // Only an approved fill is ever submitted, so only an approved fill can have its Submit refused.
+  if (row.status !== "awaiting_confirm" || row.confirm_decision !== "approved") {
+    throw new Error(`parkBlockedSubmit: job ${jobId} is not approved+awaiting_confirm (status=${row.status}, confirm_decision=${row.confirm_decision ?? "none"})`);
+  }
+  const item: InfoQuestion = { key: SUBMIT_ITEM_KEY, label: "表单已填好并批准,助手的提交被拦下了", kind: "submit" };
+  if (reason.trim()) item.hint = reason.trim().slice(0, 600);
+  if (row.apply_url) item.url = row.apply_url;
+  parkWithItems(db, userId, jobId, [item], `${SUBMIT_BLOCKED_PREFIX}${reason.trim() || "the session's permission check refused the Submit click"}`);
+  logEvent(db, "application_submit_blocked", { userId, entity: "application", entityId: jobId, payload: { reason: reason.slice(0, 300) } });
+}
+
+// Errors retry themselves (2026-10-06, the user: "为啥还需要我点击重试,必须自动重试"). Ten of the
+// 68 cards on 2026-10-01 were errors whose only exit was 「让助手再试一次」 — eight of them LinkedIn
+// refusing to render pages for a few hours. An error is parked out of sight with this reason
+// prefix; the dispatcher tick (retryDueErrors in src/apply/followup.ts) hands it back as a
+// targeted run once AUTO_RETRY_DELAYS_MIN[n] minutes have passed since the n-th failure. Only
+// the failure after the last automatic retry becomes a card.
+export const AUTO_RETRY_PREFIX = "retry: ";
+export const AUTO_RETRY_DELAYS_MIN = [60, 360];
+export const AUTO_RETRY_EVENT = "application_auto_retry";
+
+export function autoRetriesDone(db: DB, userId: string, jobId: number): number {
+  const row = db
+    .prepare("SELECT count(*) AS n FROM events WHERE kind = ? AND entity = 'application' AND entity_id = ? AND user_id = ?")
+    .get(AUTO_RETRY_EVENT, jobId, userId) as { n: number };
+  return row.n;
+}
+
+// Park an application that failed for a reason the assistant could not get past: silently, to be
+// retried, while automatic retries are left; as an error card once they are used up.
+export function parkErrorForRetry(db: DB, userId: string, jobId: number, label: string, detail: string, reason: string): void {
+  const done = autoRetriesDone(db, userId, jobId);
+  if (done < AUTO_RETRY_DELAYS_MIN.length) {
+    parkWithItems(db, userId, jobId, [manualItem("error", label, detail || undefined)], AUTO_RETRY_PREFIX + reason);
+    return;
+  }
+  const hint = [detail, `已自动重试 ${done} 次,仍然没成。`].filter(Boolean).join("\n");
+  parkWithItems(db, userId, jobId, [manualItem("error", label, hint)], reason);
+}
+
 // host -> the login item to reuse, for every open (unresolved) login wall on one of this
 // account's paused rows (a login is the user's own; another account's wall says nothing).
 export function openLoginWalls(db: DB, userId: string): Map<string, InfoQuestion> {
@@ -330,7 +409,9 @@ export function openLoginWalls(db: DB, userId: string): Map<string, InfoQuestion
   for (const r of rows) {
     let items: InfoQuestion[] = [];
     try {
-      items = JSON.parse(r.pending_questions);
+      const parsed: unknown = JSON.parse(r.pending_questions);
+      // This runs on every /api/apply/next: one odd row must not stop every task from taking work.
+      items = Array.isArray(parsed) ? (parsed.filter((q) => q && typeof q === "object") as InfoQuestion[]) : [];
     } catch {
       continue;
     }
@@ -343,7 +424,9 @@ export interface ReportFillInput {
   jobId: number;
   // closed = the posting is gone (404 / "no longer available"): archived, never a to-do.
   // already_applied = the ATS already has an application on file: recorded into /history.
-  status: "awaiting_confirm" | "needs_manual" | "needs_info" | "error" | "closed" | "already_applied";
+  // submit_blocked = the fill was approved but the assistant's Submit click was refused by its own
+  // permission check: a 待处理 card for the user to click Submit in that tab (parkBlockedSubmit).
+  status: "awaiting_confirm" | "needs_manual" | "needs_info" | "error" | "closed" | "already_applied" | "submit_blocked";
   // closed only: the whole board is gone (the company left this ATS), not just this posting —
   // mute the board so the scanner stops asking it.
   boardGone?: boolean;
@@ -431,6 +514,11 @@ export function reportFill(db: DB, userId: string, input: ReportFillInput): void
     return;
   }
 
+  if (input.status === "submit_blocked") {
+    parkBlockedSubmit(db, userId, input.jobId, input.reason ?? "");
+    return;
+  }
+
   if (input.status === "awaiting_confirm") {
     const coerced: Record<string, string> = {};
     for (const [field, value] of Object.entries(input.filledFields ?? {})) {
@@ -480,17 +568,12 @@ export function reportFill(db: DB, userId: string, input: ReportFillInput): void
     return;
   }
 
-  // error: something broke (tools failing repeatedly, a crashed tab). The reason keeps its
-  // "error: " prefix for logs; the user gets a card — let the assistant try again / I'll finish
-  // it myself / give up — rather than a silent park.
+  // error: something broke (tools failing repeatedly, a crashed tab, LinkedIn not rendering the
+  // page). The App retries it on its own first (parkErrorForRetry); only an error that survives
+  // the automatic retries becomes a card — let the assistant try again / I'll finish it myself /
+  // give up. The reason keeps its "error: " prefix for logs.
   if (input.status === "error") {
-    parkWithItems(
-      db,
-      userId,
-      input.jobId,
-      [manualItem("error", "助手出错,没填成", input.reason?.trim() ? input.reason.trim() : undefined)],
-      `error: ${input.reason ?? ""}`
-    );
+    parkErrorForRetry(db, userId, input.jobId, "助手出错,没填成", input.reason?.trim() ? input.reason.trim() : "", `error: ${input.reason ?? ""}`);
     return;
   }
 

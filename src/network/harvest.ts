@@ -165,6 +165,12 @@ export async function harvestOutreach(db: DB, opts: HarvestInput & { backend: Ll
     }
   }
 
+  // The stage call above can take a while; the referral may have been settled meanwhile (the
+  // referral tick's resolveReferrals marks the thread referral_won). Writing the status read
+  // before the await would undo that, and the referrer would never be told the application went
+  // in (submittedReferrals only looks at won threads).
+  const now = db.prepare("SELECT status FROM outreach WHERE id = ?").get(opts.outreachId) as { status: string } | undefined;
+  if (now?.status === "referral_won") status = "referral_won";
   db.prepare(
     `UPDATE outreach SET status = ?, thread_log = ?, referral_stage = ?, stage_summary = ?, stage_action = ?, stage_link = ?,
        last_checked_at = datetime('now') WHERE id = ?`

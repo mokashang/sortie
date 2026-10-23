@@ -57,6 +57,9 @@ export interface StartOptions {
   // 寻找,合计),做满就正常 finish,App 再排下一段;chain = 这段属于哪条接力链(root / 第几段 / 累计)。
   chunk?: number;
   chain?: ChainInfo;
+  // A paused segment that waits for a time, not for the confirmation backlog: today's LinkedIn
+  // invite budget is spent and only referral entries are left (ISO, the next local midnight).
+  notBefore?: string;
   // scan kind only — 要扫哪些站、时间窗、每站最多抄多少个新岗(默认 全部 / 24h / 40)。
   sites?: ("linkedin" | "handshake" | "tesla")[];
   window?: "24h" | "7d";
@@ -187,9 +190,12 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
     log_path: string | null;
     claimed_at: string | null;
   }[];
-  const fail = (id: number, summary: string) => {
+  const fail = (id: number, summary: string, channel: string) => {
     db.prepare("UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?").run(summary, id);
-    revokeRunTokens(db, id);
+    // A live attended session spawned for this run still talks with its token even though another
+    // session claimed the run (src/executor/attended.ts closeOutReapedSession has the same rule).
+    const heldByLiveSession = channel === "user_chrome" && listSpawns(db).some((s) => s.runId === id && isAlive(s.pid));
+    if (!heldByLiveSession) revokeRunTokens(db, id);
     settleRunOutcome(db, id);
   };
   for (const row of rows) {
@@ -199,18 +205,18 @@ export function reapStaleRuns(db: DB, deps: ReapDeps = {}): void {
       // stale. Its pid is the session's (claim-next stamps it), never a process of ours to probe.
       if ((deps.attendedAlive ?? ((r: RunOwnerFields) => attendedChildAlive(db, r)))(row)) continue;
       const mt = row.log_path ? mtime(row.log_path) : null;
-      if (mt != null && now() - mt > STALE_USER_CHROME_MS) fail(row.id, "session gone");
+      if (mt != null && now() - mt > STALE_USER_CHROME_MS) fail(row.id, "session gone", row.channel);
       continue;
     }
     if (!isAlive(row.pid)) {
-      fail(row.id, "process gone");
+      fail(row.id, "process gone", row.channel);
       continue;
     }
     const mt = row.log_path ? mtime(row.log_path) : null;
     if (mt != null && now() - mt > STALE_HEADLESS_MS) {
       const quietMin = Math.round((now() - mt) / 60_000);
       (deps.killTree ?? killTree)(row.pid as number);
-      fail(row.id, `hung: no log activity for ${quietMin} min, process tree killed`);
+      fail(row.id, `hung: no log activity for ${quietMin} min, process tree killed`, row.channel);
     }
   }
   pruneExpiredTokens(db, new Date(now()));

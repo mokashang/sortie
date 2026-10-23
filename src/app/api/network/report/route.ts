@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { reportReply } from "@/network/gate";
 import { reportSentAndMarkReached } from "@/apply/referral-glue";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // POST {outreachId, event: 'sent'|'reply', text?} — executor -> App status reports.
 // For event='sent', `text` is optional and, when present, is the *actual* text that went out
@@ -10,7 +11,7 @@ import { withUser, failResponse } from "@/lib/actor";
 // thread_log records what was really sent rather than the full, possibly-longer draft.
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const outreachId = Number(body.outreachId);
     const db = getDb();
     if (body.event === "sent") {

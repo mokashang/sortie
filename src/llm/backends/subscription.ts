@@ -1,6 +1,7 @@
 import { execFile, spawn } from "child_process";
 import { LlmBackend, LlmRequest, LlmResult } from "@/llm/types";
 import { resolveClaudeBin } from "@/lib/claude-bin";
+import { withoutParentSession } from "@/lib/agent-env";
 
 // 真实执行器:调用本机 `claude` CLI 的无头模式。prompt 走 stdin,避免超长命令行。
 export type Runner = (
@@ -41,7 +42,7 @@ export function describeRunnerError(err: RunnerErrorLike | null): string | undef
 const TIMEOUT_MS = 180_000;
 
 function childEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const env = withoutParentSession(process.env);
   // A machine may have GPT mode configured while Claude is selected. The Claude subprocess
   // never needs OpenAI credentials, so do not let untrusted prompt text reach them through a
   // model-invoked shell command.

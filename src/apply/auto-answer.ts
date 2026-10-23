@@ -5,7 +5,9 @@ import { extractJson } from "@/llm/extract";
 import { tryLoadProfile, getProfileData, saveStandardAnswers, type Profile } from "@/lib/profile";
 import { listExperiences, type Experience } from "@/resume/experiences";
 import { answerInfo, type InfoAnswer } from "@/apply/info";
-import { infoKind, MULTI_ANSWER_SEP, type InfoQuestion } from "@/apply/queue";
+import { infoKind, MULTI_ANSWER_SEP, AUTO_RETRY_PREFIX, type InfoQuestion } from "@/apply/queue";
+import { queueTargetedRun } from "@/apply/followup";
+import { getBackend } from "@/llm/registry";
 
 // 全自动投递 (2026-09-17; since 2026-09-24 it runs whether or not the 自动投递 switch is on —
 // the user asked for 待处理 cards only when the assistant is truly stuck): when the assistant
@@ -158,13 +160,14 @@ export function parseAutoAnswers(text: string, questions: InfoQuestion[]): Recor
 export interface AutoAnswerResult {
   // Everything the model answered (already validated against options), keyed by question key.
   answered: Record<string, string>;
-  // Questions still open after the attempt: non-text items (file / action) and text items the
-  // model could not answer from the facts. Empty = the assistant can continue right away.
+  // Questions still open after the attempt: non-text items (file / action / login / manual) and
+  // text items the model could not answer from the facts. Empty = nothing left for the user.
   remaining: InfoQuestion[];
   // 'prepared' when every required item is answered (the row was moved on exactly as a user's
-  // answer would move it); 'needs_info' when a card is still needed; 'skipped' when nothing was
-  // attempted (no text questions, no profile, model failure).
-  status: "prepared" | "needs_info" | "skipped";
+  // answer would move it); 'cleared' when a paused card had nothing left once its text questions
+  // were answered (the caller queues it); 'needs_info' when a card is still needed; 'skipped'
+  // when nothing was attempted (no text questions, no profile).
+  status: "prepared" | "cleared" | "needs_info" | "skipped";
   error?: string;
 }
 
@@ -173,16 +176,21 @@ export interface AutoAnswerDeps {
   now?: () => Date;
 }
 
-// Called by the report route right after reportFill stored a needs_info row (never for a row
-// that pausesImmediately — login / manual items are the user's alone). Runs the model over the
-// text questions, stores what it answered, and either moves the row to 'prepared' (the
+// Called by the report route right after reportFill stored a needs_info row, and for a paused
+// card (status 'matched' + reason: a login / manual card the assistant also hung a question on,
+// or one whose login was resolved and left only its questions). Runs the model over the text
+// questions, stores what it answered, and either moves a needs_info row to 'prepared' (the
 // assistant, still on the tab, gets the answers in the report response) or trims the card down
-// to the items that are still open. Never throws: a failure leaves the ordinary card in place.
+// to the items that are still open — login / manual items are the user's alone and always stay.
+// A paused card left with nothing is cleared ('cleared': the caller queues it). Never throws: a
+// failure leaves the ordinary card in place.
 export async function autoAnswerPending(db: DB, userId: string, jobId: number, deps: AutoAnswerDeps): Promise<AutoAnswerResult> {
   const row = db
-    .prepare("SELECT status, pending_questions, info_answers FROM applications WHERE user_id = ? AND job_id = ?")
-    .get(userId, jobId) as { status: string; pending_questions: string | null; info_answers: string | null } | undefined;
-  if (!row || row.status !== "needs_info" || !row.pending_questions) return { answered: {}, remaining: [], status: "skipped" };
+    .prepare("SELECT status, pending_questions, info_answers, needs_manual_reason FROM applications WHERE user_id = ? AND job_id = ?")
+    .get(userId, jobId) as { status: string; pending_questions: string | null; info_answers: string | null; needs_manual_reason: string | null } | undefined;
+  if (!row || !row.pending_questions) return { answered: {}, remaining: [], status: "skipped" };
+  const paused = row.status === "matched" && row.needs_manual_reason != null;
+  if (row.status !== "needs_info" && !paused) return { answered: {}, remaining: [], status: "skipped" };
   let questions: InfoQuestion[] = [];
   try {
     questions = JSON.parse(row.pending_questions) as InfoQuestion[];
@@ -210,8 +218,57 @@ export async function autoAnswerPending(db: DB, userId: string, jobId: number, d
     return { answered: {}, remaining: questions, status: "needs_info", error };
   }
 
+  // The model call can take minutes. If the user acted on the card meanwhile (answered it, skipped
+  // the job, the assistant re-reported), these answers are for a card that no longer exists:
+  // writing them would overwrite the user's own answers, or queue a run for an archived job.
+  const nowRow = db
+    .prepare("SELECT status, pending_questions, needs_manual_reason FROM applications WHERE user_id = ? AND job_id = ?")
+    .get(userId, jobId) as { status: string; pending_questions: string | null; needs_manual_reason: string | null } | undefined;
+  if (!nowRow || nowRow.status !== row.status || nowRow.pending_questions !== row.pending_questions || nowRow.needs_manual_reason !== row.needs_manual_reason) {
+    logEvent(db, "application_info_auto_answer_stale", { userId, entity: "application", entityId: jobId, payload: { from: row.status, to: nowRow?.status ?? null } });
+    return { answered: {}, remaining: [], status: "skipped", error: "the card changed while the App was answering it" };
+  }
+
   const remaining = questions.filter((q) => infoKind(q) !== "text" || (!(q.key in answered) && !q.optional));
   const complete = remaining.length === 0;
+
+  if (paused) {
+    if (Object.keys(answered).length > 0 || remaining.length < questions.length) {
+      let existing: Record<string, string> = {};
+      try {
+        existing = row.info_answers ? JSON.parse(row.info_answers) : {};
+      } catch {
+        existing = {};
+      }
+      if (complete) {
+        db.prepare("UPDATE applications SET info_answers = ?, pending_questions = NULL, needs_manual_reason = NULL WHERE user_id = ? AND job_id = ?").run(
+          JSON.stringify({ ...existing, ...answered }),
+          userId,
+          jobId
+        );
+      } else {
+        db.prepare("UPDATE applications SET info_answers = ?, pending_questions = ?, needs_manual_reason = ? WHERE user_id = ? AND job_id = ?").run(
+          JSON.stringify({ ...existing, ...answered }),
+          JSON.stringify(remaining),
+          remaining.map((q) => q.label).join(" / "),
+          userId,
+          jobId
+        );
+      }
+      const keep = Object.fromEntries(Object.entries(answered).filter(([, v]) => rememberable(v)));
+      if (Object.keys(keep).length > 0) {
+        const current = (getProfileData(db, userId)?.standard_answers ?? {}) as Record<string, string>;
+        saveStandardAnswers(db, userId, { ...current, ...keep });
+      }
+    }
+    logEvent(db, "application_info_auto_answered", {
+      userId,
+      entity: "application",
+      entityId: jobId,
+      payload: { answered: Object.keys(answered), remaining: remaining.map((q) => q.key), complete, paused: true },
+    });
+    return { answered, remaining, status: complete ? "cleared" : "needs_info" };
+  }
 
   if (complete) {
     // Exactly the path a user's own answers take (status -> prepared, answers merged, remembered
@@ -258,4 +315,53 @@ export async function autoAnswerPending(db: DB, userId: string, jobId: number, d
     payload: { answered: Object.keys(answered), remaining: remaining.map((q) => q.key), complete },
   });
   return { answered, remaining, status: complete ? "prepared" : "needs_info" };
+}
+
+// Paused cards holding nothing but text questions — the login next to them was resolved
+// (resolveLogins keeps the other items), the assistant timed out waiting, or the card predates the
+// App answering for the user — never went past the model: autoAnswerPending only ran when the
+// question was first reported. From the dispatcher tick: each such card the model has not seen
+// since its last change gets one attempt; a card it clears becomes a targeted run. One sweep at a
+// time per process, a few cards per tick.
+const PARKED_TEXT_PER_TICK = 3;
+let parkedTextSweep: Promise<number[]> | null = null;
+
+export function autoAnswerParkedText(db: DB, userId: string, deps: Partial<AutoAnswerDeps> & { queue?: typeof queueTargetedRun } = {}): Promise<number[]> {
+  if (parkedTextSweep) return parkedTextSweep;
+  parkedTextSweep = (async () => {
+    const queued: number[] = [];
+    try {
+      const rows = db
+        .prepare(
+          `SELECT a.job_id, a.pending_questions FROM applications a
+           WHERE a.user_id = ? AND a.status = 'matched' AND a.needs_manual_reason IS NOT NULL AND a.needs_manual_reason NOT LIKE ?
+             AND a.pending_questions IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM events e WHERE e.entity = 'application' AND e.entity_id = a.job_id AND e.user_id = a.user_id
+                             AND e.kind IN ('application_info_auto_answered', 'application_info_auto_answer_failed') AND e.at >= a.updated_at)
+           ORDER BY a.updated_at ASC`
+        )
+        .all(userId, AUTO_RETRY_PREFIX + "%") as { job_id: number; pending_questions: string }[];
+      const textOnly = rows.filter((r) => {
+        try {
+          const items = JSON.parse(r.pending_questions) as InfoQuestion[];
+          return Array.isArray(items) && items.length > 0 && items.every((q) => infoKind(q) === "text");
+        } catch {
+          return false;
+        }
+      });
+      if (textOnly.length === 0) return queued;
+      const backend = deps.backend ?? getBackend();
+      for (const r of textOnly.slice(0, PARKED_TEXT_PER_TICK)) {
+        const res = await autoAnswerPending(db, userId, r.job_id, { backend });
+        if (res.status === "cleared") queued.push(r.job_id);
+      }
+      if (queued.length > 0) (deps.queue ?? queueTargetedRun)(db, userId, queued, "direct");
+    } catch (e) {
+      console.error("[auto-answer] parked text sweep failed", e);
+    }
+    return queued;
+  })().finally(() => {
+    parkedTextSweep = null;
+  });
+  return parkedTextSweep;
 }

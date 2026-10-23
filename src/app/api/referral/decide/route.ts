@@ -4,13 +4,14 @@ import { referralDecide, ReferralAction } from "@/apply/referral";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // POST {jobIds, action: direct|won|retry|archive, info?, personName?} — the 内推进行中 card
 // buttons. The state change always happens; the follow-up run is enqueued only when no apply run
 // is live/queued (the response says which, and the card keeps a 开始投 button for the other case).
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const db = getDb();
     const jobIds = (body.jobIds as unknown[]).map(Number);
     const result = referralDecide(db, userId, {

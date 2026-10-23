@@ -2,7 +2,7 @@ import type { Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
 import { serverLang } from "@/lib/prefs";
 import { DB, logEvent } from "@/lib/db";
-import { InfoQuestion, infoKind, manualItem, MULTI_ANSWER_SEP, siteKey, ASSISTANT_NOTE_KEY, saveAssistantNote } from "@/apply/queue";
+import { InfoQuestion, infoKind, manualItem, MULTI_ANSWER_SEP, siteKey, ASSISTANT_NOTE_KEY, saveAssistantNote, AUTO_RETRY_PREFIX } from "@/apply/queue";
 export { ASSISTANT_NOTE_KEY, saveAssistantNote };
 
 // The 待处理 list (spec 2026-09-13-todo-list-design): everything the assistant stopped on that
@@ -32,6 +32,7 @@ export interface PendingInfoRow {
   needsManualReason: string | null;
   questions: InfoQuestion[];
   askedAt: string; // local "MM-DD HH:MM"
+  askedAtUtc: string; // the row's updated_at, SQLite UTC text
 }
 
 interface PendingInfoRaw {
@@ -44,24 +45,26 @@ interface PendingInfoRaw {
   needs_manual_reason: string | null;
   pending_questions: string | null;
   asked_at: string;
+  asked_at_utc: string;
 }
 
 // The cards' data source. A paused row that somehow carries only a reason (an old-protocol
 // report, a row from before this design) is shown too, as a single manual item built from the
-// reason — nothing paused is ever invisible.
+// reason — nothing paused is ever invisible, except an error waiting on its automatic retry
+// (AUTO_RETRY_PREFIX): that one comes back by itself within hours, and as a card if it fails again.
 export function pendingInfo(db: DB, userId: string, lang: Lang = serverLang()): PendingInfoRow[] {
   const rows = db
     .prepare(
       `SELECT a.job_id, j.company, j.title, j.apply_url, m.direction, a.status, a.needs_manual_reason,
-              a.pending_questions, strftime('%m-%d %H:%M', a.updated_at, 'localtime') as asked_at
+              a.pending_questions, strftime('%m-%d %H:%M', a.updated_at, 'localtime') as asked_at, a.updated_at as asked_at_utc
        FROM applications a
        JOIN jobs j ON j.id = a.job_id
        LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
        WHERE a.user_id = ? AND ((a.status = 'needs_info' AND a.pending_questions IS NOT NULL)
-          OR (a.status = 'matched' AND a.needs_manual_reason IS NOT NULL))
+          OR (a.status = 'matched' AND a.needs_manual_reason IS NOT NULL AND a.needs_manual_reason NOT LIKE ?))
        ORDER BY (a.status = 'needs_info') DESC, a.updated_at DESC`
     )
-    .all(userId) as PendingInfoRaw[];
+    .all(userId, AUTO_RETRY_PREFIX + "%") as PendingInfoRaw[];
   return rows.map((r) => {
     let questions: InfoQuestion[] = [];
     if (r.pending_questions) {
@@ -85,6 +88,7 @@ export function pendingInfo(db: DB, userId: string, lang: Lang = serverLang()): 
       needsManualReason: r.needs_manual_reason,
       questions,
       askedAt: r.asked_at,
+      askedAtUtc: r.asked_at_utc,
     };
   });
 }
@@ -142,7 +146,7 @@ export function answerInfo(
   const remembered: Record<string, string> = {};
   for (const q of questions) {
     const kind = infoKind(q);
-    if (kind === "login" || kind === "manual") continue;
+    if (kind === "login" || kind === "manual" || kind === "submit") continue;
     const a = answers[q.key];
     let value = typeof a?.value === "string" ? a.value.trim() : "";
     if (!value) {

@@ -148,13 +148,26 @@ export function linkParts(raw: string): { href: string; display: string } {
   return { href: `https://${noScheme}`, display };
 }
 
+// The URL argument of \href is not text, so escapeLatex does not fit it — and the profile's
+// link fields are free text any account can set. Unescaped, a `}` in them closes the argument
+// and whatever follows is compiled as TeX (an \input of a server file would print it into the
+// PDF; tectonic's --untrusted does not stop absolute-path reads). Everything outside a plain
+// URL alphabet is percent-encoded (same URL to a browser), and the `%` that leaves is escaped
+// for TeX, which hyperref turns back into a literal `%`.
+export function hrefArg(url: string): string {
+  return Array.from(url)
+    .map((ch) => (/^[A-Za-z0-9\-./:?=@+]$/.test(ch) ? ch : encodeURIComponent(ch).replace(/[!'()*~_]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)))
+    .join("")
+    .replace(/%/g, "\\%");
+}
+
 function renderHeader(c: ResumeContact): string {
   const linkField = (raw: string): string => {
     const { href, display } = linkParts(raw);
-    return `\\href{${href}}{\\underline{${escapeLatex(display)}}}`;
+    return `\\href{${hrefArg(href)}}{\\underline{${escapeLatex(display)}}}`;
   };
   const links = [
-    c.email ? `\\href{mailto:${c.email}}{\\underline{${escapeLatex(c.email)}}}` : "",
+    c.email ? `\\href{${hrefArg(`mailto:${c.email}`)}}{\\underline{${escapeLatex(c.email)}}}` : "",
     c.phone ? escapeLatex(c.phone) : "",
     c.linkedin ? linkField(c.linkedin) : "",
     c.github ? linkField(c.github) : "",

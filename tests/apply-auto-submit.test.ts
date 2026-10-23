@@ -5,7 +5,7 @@ import { createExperience } from "@/resume/experiences";
 import { reportFill, reportSubmitted, confirmStatus } from "@/apply/queue";
 import { getAutoSubmit, setAutoSubmit, autoApproveIfEnabled, autoApproveOutreachIfEnabled } from "@/apply/auto-submit";
 import { reportSent } from "@/network/gate";
-import { autoAnswerPending, buildAutoAnswerPrompt, parseAutoAnswers } from "@/apply/auto-answer";
+import { autoAnswerPending, autoAnswerParkedText, buildAutoAnswerPrompt, parseAutoAnswers } from "@/apply/auto-answer";
 import type { LlmBackend, LlmRequest } from "@/llm/types";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
@@ -205,6 +205,26 @@ describe("auto-answer", () => {
     expect(saved.why_us).toBeUndefined();
   });
 
+  it("drops its answers when the user acted on the card while the model was answering", async () => {
+    const db = openDb(":memory:");
+    seedProfile(db);
+    const jobId = seedJob(db);
+    reportFill(db, U, { jobId, status: "needs_info", questions: [{ key: "relocate", label: "Willing to relocate?" }] });
+    // The user answers the card themselves during the model call.
+    const backend = fakeBackend(() => {
+      db.prepare("UPDATE applications SET status = 'prepared', pending_questions = NULL, info_answers = ? WHERE job_id = ?").run(
+        JSON.stringify({ relocate: "No" }),
+        jobId
+      );
+      return JSON.stringify([{ key: "relocate", answer: "Yes" }]);
+    });
+    const r = await autoAnswerPending(db, U, jobId, { backend });
+    expect(r.status).toBe("skipped");
+    const row = db.prepare("SELECT status, info_answers FROM applications WHERE job_id = ?").get(jobId) as { status: string; info_answers: string };
+    expect(row.status).toBe("prepared");
+    expect(JSON.parse(row.info_answers)).toEqual({ relocate: "No" });
+  });
+
   it("answers every open text item: the row moves to prepared with the answers, remembered as standard answers", async () => {
     const db = openDb(":memory:");
     seedProfile(db);
@@ -301,5 +321,77 @@ describe("auto-answer", () => {
     reportFill(db, U, { jobId: jobId2, status: "needs_info", questions: [{ key: "captcha", label: "Click the captcha", kind: "action" }] });
     expect((await autoAnswerPending(db, U, jobId2, { backend })).status).toBe("skipped");
     expect(backend.calls).toHaveLength(0);
+  });
+
+  const card = (db: DB, jobId: number) =>
+    db.prepare("SELECT status, info_answers, pending_questions, needs_manual_reason FROM applications WHERE job_id = ?").get(jobId) as {
+      status: string;
+      info_answers: string | null;
+      pending_questions: string | null;
+      needs_manual_reason: string | null;
+    };
+
+  it("a question hung on a login card is answered and taken off it; the login stays", async () => {
+    const db = openDb(":memory:");
+    seedProfile(db);
+    const jobId = seedJob(db);
+    reportFill(db, U, {
+      jobId,
+      status: "needs_info",
+      questions: [
+        { kind: "login", key: "login", label: "Sign in to Gunvor's Workday", host: "gunvor.wd3.myworkdayjobs.com" },
+        { key: "relocate_houston", label: "Would you move to Houston, Texas for a job?" },
+      ],
+    });
+    const r = await autoAnswerPending(db, U, jobId, { backend: fakeBackend(JSON.stringify([{ key: "relocate_houston", answer: "Yes" }])) });
+    expect(r.status).toBe("needs_info");
+    const row = card(db, jobId);
+    expect(row.status).toBe("matched");
+    expect(JSON.parse(row.pending_questions!).map((q: { key: string }) => q.key)).toEqual(["login"]);
+    expect(row.needs_manual_reason).toBe("Sign in to Gunvor's Workday");
+    expect(JSON.parse(row.info_answers!)).toEqual({ relocate_houston: "Yes" });
+    expect((getProfileData(db, U)?.standard_answers as Record<string, string>).relocate_houston).toBe("Yes");
+  });
+
+  it("autoAnswerParkedText clears a card left with only text questions and queues it — once per change", async () => {
+    const db = openDb(":memory:");
+    seedProfile(db);
+    const jobId = seedJob(db);
+    const loginOnly = seedJob(db);
+    reportFill(db, U, {
+      jobId,
+      status: "needs_info",
+      questions: [
+        { kind: "login", key: "login", label: "Sign in", host: "nisa.icims.com" },
+        { key: "relocate_st_louis", label: "Would you move to St. Louis?" },
+      ],
+    });
+    reportFill(db, U, { jobId: loginOnly, status: "needs_info", questions: [{ kind: "login", key: "login", label: "Sign in", host: "x.example" }] });
+    // The user logged in: resolveLogins removes the login item and leaves the question (what Gunvor / NISA did).
+    db.prepare("UPDATE applications SET pending_questions = ?, needs_manual_reason = ? WHERE job_id = ?").run(
+      JSON.stringify([{ key: "relocate_st_louis", label: "Would you move to St. Louis?" }]),
+      "Would you move to St. Louis?",
+      jobId
+    );
+    const queued: number[][] = [];
+    const queue = ((_db: DB, _u: string, ids: number[]) => {
+      queued.push(ids);
+      return { autoStarted: true };
+    }) as never;
+    const backend = fakeBackend(JSON.stringify([{ key: "relocate_st_louis", answer: "Yes" }]));
+    expect(await autoAnswerParkedText(db, U, { backend, queue })).toEqual([jobId]);
+    expect(queued).toEqual([[jobId]]);
+    expect(card(db, jobId)).toMatchObject({ status: "matched", pending_questions: null, needs_manual_reason: null });
+    expect(backend.calls).toHaveLength(1); // the login-only card is not the model's business
+
+    // A text question the model can't answer stays, and is not re-asked every tick.
+    const gpa = seedJob(db);
+    reportFill(db, U, { jobId: gpa, status: "needs_info", questions: [{ kind: "manual", key: "m", label: "x" }, { key: "gpa", label: "GPA" }] });
+    db.prepare("UPDATE applications SET pending_questions = ? WHERE job_id = ?").run(JSON.stringify([{ key: "gpa", label: "GPA" }]), gpa);
+    const nulls = fakeBackend(JSON.stringify([{ key: "gpa", answer: null }]));
+    expect(await autoAnswerParkedText(db, U, { backend: nulls, queue })).toEqual([]);
+    expect(await autoAnswerParkedText(db, U, { backend: nulls, queue })).toEqual([]);
+    expect(nulls.calls).toHaveLength(1);
+    expect(JSON.parse(card(db, gpa).pending_questions!)).toEqual([{ key: "gpa", label: "GPA" }]);
   });
 });

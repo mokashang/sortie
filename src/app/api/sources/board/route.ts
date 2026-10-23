@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { setBoardTier, TIERS } from "@/scanner/boards";
 import { withUser, requireOwner, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 const Body = z.object({ key: z.string().min(3), tier: z.enum(TIERS as [string, ...string[]]) });
 
@@ -11,7 +12,7 @@ const Body = z.object({ key: z.string().min(3), tier: z.enum(TIERS as [string, .
 export const PATCH = withUser(async (req, actor) => {
   try {
     requireOwner(actor);
-    const parsed = Body.safeParse(await req.json().catch(() => null));
+    const parsed = Body.safeParse(await readJsonBody(req).catch(() => null));
     if (!parsed.success) return NextResponse.json({ error: parsed.error.message }, { status: 400 });
     setBoardTier(getDb(), parsed.data.key, parsed.data.tier as (typeof TIERS)[number]);
     return NextResponse.json({ ok: true });

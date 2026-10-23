@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/request-body";
 import { getDb } from "@/lib/db";
-import { reportFill, reportSubmitted, pausesImmediately, normalizeQuestions, ReportFillInput } from "@/apply/queue";
+import { reportFill, reportSubmitted, pausesImmediately, normalizeQuestions, infoKind, ReportFillInput } from "@/apply/queue";
 import { reportNoContact } from "@/apply/referral";
 import { resolveReferrals, afterReferralSubmitted } from "@/apply/referral-auto";
 import { needsInfoNotification } from "@/apply/info";
@@ -11,6 +11,9 @@ import { getBackend } from "@/llm/registry";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 import { notify } from "@/lib/notify";
 import { withUser, failResponse } from "@/lib/actor";
+import { notifySubmitBlocked } from "@/apply/submit-blocked";
+
+const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "needs_manual", "error", "closed", "already_applied", "submit_blocked"]);
 
 // Executor -> App: status reports during and after a fill attempt.
 // body.status === 'submitted' is routed to reportSubmitted (the red-line gate) instead of
@@ -23,6 +26,10 @@ import { withUser, failResponse } from "@/lib/actor";
 // candidate's facts (response `autoAnswered: true` + `infoAnswers` — the assistant fills them into
 // the tab it still has open). Only what the App could not answer, and the items nobody but the
 // user can do (sign in, captcha, a missing file, a manual step), still become a 待处理 card.
+//
+// submit_blocked (2026-10-22): the session's own permission check refused the Submit click on an
+// approved fill. The row becomes a 「点提交」 card (queue.ts parkBlockedSubmit) and the user gets a
+// push — at most one per half hour (src/apply/submit-blocked.ts); the session moves on.
 export const POST = withUser(async (req, { userId }) => {
   const body = await readJsonBody(req);
   try {
@@ -50,9 +57,27 @@ export const POST = withUser(async (req, { userId }) => {
       return NextResponse.json({ ok: true });
     }
 
-    reportFill(db, userId, body as ReportFillInput);
+    // Refuse what the protocol doesn't have instead of guessing: an unknown status used to fall
+    // through to the catch-all and park a finished form as 「助手没能完成这份申请」, and a flag sent
+    // as the string "false" was truthy (archived the job / muted its whole board).
+    if (!REPORT_STATUSES.has(body.status)) {
+      return NextResponse.json(
+        { error: `unknown status '${String(body.status)}' (one of ${[...REPORT_STATUSES, "submitted", "referral_no_contact"].join(", ")})`, code: "bad_request" },
+        { status: 400 }
+      );
+    }
+    if (!Number.isInteger(Number(body.jobId)) || Number(body.jobId) <= 0) {
+      return NextResponse.json({ error: "jobId must be a positive integer", code: "bad_request" }, { status: 400 });
+    }
+    const flag = (v: unknown) => v === true || v === "true" || v === 1;
+    reportFill(db, userId, { ...body, jobId: Number(body.jobId), archive: flag(body.archive), boardGone: flag(body.boardGone) } as ReportFillInput);
     const jobId = Number(body.jobId);
     const autoSubmit = getAutoSubmit(db, userId);
+
+    if (body.status === "submit_blocked") {
+      notifySubmitBlocked(db, userId, jobId, lang);
+      return NextResponse.json({ ok: true, card: "submit" });
+    }
 
     if (body.status === "awaiting_confirm" && autoSubmit) {
       const autoApproved = autoApproveIfEnabled(db, userId, jobId);
@@ -84,6 +109,13 @@ export const POST = withUser(async (req, { userId }) => {
           return NextResponse.json({ ok: true, autoAnswered, infoAnswers });
         }
         if (Object.keys(r.answered).length > 0) autoAnswered = "partial";
+        questions = r.remaining.length > 0 ? r.remaining : questions;
+      } else if (questions.some((q) => infoKind(q) === "text")) {
+        // A login / manual card the assistant hung a question on (would you move to Houston?):
+        // the App answers it now, so the card only says what the user really has to do and the
+        // answer is on the row when the job comes back after the login (2026-10-06: Gunvor and
+        // NISA sat on 「愿意搬去 …?」 after the user had logged in).
+        const r = await autoAnswerPending(db, userId, jobId, { backend: getBackend() });
         questions = r.remaining.length > 0 ? r.remaining : questions;
       }
       const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;

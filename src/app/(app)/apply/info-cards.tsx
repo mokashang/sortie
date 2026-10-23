@@ -2,13 +2,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, ExternalLink, MessageSquare, RotateCcw, Trash, UserCheck } from "lucide-react";
 import { directionName, documentLabel, labelOf } from "@/app/lib/labels";
+import { relativeTime } from "@/app/lib/time";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
 import { Button, Card, Checkbox, Chip, EmptyState, Field, Input, LinkButton, Select, Textarea, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
 import { useLang, useMessages } from "@/i18n/client";
 import type { Messages } from "@/i18n/messages";
+import { PlanAlertCard, type PlanAlertRow } from "./plan-alert-card";
 
-type Kind = "text" | "file" | "login" | "action" | "manual";
+type Kind = "text" | "file" | "login" | "action" | "manual" | "submit";
 
 interface Question {
   key: string;
@@ -33,6 +35,17 @@ export interface InfoRow {
   needsManualReason: string | null;
   questions: Question[];
   askedAt: string;
+  // An emailed verification code the App found in the user's mailbox for this card's code step
+  // (src/apply/email-code.ts) — shown for the user to type into the tab; never sent anywhere.
+  emailCode?: {
+    key: string;
+    code: string | null;
+    from: string | null;
+    subject: string | null;
+    receivedAt: string | null;
+    watching: boolean;
+    noMailbox: boolean;
+  };
 }
 
 interface DocumentRow {
@@ -54,8 +67,10 @@ const isExternal = (url: string) => /^https?:\/\//i.test(url);
 const loginKey = (item: Question, jobId: number) => (item.host ? item.host.toLowerCase().replace(/^www\./, "") : item.url ?? `job-${jobId}`);
 
 // What the card turns into: a login wall groups every job on that site into one card; something
-// only the user can finish is a short "do it yourself" card; everything else is a small form.
-function cardKind(row: InfoRow): "login" | "manual" | "form" {
+// only the user can finish is a short "do it yourself" card; an approved fill whose Submit the
+// assistant was refused is a 「点提交」 card; everything else is a small form.
+function cardKind(row: InfoRow): "login" | "manual" | "submit" | "form" {
+  if (row.questions.some((q) => kindOf(q) === "submit")) return "submit";
   if (row.questions.some((q) => kindOf(q) === "login")) return "login";
   if (row.questions.some((q) => kindOf(q) === "manual")) return "manual";
   return "form";
@@ -64,6 +79,25 @@ function cardKind(row: InfoRow): "login" | "manual" | "form" {
 function continueText(j: Continued, m: Messages): string {
   if (j.status === "prepared") return m.apply.todo.continueForm;
   return j.autoStarted ? m.apply.todo.continueRequeued : m.apply.todo.continueBusy;
+}
+
+// The code (or what the watcher knows so far) above the 完成了 box of an emailed-code step.
+function EmailCode({ code }: { code: NonNullable<InfoRow["emailCode"]> }) {
+  const m = useMessages();
+  const lang = useLang();
+  const t = m.apply.todo.code;
+  if (code.code) {
+    return (
+      <div className="email-code mb-2">
+        <div className="muted xs">{t.label}</div>
+        <div className="email-code-value mono">{code.code}</div>
+        <div className="muted xs">{t.from(code.from ?? "?", relativeTime(code.receivedAt, lang))}</div>
+        <p className="small mt-1">{t.instructions}</p>
+      </div>
+    );
+  }
+  const line = code.subject ? t.unrecognized(code.subject) : code.noMailbox ? t.noMailbox : code.watching ? t.watching : t.notFound;
+  return <p className="muted small mb-2">{line}</p>;
 }
 
 async function uploadDocument(key: string, file: File): Promise<DocumentRow> {
@@ -78,7 +112,7 @@ async function uploadDocument(key: string, file: File): Promise<DocumentRow> {
 
 // `waiting` = an apply run is actually running, so a needs_info row really has an assistant on
 // its tab; otherwise the one that asked is gone and answering re-queues the job instead.
-function Head({ row, kindLabel, waiting }: { row: InfoRow; kindLabel: string; waiting: boolean }) {
+function Head({ row, kindLabel, waiting, stateChip }: { row: InfoRow; kindLabel: string; waiting: boolean; stateChip?: React.ReactNode }) {
   const m = useMessages();
   const lang = useLang();
   return (
@@ -92,7 +126,9 @@ function Head({ row, kindLabel, waiting }: { row: InfoRow; kindLabel: string; wa
         <div className="row mt-2">
           <Chip>{directionName(row.direction, lang)}</Chip>
           <Chip tone="accent">{kindLabel}</Chip>
-          {row.status === "needs_info" && waiting ? (
+          {stateChip ? (
+            stateChip
+          ) : row.status === "needs_info" && waiting ? (
             <Chip tone="warn">{m.apply.todo.waiting(row.askedAt)}</Chip>
           ) : row.status === "needs_info" ? (
             <Chip tone="neutral">{m.apply.todo.assistantLeft}</Chip>
@@ -121,6 +157,8 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   const m = useMessages();
   const lang = useLang();
   const [rows, setRows] = useState<InfoRow[]>([]);
+  // Task-level cards (a plan that stopped short, a task that gave up) ride on the same poll.
+  const [alerts, setAlerts] = useState<PlanAlertRow[]>([]);
   const [docs, setDocs] = useState<DocumentRow[]>([]);
   const [drafts, setDrafts] = useState<Record<number, Record<string, Draft>>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -135,8 +173,9 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
 
   const refresh = useCallback(async () => {
     try {
-      const j = await getJson<{ needsInfo: InfoRow[] }>("/api/apply/pending");
+      const j = await getJson<{ needsInfo: InfoRow[]; planAlerts?: PlanAlertRow[] }>("/api/apply/pending");
       setRows(j.needsInfo ?? []);
+      setAlerts(j.planAlerts ?? []);
     } catch {
       // keep last known list
     }
@@ -198,7 +237,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
         const answers: Record<string, { value: string; remember: boolean }> = {};
         for (const q of row.questions) {
           const kind = kindOf(q);
-          if (kind === "login" || kind === "manual") continue;
+          if (kind === "login" || kind === "manual" || kind === "submit") continue;
           const d = draft(row.jobId, q.key);
           answers[q.key] = { value: d.value, remember: kind === "text" && !d.onlyOnce };
         }
@@ -257,6 +296,24 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
         const j = await postJson<Continued>("/api/apply/unpark", { jobId: row.jobId, note: note || undefined });
         clearNote(noteKey.job(row.jobId));
         toast({ title: m.apply.todo.handedBack(row.company), description: continueText(j, m), tone: "good" });
+      } catch (e) {
+        toast({ title: m.apply.todo.retryFailed, description: errorMessage(e), tone: "danger" });
+      }
+    });
+  }
+
+  // 「点提交」 card: the session holding the tab clicks Submit again, or the job is filled afresh.
+  async function retrySubmit(row: InfoRow) {
+    await run(`retry-submit-${row.jobId}`, async () => {
+      try {
+        const note = noteOf(noteKey.job(row.jobId));
+        const j = await postJson<Continued & { notified?: boolean }>("/api/apply/retry-submit", { jobId: row.jobId, note: note || undefined });
+        clearNote(noteKey.job(row.jobId));
+        toast({
+          title: j.notified ? m.apply.todo.submit.retriedTab(row.company) : m.apply.todo.submit.retriedFresh(row.company),
+          description: j.notified ? undefined : continueText(j, m),
+          tone: "good",
+        });
       } catch (e) {
         toast({ title: m.apply.todo.retryFailed, description: errorMessage(e), tone: "danger" });
       }
@@ -395,6 +452,29 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       ];
     }
 
+    if (kind === "submit") {
+      const item = row.questions.find((q) => kindOf(q) === "submit")!;
+      const t = m.apply.todo.submit;
+      return [
+        <Card key={row.jobId} tone="warn" className="todo-card">
+          <Head row={row} kindLabel={labelOf(m.labels.infoKind, "submit")} waiting={false} stateChip={<Chip tone="good">{t.chip}</Chip>} />
+          <div className="strong mt-3">{t.title}</div>
+          {item.hint ? <p className="muted small todo-hint mt-1">{item.hint}</p> : null}
+          <p className="muted small mt-3">{t.instructions}</p>
+          {noteField(noteKey.job(row.jobId), t.notePlaceholder, m.apply.todo.note.retryHint)}
+          <div className="row mt-4">
+            <Button variant="primary" icon={<UserCheck size={14} />} onClick={() => selfSubmitted(row)} loading={busyKey === `self-${row.jobId}`} disabled={busyKey !== null && busyKey !== `self-${row.jobId}`}>
+              {t.done}
+            </Button>
+            <Button icon={<RotateCcw size={14} />} onClick={() => retrySubmit(row)} loading={busyKey === `retry-submit-${row.jobId}`} disabled={busyKey !== null && busyKey !== `retry-submit-${row.jobId}`}>
+              {t.retry}
+            </Button>
+            {skipButton(row)}
+          </div>
+        </Card>,
+      ];
+    }
+
     if (kind === "manual") {
       const items = row.questions.filter((q) => kindOf(q) === "manual");
       const first = items[0];
@@ -455,8 +535,10 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
             );
 
             if (kind === "action") {
+              const ec = row.emailCode?.key === q.key ? row.emailCode : undefined;
               return (
                 <Field key={q.key} label={label} hint={q.hint}>
+                  {ec ? <EmailCode code={ec} /> : null}
                   <Checkbox label={m.apply.todo.field.actionDone} checked={d.value === "done"} onChange={(e) => setDraft(row.jobId, q.key, { value: e.target.checked ? "done" : "" })} />
                 </Field>
               );
@@ -609,11 +691,24 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
         </div>
       </Card>
     ) : null;
-  const allCards = loginAll ? [loginAll, ...cards] : cards;
+  const alertCards = alerts.map((a) => (
+    <PlanAlertCard
+      key={`plan-${a.runId}`}
+      alert={a}
+      busy={busyKey}
+      setBusy={setBusyKey}
+      onDone={async () => {
+        await refresh();
+        await refreshOverview();
+      }}
+    />
+  ));
+  const allCards = [...alertCards, ...(loginAll ? [loginAll] : []), ...cards];
+  const empty = rows.length === 0 && alerts.length === 0;
 
-  if (compact) return rows.length === 0 ? null : <div className="col gap-3">{allCards}</div>;
+  if (compact) return empty ? null : <div className="col gap-3">{allCards}</div>;
 
-  if (rows.length === 0) return <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />;
+  if (empty) return <EmptyState compact title={m.apply.todo.emptyTitle} description={m.apply.todo.emptyDescription} />;
 
   return (
     <>

@@ -118,6 +118,15 @@ Only once both checks pass, tell the user you're starting and begin the loop bel
 
 **Segments (接力, CLAUDE.md §3.3b).** If the run's `options.chunk` is set (the App sets 10 for every plan run), stop the loop once that many applications are filled-and-reported (`awaiting_confirm`) plus referral jobs claimed (`referral_seeking`), and finish normally with `status: "done"` — the App queues the next segment itself with the remaining plan (`options.chain` tells you which segment this is and the cumulative progress; log that on your first line). Never quit early because the plan looks too big, and never push past the chunk.
 
+**Only the user stops a task (2026-10-16).** Task #453 halted a 1530-job plan on its own over
+LinkedIn pacing and wrote three options into its summary "for the user to choose" — nobody reads
+summaries, and the plan sat dead for 11 hours. Never finish with `status: "stopped"` (the App
+records it as `done` and queues the next segment anyway) and never ask the user anything in a
+summary or log line. Pacing is the App's job (the daily LinkedIn invite budget, §2b); anything
+only the user can do is a per-job `needs_info` card (§5). If you must end a segment early (the §7
+breakers), finish it `done` with a plain account of what happened — the App decides what comes
+next.
+
 Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-breaker condition in
 §7 fires:
 
@@ -179,6 +188,20 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
    resolve (rare), `a.setAttribute('target','_self')` does stick — set it, then click the link
    with `computer`/`find` so it opens in place. Easy Apply postings (no external link) are filled
    on LinkedIn itself. Only if neither route works is it a `manual` card.
+   The same goes for **any** Apply link or button that would open a new tab or window, on any
+   site (IBM's Avature hop, Manatal `careers-page.com`, SuccessFactors "Apply now"): read its
+   `href` (or a `data-*` / `onclick` URL) and `navigate` your own tab there; failing that, search
+   the company's careers site for the same requisition and open that.
+
+   **A job description that won't render is not a reason to stop** (2026-10-06: eight LinkedIn
+   postings went to cards in one night because LinkedIn showed grey placeholders for a few hours
+   and the session "would not apply blind"). The App already screened this job against the
+   description it stored at scan time (all eight had one) before handing it to you. The
+   live-page check only looks for an explicit no-sponsorship / citizens-only / PhD-only line; if
+   the description isn't there to read, skip that check and fill the application. Only when the application itself can't be reached (no Apply / Easy Apply control
+   renders, the page is a skeleton after a reload) report `status: "error"` with what you saw —
+   the App retries it by itself an hour later and again six hours after that, so don't keep
+   reloading LinkedIn; move on to the next task.
 
 3. **Detect the ATS and fill (tiered strategy).** See §3 below for the full procedure.
 
@@ -214,9 +237,11 @@ Repeat until `takeNextApplication` reports `done`, or a throttling/circuit-break
      and mutes the board when `boardGone`. Never a card, never an error. Close the tab, next task.
    - "You have already applied" page: `{ "jobId", "status": "already_applied", "reason" }` — the
      App records it in /history as submitted (date unknown). Close the tab, next task.
-   - Something broke unexpectedly (page crashed, a tool errored repeatedly, the App itself returned
-     an unexpected error): report `{ "jobId": task.jobId, "status": "error", "reason": "..." }`
-     instead, close the tab, and count it toward the error circuit breaker in §7. Don't use
+   - Something broke unexpectedly (page crashed, a tool errored repeatedly, the site would not
+     render, the App itself returned an unexpected error): report
+     `{ "jobId": task.jobId, "status": "error", "reason": "..." }` instead, close the tab, and
+     count it toward the error circuit breaker in §7. The App retries an error by itself (after
+     an hour, then after six more); only a third failure becomes a card. Don't use
      `error` for things that are really just "this application needs a human" (see §5) — that
      miscounts against the wrong breaker and stops the session early for no good reason.
 
@@ -243,8 +268,15 @@ The authoritative protocol is **CLAUDE.md §3.10** — read it before the first 
 short, per company:
 
 1. `POST /api/apply/next {"direction": "<slug>", "mode": "referral"}` → `ReferralTask`
-   `{company, jobs:[{jobId,title,applyUrl,direction,score}], knownPeople:[…], skipPersonIds:[…]}`.
+   `{company, jobs:[{jobId,title,applyUrl,direction,score}], knownPeople:[…], skipPersonIds:[…], maxPeople, inviteBudget}`.
    Those jobs are now `referral_seeking`; each one counts toward the entry's `count`.
+   **The App paces LinkedIn (2026-10-16): 20 invites a day.** `maxPeople` is how many people to
+   contact at this company (fewer than three when the day's budget is nearly spent). A response
+   `{"done": true, "reason": "invite_budget", "message": …}` means today's budget is spent: skip
+   every remaining referral entry of the plan and go on with its direct entries — do not stop the
+   task; the App picks referrals up again tomorrow. `POST /api/referral/outreach` answering 409
+   `invite_budget_exhausted` means the same mid-company: draft for nobody else (the App puts a
+   company nobody was asked at back in the queue), then move on to the direct entries.
 2. Find up to **THREE** people per company (a net, not a single bet), in this order, in the
    user's Chrome (read-only on LinkedIn until the send step): uncontacted USC alumni from
    `knownPeople` → the USC alumni page filtered by company
@@ -286,8 +318,11 @@ short, per company:
    c/d → `POST /api/network/report {"outreachId":<id>,"event":"sent","text":"<what went out>"}`.
    `archived` → skip. Timeout → leave it; a later approval auto-enqueues a resume run.
 6. ≥30s between people and between companies; ≤10 connection requests and ≤15 DMs per run
-   (three companies × three people is already near the cap — leave the rest for the next run);
-   stop on any CAPTCHA/rate-limit/verification signal.
+   (three companies × three people is already near the cap — leave the rest for the next run).
+   On any LinkedIn CAPTCHA / rate-limit / "weekly invitation limit" / verification / unusual-activity
+   signal: don't retry or work around it — `POST /api/referral/invite-budget
+   {"limited":true,"reason":"<what LinkedIn showed, ASCII>"}` (no more invites today), then carry on
+   with the plan's direct entries and finish the segment `done` as usual.
 
 Resume runs (`options.resume`) must also send `GET /api/network/sendables?jobLinked=true` rows with
 `channel: "linkedin"` the same way, after re-submitting approved fills.
@@ -417,6 +452,14 @@ never even attempt it before polling confirms approval. Concretely:
      re-filled data before trying to submit again. Never submit on an approval that was granted
      for values the form no longer holds.
 3. Click the actual final Submit/Apply button on the page.
+   - **The click is refused by your own permission check** (a denied tool call, "Real-World
+     Transactions" — dispatcher-spawned sessions hit this on 2026-10-22, every time): do not retry,
+     do not look for another way to click it, and do not stop to wait for someone to allow it.
+     `POST /api/apply/report {"jobId": …, "status": "submit_blocked", "reason": "<what refused it,
+     ASCII>"}` — the App turns it into a 「点提交」 card (the user clicks Submit in that tab and
+     presses 我提交了) and pushes a notification — keep the tab open (never close it), and carry on
+     with the next job; the segment counts it as filled. In a resume phase, an approved fill you
+     are refused on gets the same one report; a job already on such a card is the user's, leave it.
 4. Take a screenshot (or `get_page_text`) of the resulting confirmation page/state to sanity-check
    it actually went through (a "Thank you for applying" message, a confirmation number, a URL
    change to a success page, etc.).
@@ -444,7 +487,7 @@ Never power through any of these. Fill everything you safely can first, then rep
 | Situation | Item | Then |
 | --- | --- | --- |
 | A required question asking for a personal fact the answer pack truly lacks (high school, GPA, an ID number). Preference / willingness / start-date / "have you used X" questions are NOT this: answer them yourself from `answerPack.custom` and `answerPack.experiences` (the user wants a card only when you are really stuck; the App also re-answers any text item from the profile before a card appears) | `text` (default): `{ key: <standard_answers key>, label, hint?, options?: [exact option texts], multiple?: true, optional?: true }` | keep the tab open, poll |
-| A required attachment (transcript, portfolio, headshot) not in `answerPack.documents` | `file`: `{ kind: "file", key: "transcript", label, accept: ".pdf" }` — the answer you get back is an absolute path for `file_upload` | keep the tab open, poll |
+| A required attachment that is a record only the user holds (transcript, headshot, a certificate) and is not in `answerPack.documents` — check every key, not just the one you'd pick: `transcript`, `transcript_graduate` and `transcript_undergrad` are all transcripts. A portfolio / work sample / cover letter is not this: you make it (below) | `file`: `{ kind: "file", key: "transcript", label, accept: ".pdf" }` — the answer you get back is an absolute path for `file_upload` | keep the tab open, poll |
 | A CAPTCHA / bot check / 2FA prompt the user can clear in the open tab | `action`: `{ kind: "action", key: "captcha", label, hint }` | keep the tab open, poll |
 | A login wall or "create a candidate account" (Workday, SuccessFactors, iCIMS, Apple Jobs...) with no guest route or account-free board for the same posting (§3 Tier B/C step 4) — you never type passwords or create accounts | `login`: `{ kind: "login", host: <hostname of task.applyUrl — for a LinkedIn posting, the company site's hostname>, url: <sign-in / registration page>, label: "在求职 Chrome 里登录 …", hint }` | close the tab, next task (the App pauses every job on that host; 「我登好了」 / 「全部登好了」 re-queues them) |
 | Truly only the user can do it — and only these three: (1) it needs the user in person: recording their own video or voice, a live interview, a proctored test with webcam / screen monitoring, ID or face verification; (2) an assessment whose page explicitly forbids AI or outside help (doing it for them would be cheating and can get them blacklisted); (3) a form that never renders in this browser | `manual`: `{ kind: "manual", key, label, hint, url? }` | close the tab, next task |
@@ -460,6 +503,18 @@ user skipped it or handed it back — close the tab, next task. Log a heartbeat 
 5 minutes while waiting. After 30 minutes with no answer report
 `{ "status": "needs_manual", "reason": "info request timed out after 30 minutes" }` (the items stay
 on the card; the App re-queues the job when the user answers) and move on.
+
+**A doubt about fit is never a stop and never a question** (2026-10-06, the user: "值不值得投这种
+当然值得,这又不是硬性卡住的"). More years asked than the user has (short of the standing 5+-year
+rule), a city the standing answers don't cover, a hardware-leaning, consulting or rotational
+role, a staffing firm, an unusual start date, "ideal candidates have unrestricted work
+authorization" (soft wording, not a stated bar): if no live-page disqualifier above and no
+standing answer rules the job out, it is worth applying — apply. Location / relocation /
+start-date questions on the form are yours to answer (relocation within the US: yes, unless
+`answerPack.custom` says no for that place). And when something else does stop you — a login
+wall most often — the card says only what the user has to do: no "is it worth it?" pitch, no
+ranking against other cards, no "skip without guilt", and never a preference question hung on a
+`login` / `manual` card.
 
 Not items at all (the App handles these without a card): a job the user's own standing answers
 rule out (`answerPack.custom` says Summer 2027 internships are skipped, senior 5+-year roles are
@@ -480,7 +535,19 @@ prose only from `answerPack.experiences` and the profile facts (never invent exp
 results); when a file is due, generate it under `data/generated/<jobId>/` (PDF, Markdown,
 a zip of code) and `file_upload` it. Timed ones too — log a line before you start. Put the
 work (or the file path plus a summary) in `filledFields` and report `awaiting_confirm` as
-usual; submitting still waits for the App's approval. Only the three cases in the `manual`
+usual; submitting still waits for the App's approval.
+
+The same holds for a **portfolio / work sample / project summary** the form requires
+(2026-10-06, Reflect Orbital): when `answerPack.documents.portfolio` is missing, build a 1–2
+page PDF from `answerPack.experiences` — each project's name, what was built and with what,
+the outcome as the bullets state it, and only links the profile already has (GitHub,
+LinkedIn) — never a screenshot, metric or link that isn't in the facts. Write it as HTML and
+print it with headless Chrome (verified on the Windows box 2026-10-06):
+```
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new --disable-gpu --no-pdf-header-footer --user-data-dir=E:\sortie\data\generated\.chrome-pdf --print-to-pdf=E:\sortie\data\generated\<jobId>\portfolio.pdf file:///E:/sortie/data/generated/<jobId>/portfolio.html
+```
+(the separate `--user-data-dir` keeps it off the job-search Chrome profile). Upload it and name
+the file in `filledFields`. Only the three cases in the `manual`
 row above are a card; a login wall, a captcha, a personal fact the profile lacks or a file
 found nowhere are their own items. Everything else: do it.
 
@@ -535,7 +602,8 @@ Always write a short, specific `label`/`hint` — it's what the user reads on th
   from looking like a bot hammering ATS endpoints back to back.
 - **3 consecutive pauses** (login / manual items, info-request timeouts, hard-no archives) or
   **2 consecutive `error` reports** → stop the loop immediately, do not take another task, and
-  report a summary to the user: what got submitted so far this session, and what the last few
-  stops were. `closed` / `already_applied` never count.
+  finish the segment `done` with a summary of what got submitted so far and what the last few
+  stops were (a record, not a question — the App queues the next segment and raises a 待处理
+  card itself if the plan stops making progress). `closed` / `already_applied` never count.
 - A single pause or `error` in isolation does not trip the breaker — only a run of consecutive
   ones. A successful `awaiting_confirm` report resets the consecutive counters.

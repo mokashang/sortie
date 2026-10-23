@@ -7,6 +7,7 @@ import { upsertPerson, PersonInput, Channel, outreachesForJobs, outreachJobIds }
 import { generateDraft } from "@/network/draft";
 import { activeFollowup, archiveActiveFollowups, followupPlan, FollowupView, PlanNoneReason } from "@/network/followup";
 import { companyFacts, decideCompany } from "@/apply/referral-policy";
+import { inviteBudget, InviteBudget } from "@/apply/invite-budget";
 
 // The referral half of the apply pipeline (spec §1.4, §4). A job the user (or Claude) tagged
 // as "worth a referral" leaves the queue through takeNextReferral → status 'referral_seeking';
@@ -46,7 +47,14 @@ export interface ReferralTask {
   jobs: ReferralTaskJob[];
   knownPeople: ReferralKnownPerson[];
   skipPersonIds: number[];
+  // How many people to contact at this company: MAX_PEOPLE_PER_COMPANY, or fewer when today's
+  // LinkedIn invite budget (src/apply/invite-budget.ts) has only that many left.
+  maxPeople: number;
+  inviteBudget: InviteBudget;
 }
+// No referral work: the queue has none, or (batch picks only) today's invite budget is spent —
+// then the session skips the plan's remaining referral entries and does the direct ones.
+export type ReferralDone = { done: true; reason?: "invite_budget"; inviteBudget?: InviteBudget };
 
 interface JobRow {
   job_id: number;
@@ -66,12 +74,16 @@ const SELECT = `SELECT j.id as job_id, j.company, j.title, j.apply_url, m.direct
 // whose effective mode is 'referral' (optionally within one direction); targeted mode (jobIds,
 // from the board's 换人再问) only considers the given ids. Up to MAX_SIBLINGS more queued
 // referral-mode jobs at the same company ride along so one message can cover them all.
+// Batch picks stop for the day once the LinkedIn invite budget is spent (2026-10-16); a targeted
+// pick (the user's own 换人再问 click) still goes.
 export function takeNextReferral(
   db: DB,
   userId: string,
   opts: { direction?: string; jobIds?: number[]; runId?: number | null } = {}
-): ReferralTask | { done: true } {
+): ReferralTask | ReferralDone {
   const targeted = !!opts.jobIds?.length;
+  const budget = inviteBudget(db, userId);
+  if (!targeted && budget.exhausted) return { done: true, reason: "invite_budget", inviteBudget: budget };
   const idList = targeted ? opts.jobIds!.map(() => "?").join(",") : "";
   for (;;) {
     const primary = (
@@ -136,6 +148,8 @@ export function takeNextReferral(
         contacted: p.contacted === 1,
       })),
       skipPersonIds: people.filter((p) => p.contacted === 1).map((p) => p.id),
+      maxPeople: targeted ? MAX_PEOPLE_PER_COMPANY : Math.min(MAX_PEOPLE_PER_COMPANY, budget.left),
+      inviteBudget: budget,
     };
   }
 }
@@ -246,13 +260,19 @@ export interface ReferralCard {
 }
 
 function toCardOutreach(db: DB, userId: string, o: ReturnType<typeof outreachesForJobs>[number], nowMs: number): ReferralCardOutreach {
-  const person = db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as {
-    relation: string | null;
-    linkedin_url: string | null;
-    notes: string | null;
-  };
+  const person = (db.prepare("SELECT relation, linkedin_url, notes FROM people WHERE id = ?").get(o.personId) as
+    | { relation: string | null; linkedin_url: string | null; notes: string | null }
+    | undefined) ?? { relation: null, linkedin_url: null, notes: null };
   const sent = o.threadLog.find((t) => t.dir === "sent");
-  const plan = followupPlan(db, userId, o.id, nowMs);
+  // One odd conversation must not take the whole board down (the board feeds 今日, 投递 and the
+  // 5-second overview poll): a plan that throws shows as "waiting".
+  let plan: ReturnType<typeof followupPlan>;
+  try {
+    plan = followupPlan(db, userId, o.id, nowMs);
+  } catch (e) {
+    console.error(`[referral] follow-up plan for outreach ${o.id} failed`, e);
+    plan = { action: "none", reason: "waiting" };
+  }
   return {
     id: o.id,
     personId: o.personId,

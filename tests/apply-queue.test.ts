@@ -271,6 +271,27 @@ describe("takeNextApplication", () => {
     expect(result.jobId).toBe(stranded);
   });
 
+  it("does NOT reclaim an old 'prepared' job whose run is still live (a parallel task is mid-fill)", () => {
+    const db = openDb(":memory:");
+    seedResume(db, "ai_infra-v1", ["ai_infra"]);
+    const held = seedJob(db, { company: "LongFormCo", status: "prepared", updatedAt: "2020-01-01 00:00:00" });
+    const runId = Number(
+      db.prepare("INSERT INTO executor_runs (kind, status, channel, user_id, started_at) VALUES ('apply', 'running', 'user_chrome', ?, datetime('now'))").run(U)
+        .lastInsertRowid
+    );
+    // The updated_at trigger stamps every UPDATE with now; drop it so the row can stay backdated.
+    db.exec("DROP TRIGGER trg_applications_updated");
+    db.prepare("UPDATE applications SET run_id = ?, updated_at = '2020-01-01 00:00:00' WHERE job_id = ?").run(runId, held);
+
+    expect(takeNextApplication(db, U, testProfile())).toEqual({ done: true });
+    expect(getApplication(db, held).status).toBe("prepared");
+
+    // Once that run is over the row is fair game again.
+    db.prepare("UPDATE executor_runs SET status = 'done' WHERE id = ?").run(runId);
+    db.prepare("UPDATE applications SET updated_at = '2020-01-01 00:00:00' WHERE job_id = ?").run(held);
+    expect((takeNextApplication(db, U, testProfile()) as ApplyTask).jobId).toBe(held);
+  });
+
   it("does NOT reclaim a fresh 'prepared' job (still within the 30-minute window)", () => {
     const db = openDb(":memory:");
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
@@ -355,7 +376,7 @@ describe("reportFill", () => {
     expect(row.needs_manual_reason).toBe("registration wall");
   });
 
-  it("error prefixes the reason with 'error: ' and parks status back to matched", () => {
+  it("error prefixes the reason with 'error: ' and parks status back to matched, waiting on an automatic retry", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { status: "prepared" });
 
@@ -363,7 +384,7 @@ describe("reportFill", () => {
 
     const row = getApplication(db, jobId);
     expect(row.status).toBe("matched");
-    expect(row.needs_manual_reason).toBe("error: upload timed out");
+    expect(row.needs_manual_reason).toBe("retry: error: upload timed out");
   });
 
   it("needs_manual with failing eligibility archives the job and its cluster instead of parking it", () => {

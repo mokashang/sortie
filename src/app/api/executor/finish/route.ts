@@ -1,31 +1,46 @@
 import { NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/request-body";
-import { getDb } from "@/lib/db";
+import { getDb, logEvent } from "@/lib/db";
 import { finishRun } from "@/executor/runner";
 import { tryAcquireMatching, releaseMatching } from "@/matcher/inflight";
 import { maybeContinueApplyRun, resumePausedChainIfReady, ContinueResult } from "@/apply/continue";
 import { requeueStrandedApprovals, DecideAutoStartResult } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, ReclaimResult } from "@/apply/followup";
 import { requeueStrandedFollowups } from "@/apply/referral-check";
+import { notifyFailedRun } from "@/apply/plan-alerts";
 import { withUser, failResponse } from "@/lib/actor";
 
 // POST {runId, status: 'done'|'failed'|'stopped', summary?} — the attended session calls this
-// when it's done driving the browser for a run (or the user interrupted it). Only valid from
-// 'running'/'queued'; see src/executor/runner.ts's finishRun for the full transition rules.
+// when it's done driving the browser for a run. Only valid from 'running'/'queued'; see
+// src/executor/runner.ts's finishRun for the full transition rules.
+//
+// Only the user stops a task (/api/executor/stop marks it 'stopped' before the session hears of
+// it, so a session's own finish never meets a running row it may stop). A session reporting
+// 'stopped' on a running task is the session deciding to halt by itself — task #453, 2026-10-16,
+// paused a 1530-job plan over LinkedIn pacing and left its question in the summary, where nobody
+// saw it for 11 hours. That is recorded as 'done' and the chain goes on; pacing is the App's job
+// (src/apply/invite-budget.ts). A targeted task reported 'failed' with jobs untouched gets a
+// 待处理 card (src/apply/plan-alerts.ts) and a push, instead of a question in its summary.
 // Body via readJsonBody rather than req.json(): inline curl bodies from the session arrive
 // GBK-encoded on Windows (see src/lib/request-body.ts).
 export const POST = withUser(async (req, { userId }) => {
   try {
     const body = await readJsonBody(req);
-    const status = body.status as string;
-    if (status !== "done" && status !== "failed" && status !== "stopped") {
-      return NextResponse.json({ error: `invalid status '${status}'` }, { status: 400 });
+    const asked = body.status as string;
+    if (asked !== "done" && asked !== "failed" && asked !== "stopped") {
+      return NextResponse.json({ error: `invalid status '${asked}'` }, { status: 400 });
     }
     const db = getDb();
     const runId = Number(body.runId);
+    const status = asked === "stopped" ? "done" : asked;
     finishRun(db, userId, runId, status, body.summary ?? undefined);
+    if (asked === "stopped") {
+      logEvent(db, "run_stop_by_session_ignored", { userId, entity: "run", entityId: runId, payload: { summary: String(body.summary ?? "").slice(0, 500) } });
+      console.log(`[finish] run #${runId}: the session asked to stop on its own; recorded as done, the plan goes on`);
+    }
 
     const run = db.prepare("SELECT kind FROM executor_runs WHERE id=?").get(runId) as { kind: string } | undefined;
+    if (run?.kind === "apply" && status === "failed") notifyFailedRun(db, userId, runId);
 
     // 接力 (src/apply/continue.ts): a finished apply segment may need the next one queued (or
     // parked behind the confirmation backlog); any other apply run finishing (a bare resume run,
@@ -76,7 +91,7 @@ export const POST = withUser(async (req, { userId }) => {
       })();
     }
 
-    return NextResponse.json({ ok: true, continuation, stranded, reclaimed, followupRun });
+    return NextResponse.json({ ok: true, recordedAs: status, continuation, stranded, reclaimed, followupRun });
   } catch (e) {
     return failResponse(e);
   }

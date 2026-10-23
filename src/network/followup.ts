@@ -54,7 +54,11 @@ const DAY_MS = 86_400_000;
 
 function ts(at: string): number {
   // thread_log entries are ISO; SQLite datetime('now') strings have no zone and are UTC.
-  return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(at) ? at : at.replace(" ", "T") + "Z");
+  const ms = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(at) ? at : at.replace(" ", "T") + "Z");
+  // An unreadable time (a hand-edited row, a "10:42 AM" from before harvest normalized them) sorts
+  // as the distant past rather than NaN, which compares false both ways and would let nudges
+  // repeat past MAX_NUDGES and new Date(NaN).toISOString() throw.
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 export interface FollowupHistoryEntry {
@@ -131,7 +135,9 @@ export function planFollowup(input: PlanInput): Plan {
     (h) => h.kind === "nudge" && h.status === "sent" && (lastReceivedAt === null || (h.sentAt != null && ts(h.sentAt) > ts(lastReceivedAt)))
   ).length;
   if (nudges >= MAX_NUDGES) return { action: "none", reason: "exhausted" };
-  const dueAt = ts(tail.at) + NUDGE_AFTER_DAYS[nudges] * DAY_MS;
+  // Our last message's time unreadable: count from now, so a nudge waits its full interval.
+  const tailMs = ts(tail.at) || input.now;
+  const dueAt = tailMs + NUDGE_AFTER_DAYS[nudges] * DAY_MS;
   if (input.now >= dueAt) return { action: "draft", kind: "nudge", answersAt: tail.at };
   return { action: "none", reason: "waiting", nextNudgeAt: new Date(dueAt).toISOString() };
 }

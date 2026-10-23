@@ -27,10 +27,43 @@ export const notify = defineMessages({
         body: (jobTitle: string, labels: string) => `${jobTitle}:${labels} — 做完后打开 App 投递页「待处理」点「完成了」。`,
       },
     },
+    // An emailed verification code arrived for a card (src/apply/email-code.ts). Never the code itself.
+    emailCode: {
+      title: (company: string) => `Sortie · ${company} 的验证码到了`,
+      body: "打开投递页「待处理」看验证码,在求职 Chrome 的那个标签页里输入,再点「完成了」。",
+    },
+    // The dispatcher started the assistant for a task and it quit before taking it, again and
+    // again (an expired login, a broken CLI flag): the task is failed instead of respawned forever.
+    assistantWontStart: {
+      title: (runId: number) => `Sortie · 助手启动不起来(任务 #${runId})`,
+      body: (n: number) => `助手连续 ${n} 次刚启动就退出,还没接单。这个任务已标为失败;请在这台电脑上检查 AI 提供方是否需要重新登录,再到投递页重新开始。`,
+    },
     // 自动投递 on: the assistant submitted without a confirmation — a heads-up, not a to-do.
     autoSubmitted: {
       title: (company: string) => `Sortie · 已自动投出 ${company}`,
       body: (jobTitle: string) => `${jobTitle} — 自动投递已开启,助手填好后直接提交了;记录在「历史」里。`,
+    },
+    // An approved fill whose Submit click the assistant was refused (src/apply/submit-blocked.ts).
+    submitBlocked: {
+      title: (company: string) => `Sortie · ${company} 填好了,等你点提交`,
+      titleMany: (n: number) => `Sortie · ${n} 份申请填好了,等你点提交`,
+      body: (jobTitle: string) => `${jobTitle} — 助手的提交被拦下了。去求职 Chrome 里那个标签页点 Submit,再到投递页「待处理」点「我提交了」;也可以让助手再试一次。`,
+    },
+    // How a plan (接力链) ended, and a task that gave up with jobs untouched (src/apply/continue.ts,
+    // src/apply/plan-alerts.ts). Only stuckTitle / failedTitle come with a 待处理 card.
+    plan: {
+      doneTitle: (root: number) => `Sortie · 投递计划 #${root} 跑完了`,
+      exhaustedTitle: (root: number) => `Sortie · 投递计划 #${root} 没有更多可投的岗了`,
+      stuckTitle: (root: number) => `Sortie · 投递计划 #${root} 停了,需要你看一下`,
+      failedTitle: (runId: number) => `Sortie · 任务 #${runId} 没做完`,
+      direct: (done: number, planned: number) => `海投 ${done}/${planned}`,
+      referral: (done: number, planned: number) => `内推 ${done}/${planned}`,
+      doneBody: (progress: string) => `${progress}。`,
+      exhaustedBody: (progress: string) => `${progress}。剩下的方向暂时没有符合条件的岗位,之后有新岗可以再开计划。`,
+      noProgress: "连续两段什么都没做成",
+      tooLong: "接力段数到了上限",
+      stuckBody: (progress: string, why: string) => `${progress}。${why}。打开投递页「待处理」看一下,点「继续跑剩下的」接着做。`,
+      failedBody: (left: number) => `还有 ${left} 个岗没动。打开投递页「待处理」,点「让助手再试一次」接着做。`,
     },
     // 内推对话跟进 (spec 2026-09-30): someone replied / accepted, and what the assistant does about it.
     referral: {
@@ -95,9 +128,36 @@ export const notify = defineMessages({
         body: (jobTitle: string, labels: string) => `${jobTitle}: ${labels} — when it is done, press Done under To do on the Apply page.`,
       },
     },
+    emailCode: {
+      title: (company: string) => `Sortie · ${company}'s verification code is in`,
+      body: "Open To do on the Apply page to see the code, type it into that tab in the job-search Chrome, then press Done.",
+    },
+    assistantWontStart: {
+      title: (runId: number) => `Sortie · the assistant won't start (task #${runId})`,
+      body: (n: number) => `The assistant quit right after starting ${n} times in a row, before taking the task. The task is marked failed; check on this computer whether the AI provider needs signing in again, then start it again from the Apply page.`,
+    },
     autoSubmitted: {
       title: (company: string) => `Sortie · auto-submitted to ${company}`,
       body: (jobTitle: string) => `${jobTitle} — auto-apply is on, so the assistant submitted as soon as the form was filled; it is in History.`,
+    },
+    submitBlocked: {
+      title: (company: string) => `Sortie · ${company} is filled and waiting for your Submit`,
+      titleMany: (n: number) => `Sortie · ${n} applications are filled and waiting for your Submit`,
+      body: (jobTitle: string) => `${jobTitle} — the assistant wasn't allowed to click Submit. Click it in that tab of the job-search Chrome, then press I submitted it under To do on the Apply page; or have the assistant try again.`,
+    },
+    plan: {
+      doneTitle: (root: number) => `Sortie · plan #${root} is done`,
+      exhaustedTitle: (root: number) => `Sortie · plan #${root} ran out of jobs`,
+      stuckTitle: (root: number) => `Sortie · plan #${root} stopped and needs a look`,
+      failedTitle: (runId: number) => `Sortie · task #${runId} didn't finish`,
+      direct: (done: number, planned: number) => `direct ${done}/${planned}`,
+      referral: (done: number, planned: number) => `referral ${done}/${planned}`,
+      doneBody: (progress: string) => `${progress}.`,
+      exhaustedBody: (progress: string) => `${progress}. The remaining directions have nothing eligible right now; start another plan when new jobs come in.`,
+      noProgress: "Two segments in a row got nothing done",
+      tooLong: "The plan hit its limit on segments",
+      stuckBody: (progress: string, why: string) => `${progress}. ${why}. Open To do on the Apply page and press Run the rest to carry on.`,
+      failedBody: (left: number) => `${left} jobs were never touched. Open To do on the Apply page and press Have the assistant try again.`,
     },
     referral: {
       replied: (person: string, company: string) => `Sortie · ${person} (${company}) replied`,

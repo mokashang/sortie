@@ -20,8 +20,10 @@ export const GET = withUser(async (req, { userId }) => {
   const db = getDb();
 
   if (direction) {
-    const page = Number(url.searchParams.get("page") ?? "1") || 1;
-    const pageSize = Number(url.searchParams.get("pageSize") ?? "25") || 25;
+    const page = Math.max(1, Math.floor(Number(url.searchParams.get("page") ?? "1")) || 1);
+    // Capped: the 全部入库 tab pages over the whole jobs table, and pageSize=200000 would
+    // serialize all of it in one synchronous request.
+    const pageSize = Math.min(100, Math.max(1, Math.floor(Number(url.searchParams.get("pageSize") ?? "25")) || 25));
     const sortParam = url.searchParams.get("sort") ?? "composite";
     const sort: QueueSort = VALID_SORTS.includes(sortParam as QueueSort) ? (sortParam as QueueSort) : "composite";
     // ?mode=referral|direct — the /queue 全部/建议内推/海投 filter (direction tabs only).

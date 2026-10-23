@@ -3,6 +3,7 @@ import { assertProviderConfigured } from "@/ai/config";
 import { resolveClaudeBin } from "@/lib/claude-bin";
 import { resolveCodexBin } from "@/lib/codex-bin";
 import type { McpServerSpec } from "@/executor/mcp-config";
+import { withoutParentSession } from "@/lib/agent-env";
 
 export interface AgentLaunch {
   bin: string;
@@ -35,7 +36,8 @@ const CODEX_SECRET_FILTER_ARGS = [
 ];
 
 function agentEnv(provider: AiProvider, env: EnvMap): EnvMap {
-  const childEnv = { ...env };
+  // Never a nested child of whatever Claude Code session started the server (src/lib/agent-env.ts).
+  const childEnv = withoutParentSession(env);
   delete childEnv.OPENAI_API_KEY;
   delete childEnv.CODEX_API_KEY;
   if (provider !== "gpt") return childEnv;

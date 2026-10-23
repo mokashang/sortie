@@ -6,6 +6,7 @@ const zero: OverviewCounts = {
   awaitingConfirm: 0,
   approvedWaiting: 0,
   needsInfo: 0,
+  planAlerts: 0,
   referralDrafts: 0,
   referralProgress: 0,
   referralInFlight: 0,
@@ -39,5 +40,10 @@ describe("apply page tabs", () => {
     expect(defaultApplyTab(applyTabCounts({ ...zero, referralInFlight: 4 }))).toBe("referrals");
     expect(defaultApplyTab(applyTabCounts({ ...zero, submittedToday: 2 }))).toBe("submitted");
     expect(defaultApplyTab(applyTabCounts({ ...zero, needsInfo: 1, awaitingConfirm: 9 }))).toBe("todo");
+  });
+
+  it("counts a plan that stopped short as a to-do (src/apply/plan-alerts.ts)", () => {
+    expect(applyTabCounts({ ...zero, needsInfo: 2, planAlerts: 1 }).todo).toBe(3);
+    expect(defaultApplyTab(applyTabCounts({ ...zero, planAlerts: 1, awaitingConfirm: 9 }))).toBe("todo");
   });
 });

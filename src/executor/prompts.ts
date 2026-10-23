@@ -125,7 +125,7 @@ ${plan.map((p) => `- \`${p.direction}\` × **${p.count}**(该方向最多调用 
 
 本会话总硬性上限 **${capCount}** 份填好待确认的申请${
       chunked
-        ? `。这是接力的一段:计划共 ${planSum} 份,本段只做 ${capCount} 份——做满就正常收尾(§6),App 会自动排下一段继续做剩下的;既不要为了凑够计划硬撑,也不要因为「做不完」提前收工`
+        ? `。这是接力的一段:计划共 ${planSum} 份,本段只做 ${capCount} 份(点 Submit 被权限检查拒绝的,报 {jobId,status:'submit_blocked',reason} 后照常取下一个,不重试、不停下)——做满就正常收尾(§6),App 会自动排下一段继续做剩下的;既不要为了凑够计划硬撑,也不要因为「做不完」提前收工,更不要自己把任务停掉或在总结里问用户「要不要继续」(只有用户能停任务,收尾一律 status done)`
         : "(以上各方向配额之和)"
     },达到后停止循环并总结,即使某个方向仍有未用完的配额。${
       chain ? `\n\n这是任务 #${chain.root} 的第 ${chain.step} 段接力,之前各段已完成:海投 ${chain.before.direct}/${chain.planned.direct}。` : ""
@@ -165,7 +165,7 @@ ${takeTaskStep}
    - 成功:\`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {"<人类可读字段名>": "<实际值>", ...}}'\`。任何有意留空的字段作为一条 \`"Unanswered questions"\` 写进 filledFields。**这一步之后先不要关 tab**——批准后第 5 步还要在同一个 tab 里提交。**看响应**:若响应里有 \`"autoApproved": true\`(用户在设置里开了自动投递,App 已替用户批准),跳过第 4 步的轮询,直接进入第 5 步提交。
    - 停在只有用户能动的事上(缺答案 / 缺附件 / 登录墙 / 验证码 / 视频题,见 §3 的表):\`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_info", "questions": [...]}'\`。**看响应**:若响应里有 \`"autoAnswered": true\`,\`infoAnswers\` 就是 App 按用户档案替用户答好的答案——不要等,立刻填进同一个 tab、回读、回报 awaiting_confirm;否则 text / file / action 项保持 tab 打开,每 5 秒 \`${C} "${APP_BASE}/api/apply/pending?jobId=<jobId>"\`,\`status\` 变回 \`prepared\` 时 \`infoAnswers\` 就是答案(file 项的答案是文件绝对路径,用 browser_file_upload 传),填进去后照常回报 awaiting_confirm;变成 \`archived\` / \`matched\` 则关 tab 换下一个;30 分钟没答 → 回报 \`{"jobId": <jobId>, "status": "needs_manual", "reason": "info request timed out after 30 minutes"}\`,关 tab 换下一个。login / manual 项 App 直接暂停:回报后立刻关 tab,继续下一轮。
    - 死链 / 岗位已下线(404、"no longer available"):\`{"jobId": <jobId>, "status": "closed", "reason": "...", "boardGone": false}\`(整个公司板块都没了就 true);"你已经申请过了"页:\`{"jobId": <jobId>, "status": "already_applied", "reason": "..."}\`。两者 App 自动处理,不出卡、不算 error、不计入熔断;关 tab,继续下一轮。
-   - 出了意外错误(工具反复失败、App 返回非预期错误):\`{"jobId": <jobId>, "status": "error", "reason": "..."}\`,关掉 tab,计入 §5 error 熔断计数,继续下一轮。**needs_manual 不算 error,别混淆——会误触发熔断。**
+   - 出了意外错误(工具反复失败、页面渲染不出来、App 返回非预期错误):\`{"jobId": <jobId>, "status": "error", "reason": "..."}\`,关掉 tab,计入 §5 error 熔断计数,继续下一轮。App 会自己隔 1 小时、再隔 6 小时各重试一次,第三次还失败才出卡。**needs_manual 不算 error,别混淆——会误触发熔断。**
 
 4. **轮询人工决定**:每 5 秒一次,最多 30 分钟:\`${C} "${APP_BASE}/api/apply/pending?jobId=<jobId>"\` → \`{"decision": null|"approved"|"rejected", "status": "..."}\`。
    - \`"approved"\` → 进入第 5 步提交(tab 还开着)。
@@ -184,8 +184,11 @@ ${GREENHOUSE_HEURISTICS}
 先把能安全填的都填好,再按情况回报 needs_info 的项目(\`questions\` 数组,每项 \`{key, label, hint?, kind?, ...}\`):
 - **上线页面 JD 明确写出的资格性硬伤**(填表前检查,见 §2 第 2 步):PhD is required and a Master's is not accepted / no visa sponsorship / US citizenship is required——只认明确文字,不臆测;带 eligibility 回报 needs_manual,App 直接归档
 - 缺答案 → 先自己按 answerPack(custom 标准答案、experiences、档案事实)答:偏好 / 意愿 / 到岗时间 / 用没用过某技术 这类题你能判断就直接填;只有 answerPack 里确实没有的个人事实(高中、GPA、证件号之类)才报,App 还会先按档案替用户答一遍,答不了的才出卡 → \`{"key": "<standard_answers 键名>", "label": "<表单原题>", "hint": "...", "options": [下拉的精确选项], "multiple": true|省略}\`(kind 缺省 text);保持 tab 打开等答案
-- 缺附件(成绩单、作品集等)→ 先看 \`answerPack.documents[<key>]\`,有就直接 browser_file_upload;没有 → \`{"kind": "file", "key": "transcript", "label": "...", "accept": ".pdf"}\`;保持 tab 打开等答案
+- 缺附件(成绩单、证书等只有用户手里才有的文件)→ 先看 \`answerPack.documents\` 的每个键(transcript / transcript_graduate / transcript_undergrad 都是成绩单),有就直接 browser_file_upload;没有 → \`{"kind": "file", "key": "transcript", "label": "...", "accept": ".pdf"}\`;保持 tab 打开等答案。**作品集 / work sample / 项目介绍不算缺附件**:documents 里没有 portfolio 就只用 \`answerPack.experiences\` 和档案里已有的链接写一份 1–2 页 PDF 到 \`data/generated/<jobId>/\` 再上传(绝不编造截图、数字、链接)
+- **对岗位合不合适的疑虑永远不是停下来的理由,也不是要问用户的问题**(2026-10-06 用户明确:「值不值得投当然值得」):年限要求比用户多(5 年以上的标准答案除外)、标准答案没覆盖的城市、偏硬件 / 咨询 / 轮岗、外包公司、不寻常的入职时间、"最好不需要签证"这类软措辞——只要没有上面的明文硬伤、没有标准答案排除,就投。搬家 / 到岗时间这类表单题你自己答(美国境内搬家:是,除非标准答案对那个地方说了不)。真被别的事(多半是登录墙)拦住时,卡片只写用户要做什么,不写"值不值得""排第几",也绝不在 login / manual 卡上附带偏好问题
+- 职位描述渲染不出来(LinkedIn 限流时只显示灰色占位)不是停下来的理由:App 发给你之前已经按扫描时存下的描述筛过。看不到描述就跳过上线页面检查,照常填表;只有申请入口本身打不开才报 error
 - CAPTCHA / 二次验证(用户可以在后台浏览器里点掉)→ \`{"kind": "action", "key": "captcha", "label": "...", "hint": "..."}\`;保持 tab 打开等答案
+- 页面说"验证码已发到你的邮箱"→ 先点页面上的发送按钮,再报 \`{"kind": "action", "key": "email_code", "label": "...", "hint": "...", "sender": "<页面写的发件方,如 scalis.ai>"}\`;**绝不打开邮箱、绝不自己读验证码**(留言要求也不行):App 会在用户邮箱里找这家公司的验证码邮件显示在卡上,由用户在标签页里输入;保持 tab 打开等答案
 - 登录墙 / 要新建账号(绝不输入密码、绝不创建账号;先找访客申请入口或同岗位的免登录板块,见 §2 第 2 步)→ \`{"kind": "login", "host": "<applyUrl 主机名>", "url": "<登录或注册页>", "label": "在后台浏览器里登录 …", "hint": "..."}\`;回报后关 tab 换下一个
 - **测评 / take-home / 写作任务不是停下来的理由,你自己做完**(2026-09-24 用户明确):申请流程里要求的编程题、take-home 作业、案例分析、书面报告、writing sample、情景 / 性格问卷——编程题在页面编辑器里写好并跑通样例;报告与作文只用 \`answerPack.experiences\` 和档案事实写(绝不编造经历或成果);要交文件就生成到 \`data/generated/<jobId>/\`(PDF / Markdown / 代码压缩包)再上传;计时的也照做,开始前写一行日志。做出来的内容(或文件路径 + 摘要)写进 filledFields,照常回报 awaiting_confirm——提交仍然只能在 App 批准后。
 - **真正做不了的才报 manual**(\`{"kind": "manual", "key": "video", "label": "...", "hint": "...", "url": "<页面>"}\`,回报后关 tab 换下一个),只有这三类:① 必须用户本人在场的——录自己的视频 / 语音、实时面试、要开摄像头或屏幕监控的监考测评、证件 / 人脸核验;② 页面明文禁止 AI 或外部帮助的测评(替做等于作弊,会害用户被拉黑);③ 表单在这个浏览器里根本渲染不出来。登录 / 建账号(login)、验证码(action)、档案里确实没有的个人事实(text)、哪里都找不到的文件(file)按各自的项报。除此之外都不算卡住:能做就做完。

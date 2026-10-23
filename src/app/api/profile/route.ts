@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db";
 import { emptyProfileData, getProfileData, importProfileYaml, profileStatus, profileYamlPath, saveProfile } from "@/lib/profile";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
+import { readJsonBody } from "@/lib/request-body";
 
 // The 档案页「基本信息」editor (spec 2026-09-13 accounts §6). GET returns what is stored (or a blank
 // pre-filled from the account) plus whether it validates; PUT {profile} saves a complete profile;
@@ -18,7 +19,7 @@ export const GET = withUser(async (_req, { userId, user }) => {
 
 export const PUT = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const profile = saveProfile(getDb(), userId, body.profile ?? body);
     return NextResponse.json({ ok: true, profile, status: { complete: true, exists: true, issues: [] } });
   } catch (e) {
@@ -34,7 +35,7 @@ export const PUT = withUser(async (req, { userId }) => {
 
 export const POST = withUser(async (req, { userId, user }) => {
   try {
-    const body = await req.json().catch(() => ({}));
+    const body = await readJsonBody(req, { allowEmpty: true });
     let yaml: string | null = typeof body.yaml === "string" && body.yaml.trim() ? body.yaml : null;
     if (!yaml) {
       const t = messagesFor(langFromRequest(req)).errors;

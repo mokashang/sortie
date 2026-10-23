@@ -200,7 +200,7 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     expect(r).toMatchObject({ action: "paused", unconfirmed: 10 });
     const p = (r as { runId: number }).runId;
     expect(runRow(db, p)).toMatchObject({ status: "paused", channel: "user_chrome" });
-    expect(runRow(db, p).summary).toContain("等待确认");
+    expect(runRow(db, p).summary).toContain("等你处理");
     expect(optionsOf(db, p)).toMatchObject({
       resume: true,
       plan: [{ direction: "swe_general", count: 2, mode: "direct" }],
@@ -242,7 +242,7 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     expect(maybeContinueApplyRun(db, r.runId, { logDir })).toMatchObject({ action: "none", reason: expect.stringContaining("no progress") });
   });
 
-  it("never continues a stopped or failed run, or a run without a plan", () => {
+  it("never continues a run the user stopped, or a run without a plan; a failed segment chains on (only the user ends a plan, 2026-10-16)", () => {
     seedJob(db, { score: 95 });
     seedJob(db, { score: 90 });
     const a = startSegment({ plan: [{ direction: "swe_general", count: 2, mode: "direct" }], chunk: 1 });
@@ -252,7 +252,11 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
 
     const b = startSegment({ plan: [{ direction: "swe_general", count: 1, mode: "direct" }], chunk: 1 });
     finishRun(db, U, b, "failed", "extension disconnected");
-    expect(maybeContinueApplyRun(db, b, { logDir })).toMatchObject({ action: "none" });
+    const next = maybeContinueApplyRun(db, b, { logDir, notify: () => {} }) as { action: string; runId: number };
+    expect(next.action).toBe("queued");
+    // Nothing achieved: the zero-progress guard still ends a chain that keeps failing.
+    expect(optionsOf(db, next.runId).chain).toMatchObject({ zeroRuns: 1 });
+    stopExecutor(db, U, next.runId);
 
     const c = startSegment({ resume: true });
     finishRun(db, U, c, "done");
@@ -265,7 +269,6 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     fillNext();
     // What closeOutReapedSession does before asking: the run is failed, not done.
     finishRun(db, U, a, "failed", "attended session ended: child 1 is unreachable (server restarted?) and work is waiting");
-    expect(maybeContinueApplyRun(db, a, { logDir })).toMatchObject({ action: "none", reason: expect.stringContaining("failed") });
     const r = maybeContinueApplyRun(db, a, { logDir, interrupted: true });
     expect(r).toMatchObject({ action: "queued", channel: "user_chrome" });
     expect(optionsOf(db, (r as { runId: number }).runId)).toMatchObject({

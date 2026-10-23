@@ -86,9 +86,15 @@ export const CARRY_ON =
 export const CLOSE_TAB =
   "Then close that tab with tabs_close_mcp - unless it is the last tab left in your group, which you navigate to about:blank instead.";
 
+// The tail every Submit instruction carries since 2026-10-22: the session's own permission check
+// may refuse the click, and a session left to improvise stopped and waited for someone to allow
+// it in a terminal nobody sees.
+export const IF_SUBMIT_REFUSED =
+  "If the Submit click is refused by your own permission check (a denied tool call, Real-World Transactions), do not retry it and do not try another way: POST /api/apply/report {jobId, status:'submit_blocked', reason:'<what refused it, ASCII>'} - the App turns it into a card for the user to click Submit in that tab - keep that tab open (the App has it closed if nobody acts within an hour), and carry on.";
+
 export function approvedNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, wait for the confirmation page, then POST /api/apply/report {jobId, status:'submitted'}. ${CLOSE_TAB} ${CARRY_ON}`;
+  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, wait for the confirmation page, then POST /api/apply/report {jobId, status:'submitted'}. ${CLOSE_TAB} ${IF_SUBMIT_REFUSED} ${CARRY_ON}`;
 }
 export function rejectedNotice(jobId: number, company: string): string {
   const who = ascii(company);

@@ -125,7 +125,7 @@ if ($needInstall) {
   pm2 stop sortie | Out-Null
   $stopped = $true
   npm ci
-  if ($LASTEXITCODE -ne 0) { throw "npm ci failed - server is STOPPED. Fix the install (re-run npm ci), then: pm2 restart sortie --update-env" }
+  if ($LASTEXITCODE -ne 0) { throw "npm ci failed - server is STOPPED. Fix the install (re-run npm ci), then: pm2 restart sortie" }
 } else {
   Write-Host "==> package-lock.json unchanged since $($before.Substring(0,7)): skipping npm ci"
 }
@@ -133,12 +133,17 @@ if ($needInstall) {
 Write-Host "==> npm run build"
 npm run build
 if ($LASTEXITCODE -ne 0) {
-  if ($stopped) { throw "build failed - server is STOPPED (dependencies were reinstalled). Fix the build, then: pm2 restart sortie --update-env" }
+  if ($stopped) { throw "build failed - server is STOPPED (dependencies were reinstalled). Fix the build, then: pm2 restart sortie" }
   throw "build failed - server NOT restarted. .next may be partially overwritten: fix the build and re-run."
 }
 
 Write-Host "==> pm2 restart sortie"
-pm2 restart sortie --update-env
+# No --update-env: it replaces the app's environment with this shell's, and deploys usually run
+# from a Claude Code session — on 2026-10-22 the server ended up carrying that session's
+# CLAUDECODE / CLAUDE_CODE_SESSION_ID / desktop messaging token, handed on to every assistant it
+# launched. The app's environment comes from the "Sortie Server" logon task (ecosystem.config.cjs);
+# .env is read by Next itself at boot, so a plain restart already picks up .env changes.
+pm2 restart sortie
 if ($LASTEXITCODE -ne 0) { throw "pm2 restart failed (is the app registered? pm2 start ops\windows\ecosystem.config.cjs --only sortie)" }
 
 # Readiness = the server answers at all. Any HTTP status counts, 401 included: since accounts
