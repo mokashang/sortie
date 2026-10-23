@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
 import { saveSpawns, SpawnRecord } from "@/executor/sessions";
-import { heldTabs, planTabReleases, sweepTabs, HeldTab, MAX_OPEN_TABS, STUCK_TAB_MS } from "@/executor/tabs";
-import { approvedNotice, rejectedNotice } from "@/executor/attended-session";
+import { heldTabs, planTabReleases, sweepTabs, HeldTab, MAX_OPEN_TABS, STUCK_TAB_MS, SUBMIT_BLOCKED_REASON_PREFIX } from "@/executor/tabs";
+import { approvedNotice, rejectedNotice, shutdownNotice } from "@/executor/attended-session";
+import { attendedBusyDetail } from "@/executor/attended";
+import { SUBMIT_BLOCKED_PREFIX } from "@/apply/queue";
+import { seedOwner } from "./helpers";
 
 // At most 30 tabs open, and none stuck for more than an hour (user, 2026-10-22).
 
@@ -102,6 +105,32 @@ describe("sweepTabs", () => {
   });
 });
 
+describe("「点提交」 cards", () => {
+  it("a refused Submit's tab counts, holds its session while fresh, and closes after an hour", () => {
+    expect(SUBMIT_BLOCKED_REASON_PREFIX).toBe(SUBMIT_BLOCKED_PREFIX);
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    const a = session(db, 303);
+    saveSpawns(db, [a.rec]);
+    const card = job(db, a.runId, "matched", 20);
+    db.prepare("UPDATE applications SET needs_manual_reason = ?, pending_questions = ?, updated_at = ? WHERE job_id = ?").run(
+      `${SUBMIT_BLOCKED_PREFIX}denied`,
+      JSON.stringify([{ key: "submit", label: "S", kind: "submit" }]),
+      minAgo(20),
+      card
+    );
+    const plainMatched = job(db, a.runId, "matched", 500);
+    expect(heldTabs(db, U).map((t) => t.jobId)).toEqual([card]);
+    expect(attendedBusyDetail(db, U, a.rec).waiting.awaiting_confirm).toBe(1);
+
+    // The UPDATE above re-stamped updated_at with the real clock (trigger): an hour past it.
+    const r = sweepTabs(db, U, { now: Date.now() + 61 * 60_000, reachable: () => true, write: () => true });
+    expect(r.released.map((x) => x.jobId)).toEqual([card]);
+    expect(attendedBusyDetail(db, U, a.rec).waiting.awaiting_confirm).toBe(0);
+    expect(plainMatched).toBeGreaterThan(0);
+  });
+});
+
 describe("notices", () => {
   it("after submitting or a rejection the session closes the tab, keeping its group's last one", () => {
     for (const line of [approvedNotice(7, "Acme"), rejectedNotice(7, "Acme")]) {
@@ -109,5 +138,6 @@ describe("notices", () => {
       expect(line).toContain("last tab left in your group");
       expect(line).not.toContain("Do NOT close");
     }
+    expect(shutdownNotice()).toContain("Close every tab in your tab group");
   });
 });

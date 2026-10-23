@@ -10,6 +10,7 @@ import {
   writeToAttended,
   queuedRunNotice,
   stalledRunNotice,
+  shutdownNotice,
   noticeDue,
   markNotice,
   clearNoticesFor,
@@ -31,6 +32,7 @@ import { ownerId } from "@/lib/users";
 import { settleRunOutcome } from "@/apply/run-outcome";
 import { getAiProvider, type AiProvider } from "@/ai/config";
 import { buildAttendedAgentLaunch } from "@/ai/runtime";
+import { TAB_HOLDING_SQL } from "@/executor/tabs";
 import { notify } from "@/lib/notify";
 import { messages } from "@/i18n/messages";
 import { serverLang } from "@/lib/prefs";
@@ -76,6 +78,8 @@ export const HEARTBEAT_STALE_MS = 30_000;
 // A spawned session with nothing to do (no run running or queued, no filled application waiting
 // on the user) is closed after this long; the next queued run spawns a fresh one.
 export const IDLE_REAP_MS = 15 * 60 * 1000;
+// Between telling an idle session to close its tabs and closing the session (dispatchAttended).
+export const SHUTDOWN_GRACE_MS = 90 * 1000;
 // A queued run is announced to the live session once, and again only if it is still unclaimed
 // after this long.
 export const NOTICE_RETRY_MS = 2 * 60 * 1000;
@@ -669,12 +673,16 @@ export function attendedBusyDetail(
   const rows = db
     .prepare(
       `SELECT a.status, r.pid, r.claimed_at, r.channel, COUNT(*) n FROM applications a LEFT JOIN executor_runs r ON r.id = a.run_id
-       WHERE a.user_id = ? AND a.status IN ('awaiting_confirm','needs_info','prepared') GROUP BY a.status, r.pid, r.claimed_at, r.channel`
+       WHERE a.user_id = ? AND ${TAB_HOLDING_SQL} GROUP BY a.status, r.pid, r.claimed_at, r.channel`
     )
-    .all(userId) as { status: keyof AttendedBusy["waiting"]; pid: number | null; claimed_at: string | null; channel: string | null; n: number }[];
+    .all(userId) as { status: keyof AttendedBusy["waiting"] | "matched"; pid: number | null; claimed_at: string | null; channel: string | null; n: number }[];
   for (const row of rows) {
     const owner = ownerOf(row, spawns);
-    if (me != null && sameSession(owner, me)) out.waiting[row.status] += row.n;
+    // A refused Submit parked as a 「点提交」 card ('matched' here) is a filled, approved form the
+    // user may still click in this session's tab: it holds the session like any approval does,
+    // until the tab sweep (src/executor/tabs.ts) closes it after an hour.
+    const status = row.status === "matched" ? "awaiting_confirm" : row.status;
+    if (me != null && sameSession(owner, me)) out.waiting[status] += row.n;
     else if (!owner) out.stale += row.n;
   }
   return out;
@@ -768,6 +776,9 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
     if (isBusy(b)) idleSince = null;
     else if (!idleSince) idleSince = now.toISOString();
     if (idleSince !== (rec.idleSince ?? null)) changed = true;
+    // Work came back after the shutdown notice: the session lives on and is told again next time.
+    const closingAt = idleSince ? (rec.closingAt ?? null) : null;
+    if (closingAt !== (rec.closingAt ?? null)) changed = true;
     const mine = owner ? runsOfSession(db, owner, rec, spawns) : [];
     if (mine.length === 0) neverClaimed.add(rec.pid);
     else exitsByRun.delete(rec.runId); // it started fine: earlier exits no longer count
@@ -794,7 +805,7 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
       booting: mine.length === 0 && now.getTime() - Date.parse(rec.startedAt) < BOOT_GRACE_MS,
       approvalsWaiting: owner ? approvalsIn(db, owner, rec, spawns) : false,
     });
-    return { ...rec, idleSince };
+    return { ...rec, idleSince, closingAt };
   });
   if (changed) saveSpawns(db, updated);
 
@@ -810,6 +821,23 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
   let notified: boolean | undefined;
   for (const d of plan.actions) {
     if (d.action === "reap") {
+      // An idle session this process can type to closes its own tabs first (shutdownNotice): told
+      // on the first reap tick, reaped SHUTDOWN_GRACE_MS later. One that exited or can't be told
+      // anything goes at once.
+      const view = views.find((v) => v.pid === d.pid);
+      const idx = remaining.findIndex((s) => s.pid === d.pid);
+      if (view?.alive && view.reachable && view.idleForMs != null && idx >= 0) {
+        const told = remaining[idx].closingAt;
+        if (!told) {
+          const ok = (deps.write ?? writeToAttended)(d.pid, shutdownNotice());
+          if (ok) {
+            remaining = remaining.map((s, i) => (i === idx ? { ...s, closingAt: now.toISOString() } : s));
+            saveSpawns(db, remaining);
+            console.log(`[attended] told child ${d.pid} to close its tabs before shutting it down (${d.reason})`);
+            continue;
+          }
+        } else if (now.getTime() - Date.parse(told) < SHUTDOWN_GRACE_MS) continue;
+      }
       (deps.kill ?? killTree)(d.pid);
       const rec = updated.find((s) => s.pid === d.pid);
       if (rec) closeOutReapedSession(db, rec, d.reason, updated);

@@ -1,6 +1,9 @@
 import { DB, logEvent } from "@/lib/db";
 import { listSpawns, ownerOf, SpawnRecord } from "@/executor/sessions";
 import { isAttendedReachable, writeToAttended, NOTICE_PREFIX, CARRY_ON } from "@/executor/attended-session";
+// queue.ts's SUBMIT_BLOCKED_PREFIX, spelled out here so this module (loaded by attended.ts) does not
+// pull the whole apply queue in at import time; tests/attended-tabs.test.ts keeps the two equal.
+export const SUBMIT_BLOCKED_REASON_PREFIX = "submit blocked: ";
 
 // How many Chrome tabs the attended sessions may hold open, and for how long (user, 2026-10-22:
 // "很多标签页如果卡住的话,卡到一定时间就关掉,不要占空间,最高不要同时超过30个标签页同时开着").
@@ -39,18 +42,23 @@ function ts(at: string): number {
   return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(at) ? at : at.replace(" ", "T") + "Z");
 }
 
-// needs_info keeps the tab only for what is done in place: questions (text / file / action) and a
-// refused Submit left for the user to click (submit, src/apply/submit-blocked.ts); a login or
+// needs_info keeps the tab only for questions answered in place (text / file / action); a login or
 // manual item parks the job and the session closes its tab at once.
 function keepsTab(status: string, pendingQuestions: string | null): boolean {
   if (status !== "needs_info") return true;
   try {
     const items = JSON.parse(pendingQuestions || "[]") as { kind?: string }[];
-    return items.some((q) => !q.kind || q.kind === "text" || q.kind === "file" || q.kind === "action" || q.kind === "submit");
+    return items.some((q) => !q.kind || q.kind === "text" || q.kind === "file" || q.kind === "action");
   } catch {
     return true;
   }
 }
+
+// SQL (alias a = applications): a row whose tab its session keeps open for the user — the three
+// waiting states, plus a refused Submit parked as a 「点提交」 card (status 'matched' with the
+// submit-blocked reason, src/apply/submit-blocked.ts), whose form stays filled in the tab for the
+// user to click.
+export const TAB_HOLDING_SQL = `(a.status IN ('awaiting_confirm','needs_info','prepared') OR (a.status = 'matched' AND a.needs_manual_reason LIKE '${SUBMIT_BLOCKED_REASON_PREFIX}%'))`;
 
 // The tabs live sessions hold for jobs, oldest first.
 export function heldTabs(db: DB, userId: string, spawns: SpawnRecord[] = listSpawns(db)): HeldTab[] {
@@ -58,7 +66,7 @@ export function heldTabs(db: DB, userId: string, spawns: SpawnRecord[] = listSpa
     .prepare(
       `SELECT a.job_id, a.status, a.updated_at, a.pending_questions, a.run_id, r.pid, r.claimed_at, r.channel
        FROM applications a JOIN executor_runs r ON r.id = a.run_id
-       WHERE a.user_id = ? AND a.status IN ('awaiting_confirm','needs_info','prepared') AND r.channel = 'user_chrome'
+       WHERE a.user_id = ? AND ${TAB_HOLDING_SQL} AND r.channel = 'user_chrome'
        ORDER BY a.updated_at ASC, a.job_id ASC`
     )
     .all(userId) as {

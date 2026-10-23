@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { dispatchAttended, attendedStatus } from "@/executor/attended";
+import { dispatchAttended, attendedStatus, heartbeatAgeMs, HEARTBEAT_STALE_MS } from "@/executor/attended";
+import { maybeRefreshChrome } from "@/executor/chrome-refresh";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
 import { autoAnswerParkedText } from "@/apply/auto-answer";
@@ -60,7 +61,15 @@ export const POST = withInternal(async () => {
     const stranded = owner ? requeueStrandedApprovals(db, owner) : undefined;
     if (stranded?.autoStarted) console.log(`[attended] queued resume run #${stranded.runId}: approved applications nobody was acting on`);
     const r = dispatchAttended(db);
-    return NextResponse.json({ ok: true, ...r, stranded, reclaimed, retried, tabs });
+    // Everything idle and Chrome heavy with tab groups no session can reach any more: restart the
+    // job-search Chrome, at most every 6 hours (src/executor/chrome-refresh.ts).
+    const chrome = maybeRefreshChrome(db, {
+      desktopHeartbeat: () => {
+        const age = owner ? heartbeatAgeMs(db, owner) : null;
+        return age != null && age < HEARTBEAT_STALE_MS;
+      },
+    });
+    return NextResponse.json({ ok: true, ...r, stranded, reclaimed, retried, tabs, chrome });
   } catch (e) {
     const msg = String(e);
     const now = Date.now();

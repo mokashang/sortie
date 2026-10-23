@@ -18,6 +18,7 @@ import {
   attendedSpawnModeFromEnv,
   HEARTBEAT_STALE_MS,
   IDLE_REAP_MS,
+  SHUTDOWN_GRACE_MS,
   NOTICE_RETRY_MS,
   STALL_NUDGE_MS,
   notifyJobSession,
@@ -170,8 +171,17 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     clock = new Date(clock.getTime() + IDLE_REAP_MS - 1000);
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
     clock = new Date(clock.getTime() + 2000);
+    // It is told to close its own tabs first (a killed session leaves its tab group behind where no
+    // later session can reach it); the reap follows SHUTDOWN_GRACE_MS later.
     const r3 = dispatchAttended(db, deps);
     expect(r3.decision.action).toBe("reap");
+    expect(killed).toEqual([]);
+    expect(typed.at(-1)).toMatchObject({ pid: 4242, line: expect.stringContaining("[Sortie] shutting down") });
+    clock = new Date(clock.getTime() + SHUTDOWN_GRACE_MS - 1000);
+    dispatchAttended(db, deps);
+    expect(killed).toEqual([]);
+    clock = new Date(clock.getTime() + 1000);
+    dispatchAttended(db, deps);
     expect(killed).toEqual([4242]);
     expect(currentSpawn(db)).toBeNull();
   });
@@ -291,6 +301,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     clock = new Date(clock.getTime() + IDLE_REAP_MS - 1);
     expect(dispatchAttended(db, deps).decision.action).toBe("none");
     clock = new Date(clock.getTime() + 1);
+    expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "reap", pid: 28236 });
+    expect(killed).toEqual([]); // told to close its tabs first
+    clock = new Date(clock.getTime() + SHUTDOWN_GRACE_MS);
     expect(dispatchAttended(db, deps).decision).toMatchObject({ action: "reap", pid: 28236 });
     expect(killed).toEqual([28236]);
     expect(currentSpawn(db)).toBeNull();

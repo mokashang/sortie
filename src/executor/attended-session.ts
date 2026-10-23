@@ -117,6 +117,12 @@ export function answeredNotice(jobId: number, company: string): string {
 export function stoppedRunNotice(runId: number): string {
   return `${NOTICE_PREFIX} run ${runId} stopped by the user: stop working on it now (do not submit anything for it), leave its tabs as they are, and wait for the next line.`;
 }
+// Typed once before an idle session is closed (2026-10-22, user: Chrome's memory is the system's job,
+// not theirs): a session that is killed leaves its tab group behind where no later session can
+// reach it, so it closes its own tabs first. Nothing it holds is waiting on anyone by then.
+export function shutdownNotice(): string {
+  return `${NOTICE_PREFIX} shutting down: you have no task and nothing waiting, and this session will be closed in about a minute. Close every tab in your tab group now with tabs_close_mcp - the last one too (the group may go away, that is fine now). Do not open anything else, do not report anything, and then wait.`;
+}
 
 // Reminder throttling for queued runs: the dispatcher tick runs every 10 s, the session should
 // hear about a run once, and again only if it has not claimed it after a while.
