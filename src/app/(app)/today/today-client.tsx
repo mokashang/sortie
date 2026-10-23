@@ -16,6 +16,7 @@ import { ConfirmCards } from "@/app/(app)/apply/confirm-cards";
 import { InfoCards } from "@/app/(app)/apply/info-cards";
 import { ReferralBoard } from "@/app/(app)/apply/referral-board";
 import { useLang, useMessages } from "@/i18n/client";
+import { SetupChecklist } from "./setup-checklist";
 
 function LinkCard({ icon, title, description, href, cta }: { icon: React.ReactNode; title: string; description: string; href: string; cta: string }) {
   return (
@@ -135,7 +136,9 @@ export function TodayClient({ initial }: { initial: Overview }) {
         }
       />
 
-      {!o.profileComplete ? (
+      {o.setup ? (
+        <SetupChecklist o={o} />
+      ) : !o.profileComplete ? (
         <div className="setup-banner">
           <LinkCard
             icon={<UserRound size={18} />}

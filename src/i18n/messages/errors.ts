@@ -23,6 +23,11 @@ export const errors = defineMessages({
     ownerOnlyImport: "只有主账号可以从服务器上的 profile.yaml 导入",
     fileMissing: (path: string) => `服务器上没有 ${path}`,
     selfSubmittedNote: "用户自己在网站上提交了这份申请",
+    attendedUnavailable: "这一项要在你自己的 Chrome 里做(找内推、扫描、找人都要用你登录好的 LinkedIn),而这台服务器只能操作主账号的 Chrome。后台浏览器能替你做的是海投。",
+    noResume: "先到档案页「简历」上传你的简历(PDF):助手投递时要把它附在申请里。",
+    headlessApplyBusy: "后台浏览器正在投递,这一轮做完再开新的计划。",
+    importPdfOnly: "从简历导入只支持 PDF:把简历另存为 PDF 再上传一次。",
+    importNoText: "这份 PDF 里读不出文字(可能是扫描的图片),导入不了;请上传一份能选中文字的 PDF。",
   },
   en: {
     referral_needs_attended: "Finding referrals only works in your own Chrome — the background browser can only apply directly.",
@@ -43,5 +48,11 @@ export const errors = defineMessages({
     ownerOnlyImport: "Only the owner account can import profile.yaml from the server",
     fileMissing: (path: string) => `${path} does not exist on the server`,
     selfSubmittedNote: "Submitted by the user directly on the site",
+    attendedUnavailable:
+      "This has to happen in your own Chrome (referrals, scanning and finding people all use your logged-in LinkedIn), and this server can only drive its owner's Chrome. The background browser can apply directly for you.",
+    noResume: "Upload your resume (PDF) under Profile → Resumes first: the assistant attaches it to every application.",
+    headlessApplyBusy: "The background browser is applying right now. Start a new plan once this round is done.",
+    importPdfOnly: "Importing works with PDF only: save your resume as a PDF and upload it again.",
+    importNoText: "No text could be read from this PDF (a scanned image?), so it can't be imported. Upload a PDF whose text can be selected.",
   },
 });

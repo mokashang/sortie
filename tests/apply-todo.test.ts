@@ -295,10 +295,10 @@ describe("cards that only the user can move", () => {
     expect(pendingInfo(db, U)[0].questions).toEqual([{ key: "manual", label: "助手没能完成这份申请", kind: "manual", hint: "login wall: Apple Jobs" }]);
   });
 
-  it("the picker pauses a job with no resume for its direction as a card pointing at the resumes tab", () => {
+  it("a targeted take of a job with no resume for its direction pauses it as a card pointing at the resumes tab", () => {
     const db = openTestDb();
     const jobId = seed(db, { status: "matched" });
-    expect(takeNextApplication(db, U, profile)).toEqual({ done: true });
+    expect(takeNextApplication(db, U, profile, { jobIds: [jobId] })).toEqual({ done: true });
     expect(app(db, jobId).needs_manual_reason).toContain("no resume generated");
     expect(items(db, jobId)[0]).toMatchObject({ key: "no_resume", kind: "manual", url: "/profile?tab=resumes" });
   });

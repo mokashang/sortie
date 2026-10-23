@@ -4,7 +4,9 @@ import { QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { iso } from "@/scanner/boards";
 import { promoteRecentHighScores } from "@/scanner/retier";
 import { listUsers, UserRow } from "@/lib/users";
+import { referralsPossible } from "@/executor/channel";
 import { tryLoadProfile, Profile } from "@/lib/profile";
+import { matchProfileOf } from "@/matcher/prompt";
 
 // 打分每小时上限(spec §3.3):免得首次铺开的几万个候选岗一口气跟用户自己用 Claude 抢额度。
 // 账号之间共用这一个额度(LLM 后端是机器级的订阅),每轮按人平分。
@@ -44,6 +46,14 @@ export function matchableUsers(db: DB): { user: UserRow; profile: Profile; since
   return out;
 }
 
+// No referral suggestions for an account that cannot look for referrals (referralsPossible,
+// src/executor/channel.ts): the pipeline drops any made before (2026-10-22: 16 of the owner's
+// brother's best matches sat in a 找内推 column he could never use). The user's own 改为找内推
+// override (applications.apply_mode) is left alone.
+function clearReferralSuggestions(db: DB, userId: string): void {
+  db.prepare("UPDATE matches SET referral_fit = NULL, referral_reason = NULL WHERE user_id = ? AND referral_fit = 1").run(userId);
+}
+
 // Anything unscored for any matchable account?
 export function unscoredBacklog(db: DB): number {
   return matchableUsers(db).reduce((n, m) => n + unscoredBacklogFor(db, m.user.id, m.since), 0);
@@ -65,7 +75,7 @@ export async function matchAllUsers(
     const s = await runMatching(db, {
       userId: t.user.id,
       backend: opts.backend,
-      profile: { directions: t.profile.directions, work_auth: t.profile.work_auth },
+      profile: matchProfileOf(t.profile),
       batchSize: 10,
       threshold: 40,
       limit: perUser,
@@ -101,18 +111,20 @@ export function startPostScanPipeline(db: DB): boolean {
         if (budget > 0) {
           const perUser = Math.max(10, Math.floor(Math.min(200 * targets.length, budget) / targets.length));
           for (const t of targets) {
+            const referrals = referralsPossible(db, t.user.id);
+            if (!referrals) clearReferralSuggestions(db, t.user.id);
             if (unscoredBacklogFor(db, t.user.id, t.since) === 0) continue;
             await runMatching(db, {
               userId: t.user.id,
               backend,
-              profile: { directions: t.profile.directions, work_auth: t.profile.work_auth },
+              profile: matchProfileOf(t.profile),
               batchSize: 10,
               threshold: 40,
               limit: Math.min(200, perUser),
               since: t.since,
               concurrency: 6,
             });
-            await runReferralFit(db, { userId: t.user.id, backend, batchSize: 40, limit: 400, concurrency: 4 });
+            if (referrals) await runReferralFit(db, { userId: t.user.id, backend, batchSize: 40, limit: 400, concurrency: 4 });
           }
           const promoted = promoteRecentHighScores(db, since);
           if (promoted) console.log(`[scan→retier] promoted ${promoted} boards to core`);

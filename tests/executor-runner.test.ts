@@ -80,6 +80,18 @@ describe("executor/runner", () => {
   });
 
   describe("startExecutor", () => {
+    it("stamps a log file left under the same run id by an earlier database, so the reaper does not read it as silence", () => {
+      const stale = path.join(tmpLogDir, "run-1.log");
+      fs.writeFileSync(stale, "old line\n");
+      const old = new Date(Date.now() - 40 * 86_400_000);
+      fs.utimesSync(stale, old, old);
+      const { spawnFn } = makeFakeSpawn(process.pid);
+      const result = startExecutor(db, U, "apply", { limit: 1 }, { spawn: spawnFn, logDir: tmpLogDir });
+      expect(result.logPath).toBe(stale);
+      expect(Date.now() - fs.statSync(stale).mtimeMs).toBeLessThan(60_000);
+      expect(fs.readFileSync(stale, "utf8")).toContain("old line"); // append mode: nothing is overwritten
+    });
+
     it("creates a running row with pid + log_path, and writes the prompt to stdin", () => {
       const { spawnFn, child } = makeFakeSpawn(process.pid); // use our own pid: guaranteed "alive"
       const result = startExecutor(db, U, "apply", { limit: 3 }, { spawn: spawnFn, logDir: tmpLogDir });

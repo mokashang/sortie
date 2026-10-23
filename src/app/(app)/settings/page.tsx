@@ -11,6 +11,8 @@ import { getAutoSubmit } from "@/apply/auto-submit";
 import { getChatProvider } from "@/assistant/provider";
 import { inboxStatus } from "@/inbox/sync";
 import { attendedParallel } from "@/executor/sessions";
+import { attendedAvailable } from "@/executor/channel";
+import { storedNtfyTopic } from "@/lib/notify-user";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +47,8 @@ export default async function SettingsPage() {
         parallel={attendedParallel(getDb())}
         chatProvider={getChatProvider(getDb(), user.id)}
         inbox={inboxStatus(getDb(), user.id)}
+        chromeAvailable={attendedAvailable(getDb(), user.id)}
+        ntfyOwn={storedNtfyTopic(getDb(), user.id)}
       />
     </>
   );

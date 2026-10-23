@@ -14,6 +14,7 @@ export const network = defineMessages({
       scheduled: (label: string) => `已安排「${label}」`,
       startsInChrome: "助手接手后在你的 Chrome 里开始。",
       startedHeadless: "后台浏览器已开始。",
+      chromeOnly: "找人和发消息要用你自己登录好的 LinkedIn,得在你自己的 Chrome 里进行,这台服务器替你做不了;人脉记录和草稿照常可用。",
       startFailed: "没能开始",
     },
     actions: {
@@ -99,6 +100,7 @@ export const network = defineMessages({
       scheduled: (label: string) => `Scheduled: ${label}`,
       startsInChrome: "It starts in your Chrome once the assistant picks it up.",
       startedHeadless: "The background browser has started.",
+      chromeOnly: "Finding people and sending messages use your own logged-in LinkedIn, so they have to happen in your own Chrome; this server can't do them for you. Your contacts and drafts work as usual.",
       startFailed: "Could not start",
     },
     actions: {

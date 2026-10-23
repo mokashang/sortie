@@ -2,11 +2,14 @@ import { DB } from "@/lib/db";
 import { referralChecklist } from "@/network/harvest";
 import { startExecutor, StartOptions } from "@/executor/runner";
 import { listUsers } from "@/lib/users";
+import { attendedAvailable } from "@/executor/channel";
 
 // Enqueue a 'referral_check' attended run (kind handled by CLAUDE.md §3.10 i) for one account
 // when there is something to check and no such run is already queued/running for them. Returns
-// the run id or null.
+// the run id or null. Only for an account the box can serve in Chrome (src/executor/channel.ts):
+// reading LinkedIn conversations needs the account's own logged-in browser.
 export function enqueueReferralCheck(db: DB, userId: string, deps: { startExecutor?: typeof startExecutor } = {}): number | null {
+  if (!attendedAvailable(db, userId)) return null;
   if (referralChecklist(db, userId).length === 0) return null;
   const live = db
     .prepare("SELECT id FROM executor_runs WHERE user_id = ? AND kind = 'referral_check' AND status IN ('queued','running')")

@@ -6,7 +6,7 @@ import { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT } from "@/app/lib
 import { rowResult, plannedCounts, recordChainEnd, ClaimedRow, ChainEnd } from "@/apply/run-outcome";
 import { startExecutor, hasLiveOrQueuedRun, ExecutorChannel, StartOptions } from "@/executor/runner";
 import { inviteBudget } from "@/apply/invite-budget";
-import { notify } from "@/lib/notify";
+import { notifyUser } from "@/lib/notify-user";
 import { serverLang } from "@/lib/prefs";
 import { messages } from "@/i18n/messages";
 
@@ -173,7 +173,7 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
     const endChain = (end: ChainEnd, reason: string): ContinueResult => {
       recordChainEnd(db, runId, end);
       console.log(`[apply continue] run #${runId} (chain #${chain.root} step ${chain.step}) ends: ${reason}`);
-      notifyChainEnd(chain, own, end, deps.notify);
+      notifyChainEnd(db, userId, chain, own, end, deps.notify);
       return { action: "none", reason };
     };
     const givenUp = (entries: PlanEntryLike[]): NonNullable<ChainEnd["dropped"]> =>
@@ -303,7 +303,7 @@ export function chainProgressText(lang: "zh" | "en", planned: ModeCounts, achiev
 
 // Every chain end gets a push; the ones that need the user (no progress, too long) also leave a
 // 待处理 card (src/apply/plan-alerts.ts reads the recorded end).
-function notifyChainEnd(chain: ChainInfo, own: ModeCounts, end: ChainEnd, push?: (title: string, body: string) => void): void {
+function notifyChainEnd(db: DB, userId: string, chain: ChainInfo, own: ModeCounts, end: ChainEnd, push?: (title: string, body: string) => void): void {
   try {
     const lang = serverLang();
     const t = messages[lang].notify.plan;
@@ -315,7 +315,7 @@ function notifyChainEnd(chain: ChainInfo, own: ModeCounts, end: ChainEnd, push?:
         : end.reason === "exhausted"
           ? [t.exhaustedTitle(chain.root), t.exhaustedBody(progress)]
           : [t.stuckTitle(chain.root), t.stuckBody(progress, end.reason === "too_long" ? t.tooLong : t.noProgress)];
-    const send = push ?? ((a: string, b: string) => void notify(a, b, { priority: end.reason === "done" || end.reason === "exhausted" ? "default" : "high" }));
+    const send = push ?? ((a: string, b: string) => void notifyUser(db, userId, a, b, { priority: end.reason === "done" || end.reason === "exhausted" ? "default" : "high" }));
     send(title, body);
   } catch (e) {
     console.error("[apply continue] chain-end notify failed", e);

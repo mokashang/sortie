@@ -218,29 +218,34 @@ describe("takeNextApplication", () => {
     expect(JSON.parse(row.answer_pack as string).contact.email).toBe("shangmengjiajiajia@gmail.com");
   });
 
-  it("parks a job with no resume for its direction (needs_manual_reason set, status stays matched) and moves on to the next candidate", () => {
+  it("skips a direction no resume can go with (the job stays in the queue, no card) and moves on to the next candidate", () => {
     const db = openDb(":memory:");
-    // No resume exists for "quant" — noResume job should be skipped, not returned.
+    // No resume exists for "quant" — its jobs are skipped, not returned and not parked.
     const noResume = seedJob(db, { company: "NoResumeCo", direction: "quant", tier: 1, score: 99 });
+    const noResume2 = seedJob(db, { company: "NoResumeCo2", direction: "quant", tier: 1, score: 98 });
     seedResume(db, "ai_infra-v1", ["ai_infra"]);
     const hasResume = seedJob(db, { company: "HasResumeCo", direction: "ai_infra", tier: 2, score: 1 });
 
     const result = takeNextApplication(db, U, testProfile()) as ApplyTask;
 
     expect(result.jobId).toBe(hasResume);
-    const parked = getApplication(db, noResume);
-    expect(parked.status).toBe("matched");
-    expect(parked.needs_manual_reason).toBeTruthy();
+    for (const id of [noResume, noResume2]) {
+      const row = getApplication(db, id);
+      expect(row.status).toBe("matched");
+      expect(row.needs_manual_reason).toBeNull();
+    }
   });
 
-  it("does not re-pick a parked (needs_manual_reason set) job on a later call", () => {
+  it("says why the queue ran dry when only resume-less directions are left", () => {
     const db = openDb(":memory:");
-    const noResume = seedJob(db, { company: "NoResumeCo", direction: "quant" });
-    void noResume;
+    const a = seedJob(db, { company: "NoResumeCo", direction: "quant" });
+    const b = seedJob(db, { company: "NoResumeCo2", direction: "embedded" });
 
     const result = takeNextApplication(db, U, testProfile());
 
-    expect(result).toEqual({ done: true });
+    expect(result).toEqual({ done: true, reason: "no_resume", directions: expect.arrayContaining(["quant", "embedded"]) });
+    expect(getApplication(db, a).needs_manual_reason).toBeNull();
+    expect(getApplication(db, b).needs_manual_reason).toBeNull();
   });
 
   it("parks a job with no apply_url as needs_manual and moves on", () => {
@@ -727,8 +732,8 @@ describe("unpark", () => {
   it("lets a freshly generated resume make an unparked job pickable again", () => {
     const db = openDb(":memory:");
     const jobId = seedJob(db, { company: "QuantCo", direction: "quant" });
-    // takeNextApplication parks it (no resume for 'quant' yet).
-    expect(takeNextApplication(db, U, testProfile())).toEqual({ done: true });
+    // A targeted take parks it (no resume for 'quant' yet): the user asked for this job by name.
+    expect(takeNextApplication(db, U, testProfile(), { jobIds: [jobId] })).toEqual({ done: true });
     expect(getApplication(db, jobId).needs_manual_reason).toBeTruthy();
 
     // User generates the missing-direction resume in Studio, then unparks.

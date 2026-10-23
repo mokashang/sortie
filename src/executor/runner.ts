@@ -105,7 +105,20 @@ import { getAiProvider } from "@/ai/config";
 import { buildHeadlessAgentLaunch } from "@/ai/runtime";
 export { resolveClaudeBin };
 
-function isAlive(pid: number | null | undefined): boolean {
+// A log left under this run id by an earlier database (a restore, a scratch db whose ids restarted
+// at 1) keeps its old mtime, and reapStaleRuns read that as half an hour of silence: the new run
+// was killed on its first poll as "hung for 49182 min" (2026-10-22). Opening in append mode does
+// not touch the mtime, so the start stamps it.
+function freshMtime(file: string): void {
+  try {
+    const now = new Date();
+    fs.utimesSync(file, now, now);
+  } catch {
+    // the file was just created; nothing to fix
+  }
+}
+
+export function isAlive(pid: number | null | undefined): boolean {
   if (pid == null || pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -117,10 +130,10 @@ function isAlive(pid: number | null | undefined): boolean {
   }
 }
 
-function buildPrompt(kind: ExecutorKind, options: StartOptions, token: string): string {
+function buildPrompt(kind: ExecutorKind, options: StartOptions, token: string, runId?: number): string {
   switch (kind) {
     case "apply":
-      return buildApplyPrompt({ limit: options.limit, plan: options.plan, resume: options.resume, token, chunk: options.chunk, chain: options.chain });
+      return buildApplyPrompt({ limit: options.limit, plan: options.plan, resume: options.resume, token, chunk: options.chunk, chain: options.chain, runId });
     case "network_send":
       return buildNetworkSendPrompt({ token });
     case "network_find":
@@ -326,6 +339,7 @@ export function startExecutor(
     const runId = Number(insert.lastInsertRowid);
     const logPath = path.join(logDir, `run-${runId}.log`);
     fs.closeSync(fs.openSync(logPath, "a"));
+    freshMtime(logPath);
     db.prepare("UPDATE executor_runs SET log_path=? WHERE id=?").run(logPath, runId);
     return { id: runId, pid: null, logPath };
   }
@@ -338,13 +352,16 @@ export function startExecutor(
   // The run token is what makes this session act as `userId` on every API call (see prompts.ts's
   // curlCmd). Minted before the prompt so it can be baked into the text; revoked at finish/reap.
   const token = createRunToken(db, userId, runId);
-  const prompt = buildPrompt(kind, options, token);
+  const prompt = buildPrompt(kind, options, token, runId);
 
   const logPath = path.join(logDir, `run-${runId}.log`);
   // Ensure the file exists up front (and is truncated) even before the child process — or the
   // fake spawn in tests — has a chance to write to it, so callers can rely on it existing the
-  // moment startExecutor returns.
+  // moment startExecutor returns. Append mode on purpose: the child's stdout and appendRunLog (the
+  // session's /api/executor/log lines) both write to this file, and only O_APPEND keeps one from
+  // overwriting the other.
   const logFd = fs.openSync(logPath, "a");
+  freshMtime(logPath);
 
   const spawnFn = deps.spawn ?? (nodeSpawn as unknown as SpawnFn);
   // The owner keeps the pre-accounts data/browser-profile; every other account gets its own.

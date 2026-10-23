@@ -2,6 +2,7 @@ import { DB, logEvent } from "@/lib/db";
 import { hasLiveOrQueuedRun, lastRunChannel, startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
 import { parkErrorForRetry, AUTO_RETRY_PREFIX, AUTO_RETRY_DELAYS_MIN, AUTO_RETRY_EVENT, autoRetriesDone } from "@/apply/queue";
 import { isJobSessionReachable } from "@/executor/attended";
+import { applyChannelFor } from "@/executor/channel";
 
 // What a resolved 待处理 card turns into (2026-09-17). The user answered / uploaded / logged in /
 // clicked 「让助手再试一次」, so the job must be filled next — and "next" has to mean something even
@@ -54,7 +55,7 @@ export function queueTargetedRun(
   const start = deps.startExecutor ?? startExecutor;
   const runnerDeps = deps.logDir ? { logDir: deps.logDir } : {};
   try {
-    const channel: ExecutorChannel = getLastChannel(db, userId, "apply") === "headless" ? "headless" : "user_chrome";
+    const channel: ExecutorChannel = applyChannelFor(db, userId, getLastChannel);
     if (channel === "headless") {
       // A headless run is a process spawned right now; nothing can wait behind one. Same
       // stand-down as before on this channel (not the App's default).

@@ -2,7 +2,7 @@ import type { DB } from "@/lib/db";
 import { logEvent } from "@/lib/db";
 import { getBackend } from "@/llm/registry";
 import type { LlmBackend } from "@/llm/types";
-import { notify } from "@/lib/notify";
+import { notifyUser } from "@/lib/notify-user";
 import { serverLang } from "@/lib/prefs";
 import type { Lang } from "@/i18n/lang";
 import { GmailError, defaultSleep, getMessage, listMessageIds, parseMessage, refreshAccessToken, revokeToken, type ParsedMail, type Sleeper } from "@/inbox/google";
@@ -204,7 +204,7 @@ export async function syncMailbox(db: DB, account: MailAccountRow, deps: SyncDep
       const inputs: ClassifyMail[] = parsed.map((m) => ({ id: m.id, from: m.from, subject: m.subject, receivedAt: isoOf(m.receivedAtMs), text: m.text }));
       const results = await classifyMails(backend, inputs, apps);
       const lang = deps.lang ?? serverLang();
-      const notifier = deps.notifier ?? ((t: string, b: string) => notify(t, b));
+      const notifier = deps.notifier ?? ((t: string, b: string) => notifyUser(db, userId, t, b));
       const byId = new Map(results.map((r) => [r.message_id, r]));
       for (const m of parsed) {
         const r = byId.get(m.id);

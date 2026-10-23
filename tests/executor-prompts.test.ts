@@ -28,7 +28,8 @@ describe("executor prompts", () => {
       expect(p).toContain("http://127.0.0.1:3000/api/apply/pending");
       expect(p).toContain("http://127.0.0.1:3000/api/apply/next");
       expect(p).toContain("http://127.0.0.1:3000/api/apply/report");
-      expect(p).toContain('"http://127.0.0.1:3000/api/apply/pending?jobId=<jobId>"');
+      expect(p).toContain('"http://127.0.0.1:3000/api/apply/pending?jobId=<jobId>&wait=30"');
+      expect(p).not.toMatch(/`sleep \d/); // waits go through the long-poll, never a shell loop
     });
 
     it("contains the playwright MCP tool names, not hanzi or claude-in-chrome tools", () => {

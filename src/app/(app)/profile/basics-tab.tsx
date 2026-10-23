@@ -1,10 +1,10 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Upload } from "lucide-react";
+import { ArrowRight, Sparkles, Upload } from "lucide-react";
 import { DIRECTIONS } from "@/matcher/directions";
 import { putJson, postJson, errorMessage, ApiError } from "@/app/lib/api";
-import { Button, Card, Checkbox, Field, Input, Section, Segmented, Select, useToast } from "@/app/components/ui";
+import { Button, Card, Checkbox, Field, Input, LinkButton, Section, Segmented, Select, useToast } from "@/app/components/ui";
 import { useMessages } from "@/i18n/client";
 
 // 档案 → 基本信息 (spec 2026-09-13 accounts §6): the fields the matcher and the answer pack are
@@ -169,7 +169,21 @@ export function BasicsTab({ initial, complete, welcome, isOwner, onSaved }: { in
 
   return (
     <div className="col gap-4">
-      {welcome || !complete ? (
+      {welcome && complete && !dirty ? (
+        // The first save on the welcome page: say what comes next instead of leaving the user on
+        // a finished form.
+        <Card tone="good">
+          <div className="row between">
+            <div>
+              <div className="strong">{m.profile.basics.nextTitle}</div>
+              <div className="muted small">{m.profile.basics.nextDescription}</div>
+            </div>
+            <LinkButton href="/profile?tab=resumes" variant="primary" size="sm" icon={<ArrowRight size={13} />}>
+              {m.profile.basics.nextCta}
+            </LinkButton>
+          </div>
+        </Card>
+      ) : welcome || !complete ? (
         <Card tone="accent">
           <div className="row between">
             <div>

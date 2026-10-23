@@ -102,6 +102,12 @@ export function buildSnapshot(db: DB, userId: string, lang: Lang, question: stri
         `AI provider: ${provider}`,
         `auto-apply: ${autoSubmit ? "on" : "off"}`,
         `profile complete: ${ov.profileComplete ? "yes" : "no (the assistant cannot score or apply until Profile → Basics is complete)"}`,
+        `account: ${ov.isOwner ? "the server's owner" : "not the server's owner (see 'Accounts other than the server's owner')"}; tasks run ${ov.chromeAvailable ? "in the user's Chrome by default" : "in the server's background browser"}`,
+        ...(ov.setup
+          ? [
+              `getting started: resume uploaded or generated ${ov.setup.hasResume ? "yes" : "no"}; experience entries ${ov.setup.experiences}; jobs scored so far ${ov.setup.scored}; ready in the queue ${ov.counts.queueMatched}; first apply task started ${ov.setup.applyStarted ? "yes" : "no"}`,
+            ]
+          : []),
       ]),
     ].join("\n")
   );

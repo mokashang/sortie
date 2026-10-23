@@ -1,4 +1,4 @@
-import { Profile } from "@/lib/profile";
+import { Profile, cleanProfileUrl } from "@/lib/profile";
 
 export interface AnswerPack {
   contact: {
@@ -113,8 +113,8 @@ export function buildAnswerPack(
       full_name: profile.name,
       email: profile.email,
       phone: profile.phone,
-      linkedin_url: completeUrl(profile.linkedin),
-      github_url: completeUrl(profile.github),
+      linkedin_url: completeUrl(cleanProfileUrl(profile.linkedin)),
+      github_url: completeUrl(cleanProfileUrl(profile.github)),
       // profile.yaml has no location field yet — default to empty rather than guessing.
       location: "",
     },

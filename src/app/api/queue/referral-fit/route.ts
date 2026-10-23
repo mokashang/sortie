@@ -3,19 +3,24 @@ import { getDb } from "@/lib/db";
 import { getBackend } from "@/llm/registry";
 import { runReferralFit, countUnclassified } from "@/matcher/referral-fit";
 import { withUser } from "@/lib/actor";
+import { referralsPossible } from "@/executor/channel";
 
 // One pass in flight per account.
 const inFlight = new Set<string>();
 
 // /queue's 补判内推建议 button. POST classifies every still-unclassified queued job in the
 // background (~80 fast-tier calls for a 3200-row queue); GET reports how many remain and whether
-// a pass is running so the button can poll until it's done.
+// a pass is running so the button can poll until it's done. An account that cannot look for
+// referrals (src/executor/channel.ts) has nothing to classify: the button is not offered.
 export const GET = withUser(async (_req, { userId }) => {
-  return NextResponse.json({ unclassified: countUnclassified(getDb(), userId), running: inFlight.has(userId) });
+  const db = getDb();
+  if (!referralsPossible(db, userId)) return NextResponse.json({ unclassified: 0, running: false });
+  return NextResponse.json({ unclassified: countUnclassified(db, userId), running: inFlight.has(userId) });
 });
 
 export const POST = withUser(async (_req, { userId }) => {
   const db = getDb();
+  if (!referralsPossible(db, userId)) return NextResponse.json({ started: false, unclassified: 0 });
   const unclassified = countUnclassified(db, userId);
   if (inFlight.has(userId) || unclassified === 0) return NextResponse.json({ started: false, unclassified });
   inFlight.add(userId);

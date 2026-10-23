@@ -3,6 +3,7 @@ import { loadProfile } from "../src/lib/profile";
 import { resolveScriptUser } from "./script-user";
 import { getBackend } from "../src/llm/registry";
 import { runMatching } from "../src/matcher/run";
+import { matchProfileOf } from "../src/matcher/prompt";
 
 export interface MatchArgs {
   limit?: number;
@@ -70,7 +71,7 @@ async function main() {
     const summary = await runMatching(db, {
       userId: account.id,
       backend,
-      profile: { directions: profile.directions, work_auth: profile.work_auth },
+      profile: matchProfileOf(profile),
       batchSize: 10,
       threshold: 40,
       limit,

@@ -11,6 +11,11 @@ import { withUser, failResponse } from "@/lib/actor";
 
 // No params: the in-app confirmation queue's data source. ?jobId=: single-job status poll,
 // used by the executor while it waits (up to 30min) for a human to approve/reject its fill.
+// &wait=N (seconds, up to 60): answer as soon as the job has something for the session — a
+// decision, or the row left the waiting states (answered, skipped) — else after N seconds. The
+// background browser's session waits through this instead of a shell sleep loop (2026-10-22: with
+// sleep allowed, a session finished its work and then sat in "until false; do sleep 15; done"
+// until the reaper killed it half an hour later).
 //
 // A dispatcher-spawned session asking (its resume phase looks for approvals to submit) only sees
 // the filled forms that are its own or that no reachable session holds any more: with tasks
@@ -24,7 +29,14 @@ export const GET = withUser(async (req, actor) => {
   try {
     const db = getDb();
     if (jobId) {
-      return NextResponse.json(confirmStatus(db, userId, Number(jobId)));
+      const wait = Math.min(60, Math.max(0, Number(url.searchParams.get("wait")) || 0));
+      const deadline = Date.now() + wait * 1000;
+      let st = confirmStatus(db, userId, Number(jobId));
+      while (Date.now() < deadline && !req.signal.aborted && st.decision === null && (st.status === "awaiting_confirm" || st.status === "needs_info")) {
+        await new Promise((r) => setTimeout(r, 1000));
+        st = confirmStatus(db, userId, Number(jobId));
+      }
+      return NextResponse.json(st);
     }
     let pending = pendingConfirmations(db, userId);
     const caller = sessionOfCaller(db, actor);

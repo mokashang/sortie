@@ -8,6 +8,7 @@ import { ResumesTab } from "./resumes-tab";
 import { AnswersTab } from "./answers-tab";
 import { DocumentsTab, type DocumentRow } from "./documents-tab";
 import type { Exp, ResumeRow } from "./profile-types";
+import { RESUME_KEY, isPdf } from "./resume-upload";
 
 export type ProfileTab = "basics" | "experiences" | "resumes" | "answers" | "documents";
 
@@ -35,6 +36,7 @@ export function ProfileTabs({
   const m = useMessages();
   const [tab, setTab] = useState<ProfileTab>(initialTab);
   const [complete, setComplete] = useState(profileComplete);
+  const uploaded = documents.find((d) => d.key === RESUME_KEY) ?? null;
   function select(key: string) {
     const t = key as ProfileTab;
     setTab(t);
@@ -49,7 +51,7 @@ export function ProfileTabs({
         items={[
           { key: "basics", label: complete ? m.profile.tabs.basics : m.profile.tabs.basicsIncomplete },
           { key: "experiences", label: m.profile.tabs.experiences, count: experiences.length },
-          { key: "resumes", label: m.profile.tabs.resumes, count: resumes.length },
+          { key: "resumes", label: m.profile.tabs.resumes, count: resumes.length + (uploaded ? 1 : 0) },
           { key: "answers", label: m.profile.tabs.answers, count: Object.keys(answers).length },
           { key: "documents", label: m.profile.tabs.documents, count: documents.length },
         ]}
@@ -57,9 +59,9 @@ export function ProfileTabs({
       {tab === "basics" ? (
         <BasicsTab initial={profile} complete={complete} welcome={welcome} isOwner={isOwner} onSaved={() => setComplete(true)} />
       ) : tab === "experiences" ? (
-        <ExperiencesTab initial={experiences} />
+        <ExperiencesTab key={experiences.length} initial={experiences} canImport={isPdf(uploaded)} />
       ) : tab === "resumes" ? (
-        <ResumesTab resumes={resumes} hasExperiences={experiences.length > 0} />
+        <ResumesTab resumes={resumes} hasExperiences={experiences.length > 0} uploaded={uploaded} />
       ) : tab === "documents" ? (
         <DocumentsTab initial={documents} />
       ) : (

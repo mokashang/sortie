@@ -45,10 +45,14 @@ export function ApplyTabs({ tab: initialTab, counts: initialCounts, submitted }:
     submitted,
   };
 
+  // An account that can't look for referrals (no Chrome of its own on this server) gets no
+  // 内推进行中 tab unless something is somehow on it.
+  const shown = APPLY_TABS.filter((t) => t !== "referrals" || data?.chromeAvailable !== false || counts.referrals > 0);
+
   return (
     <section className="section">
-      <Tabs ariaLabel={m.apply.title} value={tab} onChange={select} items={APPLY_TABS.map((t) => ({ key: t, label: labels[t], count: counts[t] }))} />
-      {APPLY_TABS.map((t) => (
+      <Tabs ariaLabel={m.apply.title} value={tab} onChange={select} items={shown.map((t) => ({ key: t, label: labels[t], count: counts[t] }))} />
+      {shown.map((t) => (
         <div key={t} role="tabpanel" hidden={t !== tab}>
           {panels[t]}
         </div>

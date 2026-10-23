@@ -5,7 +5,7 @@ import { FileText, Play } from "lucide-react";
 import { getJson, postJson, errorMessage } from "@/app/lib/api";
 import { directionName, tierLabel } from "@/app/lib/labels";
 import { buildPlan, clampCount, planTotals, type ApplyMode, type PlanCounts } from "@/app/lib/plan";
-import { getChannel, type Channel } from "@/app/lib/settings";
+import { channelFor, type Channel } from "@/app/lib/settings";
 import { Button, Card, Chip, EmptyState, Menu, SkeletonRows, Stepper, Tooltip, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
 import { useLang, useMessages } from "@/i18n/client";
@@ -36,7 +36,10 @@ export function PlanCard() {
   const blocked = applyBusy && channel === "headless";
   const jdBusy = data?.liveKinds.includes("jd_review") ?? false;
 
-  useEffect(() => setChannel(getChannel()), []);
+  const chromeAvailable = data?.chromeAvailable;
+  useEffect(() => setChannel(channelFor(chromeAvailable)), [chromeAvailable]);
+  // The background browser only applies directly: the 找内推 column is for the Chrome channel.
+  const referralOff = channel === "headless";
 
   const load = useCallback(async () => {
     try {
@@ -82,11 +85,12 @@ export function PlanCard() {
     const limit = data?.parallel ?? 1;
     setStarting(true);
     try {
-      await postJson("/api/executor/start", { kind: "apply", channel, options: { plan } });
+      const r = await postJson<{ channel?: Channel }>("/api/executor/start", { kind: "apply", channel, options: { plan } });
+      const ran = r.channel ?? channel;
       toast({
         title: m.apply.plan.scheduled(totals.total),
         description:
-          channel !== "user_chrome"
+          ran !== "user_chrome"
             ? m.apply.plan.scheduledHeadless
             : onChrome === 0
               ? m.apply.plan.scheduledUserChrome
@@ -123,19 +127,27 @@ export function PlanCard() {
         </div>
         <div className="row">
           <span className="muted small">
-            {m.apply.plan.runsIn[channel]} · <Link href="/settings">{m.apply.plan.change}</Link>
+            {m.apply.plan.runsIn[channel]}
+            {chromeAvailable === false ? null : (
+              <>
+                {" "}
+                · <Link href="/settings">{m.apply.plan.change}</Link>
+              </>
+            )}
           </span>
-          <Menu
-            label={m.common.more}
-            items={[
-              {
-                label: m.apply.plan.jdMenuItem(pendingJd),
-                icon: <FileText size={14} />,
-                onSelect: startJdReview,
-                disabled: jdBusy || pendingJd === 0,
-              },
-            ]}
-          />
+          {data?.isOwner ? (
+            <Menu
+              label={m.common.more}
+              items={[
+                {
+                  label: m.apply.plan.jdMenuItem(pendingJd),
+                  icon: <FileText size={14} />,
+                  onSelect: startJdReview,
+                  disabled: jdBusy || pendingJd === 0,
+                },
+              ]}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -174,7 +186,7 @@ export function PlanCard() {
                       </td>
                       <td>
                         <div className="row row-nowrap">
-                          <Stepper value={c.referral} max={g.referralSuggested} disabled={blocked || g.referralSuggested === 0} onChange={(v) => setCount(g.direction, "referral", v, g.referralSuggested)} ariaLabel={m.apply.plan.referralCountAria(name)} />
+                          <Stepper value={c.referral} max={g.referralSuggested} disabled={blocked || referralOff || g.referralSuggested === 0} onChange={(v) => setCount(g.direction, "referral", v, g.referralSuggested)} ariaLabel={m.apply.plan.referralCountAria(name)} />
                           <span className="muted xs nowrap">{m.apply.plan.available(g.referralSuggested)}</span>
                         </div>
                       </td>
@@ -191,6 +203,7 @@ export function PlanCard() {
               </tbody>
             </table>
           </div>
+          {referralOff ? <p className="muted xs mt-2">{m.apply.plan.referralOffHeadless}</p> : null}
           <div className="plan-foot">
             <span>
               {m.apply.plan.totalPrefix} <strong className="mono">{totals.total}</strong> {m.apply.plan.totalUnit(totals.total)}

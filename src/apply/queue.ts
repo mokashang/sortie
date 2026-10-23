@@ -78,15 +78,18 @@ export function parseReferral(json: string | null, personName: string | null): A
 
 // Picks the single highest-priority open application and prepares it for the executor:
 // selects a resume, builds the answer pack, and advances matched -> prepared so a second call
-// (or a concurrent executor) skips it. Jobs whose direction has no generated resume are parked
-// (needs_manual_reason set, status left at 'matched') and the loop moves on to the next
-// candidate — they never get returned to the caller as a task.
+// (or a concurrent executor) skips it. A job no resume can go with (no generated version for its
+// direction and nothing uploaded) is left in the queue and its direction skipped for the rest of
+// the call (2026-10-22: before, every such job was parked as its own 待处理 card, so a new
+// account's first plan turned its whole direction into cards); only a job the user asked for by
+// name (targeted) gets the card, and `{done, reason:'no_resume'}` tells the session why the
+// queue ran dry.
 export function takeNextApplication(
   db: DB,
   userId: string,
   profile: Profile,
   opts: { direction?: string; jobIds?: number[]; documents?: Record<string, string>; runId?: number | null } = {}
-): ApplyTask | { done: true } {
+): ApplyTask | { done: true; reason?: "no_resume"; directions?: (string | null)[] } {
   // Login walls the user hasn't cleared yet (open `login` items on paused rows), by apply_url
   // host: a job on the same host is paused with the same item instead of being handed out — the
   // executor would only hit the same wall again (and trip its circuit breaker). 「我登好了」 on
@@ -113,6 +116,7 @@ export function takeNextApplication(
        AND NOT EXISTS (SELECT 1 FROM executor_runs r WHERE r.id = applications.run_id AND r.status IN ('running','queued','paused'))`
   ).run(userId);
 
+  const noResume: (string | null)[] = [];
   for (;;) {
     // Two ways in. Batch mode (opts.direction optional): the classic picker, now restricted to
     // jobs whose *effective* apply mode is 'direct' — a job Claude tagged 建议内推 (or the user
@@ -127,8 +131,8 @@ export function takeNextApplication(
       ? `a.status IN ('matched','referral_ready') AND a.needs_manual_reason IS NULL AND j.loc_flag IS NULL
          AND a.job_id IN (${opts.jobIds!.map(() => "?").join(",")})`
       : `a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
-         AND ${EFFECTIVE_MODE_SQL} = 'direct'${opts.direction ? " AND m.direction = ?" : ""}`;
-    const params: unknown[] = targeted ? [...opts.jobIds!] : opts.direction ? [opts.direction] : [];
+         AND ${EFFECTIVE_MODE_SQL} = 'direct'${opts.direction ? " AND m.direction = ?" : ""}${skipDirectionsSql(noResume)}`;
+    const params: unknown[] = targeted ? [...opts.jobIds!] : [...(opts.direction ? [opts.direction] : []), ...noResume.filter((d) => d != null)];
     const row = db
       .prepare(
         `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats, m.direction, a.referral_info, p.name as referral_person_name
@@ -142,7 +146,7 @@ export function takeNextApplication(
       )
       .get(userId, ...params) as CandidateRow | undefined;
 
-    if (!row) return { done: true };
+    if (!row) return noResume.length > 0 ? { done: true, reason: "no_resume", directions: noResume } : { done: true };
 
     if (!row.apply_url) {
       parkWithItems(
@@ -162,6 +166,10 @@ export function takeNextApplication(
     }
 
     const selection = selectResumeForJob(db, userId, row.job_id);
+    if ("error" in selection && !targeted) {
+      noResume.push(selection.direction);
+      continue; // left in the queue; its direction is skipped from here on
+    }
     if ("error" in selection) {
       const reason =
         selection.direction != null
@@ -172,7 +180,7 @@ export function takeNextApplication(
           ? manualItem(
               "no_resume",
               `「${directionLabel(selection.direction)}」方向还没有生成简历`,
-              "到档案页「简历」标签生成这个方向的简历,再点「让助手再试一次」。",
+              "到档案页「简历」上传你的简历,或生成这个方向的简历,再点「让助手再试一次」。",
               "/profile?tab=resumes"
             )
           : manualItem("no_direction", "这个岗位没有匹配到方向", "先在职位页给它一个方向,或者跳过。");
@@ -229,6 +237,16 @@ export function takeNextApplication(
       answerPack,
     };
   }
+}
+
+// The batch picker's filter for directions found to have no resume earlier in the same call
+// (params: the non-null directions, in order, after the direction filter's own).
+function skipDirectionsSql(dirs: (string | null)[]): string {
+  const named = dirs.filter((d) => d != null);
+  return (
+    (named.length > 0 ? ` AND (m.direction IS NULL OR m.direction NOT IN (${named.map(() => "?").join(",")}))` : "") +
+    (dirs.includes(null) ? " AND m.direction IS NOT NULL" : "")
+  );
 }
 
 // A to-do item on the 待处理 card (spec 2026-09-13-todo-list-design §1). `text` (the default) is

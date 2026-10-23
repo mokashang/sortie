@@ -16,7 +16,7 @@ export const auth = defineMessages({
       noMailerNote: {
         before: "这台服务器没有配置邮件发送:邮件内容写在服务器的 ",
         path: "data/outbox/",
-        after: " 目录里,打开最新的文件点里面的链接即可。",
+        after: " 目录里,在这台服务器上打开最新的文件点里面的链接即可。不在服务器旁边的话:用同一个邮箱的 Google 账号登录(会自动进到这个账号),或者请服务器的主人帮你打开那个链接。",
       },
     },
     login: {
@@ -87,7 +87,7 @@ export const auth = defineMessages({
       noMailerNote: {
         before: "This server has no mail sending configured: the email content is written to the server's ",
         path: "data/outbox/",
-        after: " directory — open the newest file and click the link inside.",
+        after: " directory — on the server, open the newest file and click the link inside. Not at the server? Sign in with the Google account of the same email (it lands in this account), or ask the server's owner to open that link for you.",
       },
     },
     login: {

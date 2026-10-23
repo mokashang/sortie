@@ -17,7 +17,8 @@ import type { ChainInfo } from "@/app/lib/run-outcome";
 // The attended skills under .claude/skills and .agents/skills are the source protocol these are
 // adapted from; this file targets the headless Playwright profile.
 
-const APP_BASE = "http://127.0.0.1:3000";
+// The server this box runs (PORT, as in next start / next dev -p); 3000 in production.
+const APP_BASE = `http://127.0.0.1:${process.env.PORT || "3000"}`;
 
 // Every App API call the session makes carries its run token (spec 2026-09-13 accounts §2): the
 // server mints one per run and scopes it to that run's account. Prompts interpolate this as
@@ -54,10 +55,29 @@ const GREENHOUSE_HEURISTICS = `## Greenhouse(Tier-A ATS)填表要点(一次真�
 - **页面上如果弹出 Simplify 之类的自动填表浏览器插件面板**,忽略它——绝不点它的 Autofill 按钮,一切填值都走你自己的 answerPack。
 - **每次填完(以及正式提交前)对每一个必填字段做一次最终 read-back**:重新 \`browser_snapshot\`,逐个核对必填字段的当前实际值确实是你想要的值,不要凭"刚刚填过了"就假设它还在。`;
 
+// The run log the App shows under 查看详情 — and the only sign of life the reaper has: a headless
+// run whose log stays silent for 30 minutes is killed as hung (runner.ts STALE_HEADLESS_MS), and
+// `claude -p` prints nothing to stdout until it ends. Before 2026-10-22 the apply prompt never
+// logged, so any apply segment longer than half an hour (one approval wait was enough) died.
+function logStep(C: string, runId?: number): string {
+  const id = runId ?? "<runId>";
+  return `\`${C} -X POST ${APP_BASE}/api/executor/log -H 'content-type: application/json' -d '{"runId": ${id}, "line": "<one short plain-ASCII line>"}'\``;
+}
+
+function logSection(C: string, runId?: number): string {
+  const find =
+    runId != null
+      ? `本次 run 的 id 是 **${runId}**。`
+      : `先记下本次 run 的 id:\`${C} ${APP_BASE}/api/executor/status\` 里找 kind 为 apply、status 为 running 的那一行,记下它的 \`id\` 作为 runId。`;
+  return `## 日志(每一步都记,这是用户看进度的唯一地方,也是 App 判断你还活着的依据)
+${find}每做完一步就写一行:${logStep(C, runId)}——取到哪个岗(公司 + 标题)、打开页面、资格结论、每组字段填完、简历上传、回读核对、回报了什么状态、批准后提交成功、跳过与原因。\`line\` 只用英文字母、数字、空格和 \`. , ; : ( ) - # /\`(不要中文、引号、反斜杠、换行——会破坏这条 JSON)。**等待期间(等批准、等用户答题)每 5 分钟也要写一行**,例如 \`waiting for approval: 2 left\`:日志 30 分钟没动静,App 会把这个任务当成卡死并结束它。等待时在查询后面加 \`&wait=30\`(App 最多替你等 30 秒再回答,有结果就立刻回),不要写 sleep、while / until 循环(没有这个权限,也会让任务挂住);该做的做完就直接收尾、结束会话。`;
+}
+
 export function buildApplyPrompt(
-  options: { limit?: number; plan?: ApplyPlanEntry[]; resume?: boolean; token?: string; chunk?: number; chain?: ChainInfo } = {}
+  options: { limit?: number; plan?: ApplyPlanEntry[]; resume?: boolean; token?: string; chunk?: number; chain?: ChainInfo; runId?: number } = {}
 ): string {
   const C = curlCmd(options.token);
+  const LOG = logSection(C, options.runId);
   const { plan, resume, chain } = options;
   const hasExplicitLimit = typeof options.limit === "number";
   const limit = options.limit ?? 5;
@@ -85,7 +105,7 @@ export function buildApplyPrompt(
 2. 对每一个这样的 jobId:\`${C} "${APP_BASE}/api/apply/task?jobId=<jobId>"\` 取回 \`{jobId, company, title, applyUrl, ats, answerPack}\`(answerPack 结构和 §2 第 1 步拿到的 ApplyTask 完全一样,含 resume.pdf_path)。
 3. \`mcp__playwright__browser_navigate\` 打开 \`<applyUrl>\`,\`mcp__playwright__browser_snapshot\` 读无障碍树,把 answerPack 拍平成字段值列表,重新填一遍整份表单(同 §2 第 2 步的方式,遵守下面的 Greenhouse 填表要点),\`mcp__playwright__browser_file_upload\` 重新上传简历。填完再做一次 \`mcp__playwright__browser_snapshot\` 读出**实际**值。
 4. \`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {...实际值...}}'\`。**这一步会正确地把 App 侧的批准重置为 null——这是故意的**:这是一次全新的填表,旧的批准不再对新值有效,必须让用户重新看一遍再批一次,绝不能凭旧的批准直接提交。
-5. 像 §2 第 4 步一样轮询(每 5 秒一次,最多 30 分钟)\`${C} "${APP_BASE}/api/apply/pending?jobId=<jobId>"\`:\`"approved"\` → 进入第 6 步;\`"rejected"\` → \`mcp__playwright__browser_tabs\`(action: close)关掉 tab,跳过这个 jobId;超时仍是 \`null\` → 回报 \`{"jobId": <jobId>, "status": "needs_manual", "reason": "confirmation timed out after 30 minutes"}\`,关掉 tab,跳过。
+5. 反复查(最多 30 分钟,每 5 分钟写一行日志)\`${C} "${APP_BASE}/api/apply/pending?jobId=<jobId>&wait=30"\`:\`"approved"\` → 进入第 6 步;\`"rejected"\` → \`mcp__playwright__browser_tabs\`(action: close)关掉 tab,跳过这个 jobId;超时仍是 \`null\` → 回报 \`{"jobId": <jobId>, "status": "needs_manual", "reason": "confirmation timed out after 30 minutes"}\`,关掉 tab,跳过。
 6. 批准后,同 §2 第 5 步的漂移检查:重新 \`mcp__playwright__browser_snapshot\` 核对表单值没有漂移,点真正的最终 Submit/Apply 按钮,确认提交成功页,\`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "submitted"}'\`,\`mcp__playwright__browser_tabs\`(action: close)关掉 tab。
 
 ${
@@ -106,6 +126,8 @@ ${
 # 任务:投递执行(apply,resume 模式)
 
 本次启动没有带任何投递计划(没有 plan,也没有数量上限)——只做恢复,不取新任务。
+
+${LOG}
 
 ${resumeSection}
 
@@ -146,6 +168,8 @@ ${plan.map((p) => `- \`${p.direction}\` × **${p.count}**(该方向最多调用 
 
 # 任务:投递执行(apply)
 
+${LOG}
+
 ${resumeSection}${introSection}
 
 ## 1. Preflight
@@ -162,21 +186,22 @@ ${takeTaskStep}
    - **登录墙 / 要新建账号**(绝不输入密码、绝不创建账号、绝不点浏览器建议的密码或「用 LinkedIn / Google 申请」):先找免账号的路——同页的「Apply as guest / Continue without account / Skip」,或同一岗位在该公司 Greenhouse / Lever / Ashby 板块上标题和地点完全一致的免登录版本(最多看两三个页面,换了地址就在 filledFields 里写 "Applied via": <url>);都没有才回报 \`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_info", "questions": [{"kind": "login", "key": "login", "host": "<applyUrl 的主机名>", "url": "<登录或注册页 URL>", "label": "在后台浏览器里登录 <站点名>", "hint": "${LOGIN_WALL_REASON}"}]}'\`(App 直接暂停这个岗和同一站点的其他岗,用户在设置页打开后台浏览器登录一次后点「我登好了」自动续跑),关掉 tab,继续下一轮。
 
 3. **回报填表结果**(用 §2 第 2 步快照读回的**实际**字段值,不是你打算填的值):
-   - 成功:\`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {"<人类可读字段名>": "<实际值>", ...}}'\`。任何有意留空的字段作为一条 \`"Unanswered questions"\` 写进 filledFields。**这一步之后先不要关 tab**——批准后第 5 步还要在同一个 tab 里提交。**看响应**:若响应里有 \`"autoApproved": true\`(用户在设置里开了自动投递,App 已替用户批准),跳过第 4 步的轮询,直接进入第 5 步提交。
-   - 停在只有用户能动的事上(缺答案 / 缺附件 / 登录墙 / 验证码 / 视频题,见 §3 的表):\`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_info", "questions": [...]}'\`。**看响应**:若响应里有 \`"autoAnswered": true\`,\`infoAnswers\` 就是 App 按用户档案替用户答好的答案——不要等,立刻填进同一个 tab、回读、回报 awaiting_confirm;否则 text / file / action 项保持 tab 打开,每 5 秒 \`${C} "${APP_BASE}/api/apply/pending?jobId=<jobId>"\`,\`status\` 变回 \`prepared\` 时 \`infoAnswers\` 就是答案(file 项的答案是文件绝对路径,用 browser_file_upload 传),填进去后照常回报 awaiting_confirm;变成 \`archived\` / \`matched\` 则关 tab 换下一个;30 分钟没答 → 回报 \`{"jobId": <jobId>, "status": "needs_manual", "reason": "info request timed out after 30 minutes"}\`,关 tab 换下一个。login / manual 项 App 直接暂停:回报后立刻关 tab,继续下一轮。
+   - 成功:\`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {"<人类可读字段名>": "<实际值>", ...}}'\`。任何有意留空的字段作为一条 \`"Unanswered questions"\` 写进 filledFields。**这一步之后不要关 tab**——批准后还要在同一个 tab 里提交。**看响应**:若响应里有 \`"autoApproved": true\`(用户在设置里开了自动投递,App 已替用户批准),直接进入第 5 步提交。否则**不要在这里等批准**:记下这个 jobId 和它的 tab,让 tab 开着,用 \`mcp__playwright__browser_tabs\`(action: new)开一个新 tab,回到第 1 步取下一个——批准统一在第 4 步等。
+   - 停在只有用户能动的事上(缺答案 / 缺附件 / 登录墙 / 验证码 / 视频题,见 §3 的表):\`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "needs_info", "questions": [...]}'\`。**看响应**:若响应里有 \`"autoAnswered": true\`,\`infoAnswers\` 就是 App 按用户档案替用户答好的答案——不要等,立刻填进同一个 tab、回读、回报 awaiting_confirm;否则 text / file / action 项保持 tab 打开、记下 jobId,开新 tab 取下一个,答案也在第 4 步统一等。login / manual 项 App 直接暂停:回报后立刻关 tab,继续下一轮。
    - 死链 / 岗位已下线(404、"no longer available"):\`{"jobId": <jobId>, "status": "closed", "reason": "...", "boardGone": false}\`(整个公司板块都没了就 true);"你已经申请过了"页:\`{"jobId": <jobId>, "status": "already_applied", "reason": "..."}\`。两者 App 自动处理,不出卡、不算 error、不计入熔断;关 tab,继续下一轮。
    - 出了意外错误(工具反复失败、页面渲染不出来、App 返回非预期错误):\`{"jobId": <jobId>, "status": "error", "reason": "..."}\`,关掉 tab,计入 §5 error 熔断计数,继续下一轮。App 会自己隔 1 小时、再隔 6 小时各重试一次,第三次还失败才出卡。**needs_manual 不算 error,别混淆——会误触发熔断。**
 
-4. **轮询人工决定**:每 5 秒一次,最多 30 分钟:\`${C} "${APP_BASE}/api/apply/pending?jobId=<jobId>"\` → \`{"decision": null|"approved"|"rejected", "status": "..."}\`。
-   - \`"approved"\` → 进入第 5 步提交(tab 还开着)。
-   - \`"rejected"\` → \`mcp__playwright__browser_tabs\`(action: close)关掉这个 tab,不提交,继续下一轮。
-   - 30 分钟仍是 \`null\` → 用户只是不在电脑前:**什么都不回报**,这份申请留在待确认卡上;关掉 tab,继续下一轮(用户之后批准,App 会自动拉起一个 run 来提交)。
+4. **等用户(取完本段的任务之后统一做,不要逐个等)**:主循环结束(做满上限 / 没有更多任务 / 熔断)后,只要还有开着 tab 的 jobId 在等批准或等答案,就进入这一步:逐个查 \`${C} "${APP_BASE}/api/apply/pending?jobId=<jobId>&wait=30"\`(App 最多等 30 秒,有结果立刻回),一轮查完再从头查 → \`{"decision": null|"approved"|"rejected", "status": "...", "infoAnswers": {...}}\`:
+   - \`decision: "approved"\` → \`mcp__playwright__browser_tabs\`(action: select)切到那个 tab,进入第 5 步提交。
+   - \`decision: "rejected"\` → 关掉那个 tab,不提交。
+   - 等答案的岗 \`status\` 变回 \`prepared\` → \`infoAnswers\` 就是答案(file 项的答案是文件绝对路径,用 browser_file_upload 传),切到那个 tab 填进去、回读、回报 awaiting_confirm,然后接着等它的批准;变成 \`archived\` / \`matched\` → 用户跳过或交回了,关掉那个 tab。
+   - 每 5 分钟写一行日志(还剩几个在等)。从你最后一次回报算起 30 分钟仍没有动静 → **什么都不回报**,这些申请留在待确认 / 待处理卡上,关掉 tab 收尾(用户之后批准或答题,App 会自动拉起一个任务来做)。
 
 5. **提交(只有在批准之后)**:批准可能是 30 分钟之后才来的——tab 可能已经过期、重新加载,或者一个动态表单把某些字段重置了。先 \`mcp__playwright__browser_snapshot\` 重新读一遍这个 tab 现在的实际内容,和第 3 步回报的 \`filledFields\` 逐项比对:
    - **值仍然吻合** → 用 \`mcp__playwright__browser_click\`(按当前快照的 \`ref\`)点这个表单上真正的最终 Submit/Apply 按钮,然后 \`mcp__playwright__browser_snapshot\` 或 \`mcp__playwright__browser_take_screenshot\` 读一下确认页/确认文案,确认真的提交成功了。然后 \`${C} -X POST ${APP_BASE}/api/apply/report -H 'content-type: application/json' -d '{"jobId": <jobId>, "status": "submitted"}'\`,\`mcp__playwright__browser_tabs\`(action: close)关掉 tab。如果这一步 curl 报错,停下,不要再重试点提交,把错误原样写进最终总结。
    - **有字段漂移**(变空了、被重置成默认值、或内容和批准时不一样)→ **不要提交**。用 answerPack 重新填一遍漂移的字段,重新 \`${C} -X POST ${APP_BASE}/api/apply/report ... {"jobId": <jobId>, "status": "awaiting_confirm", "filledFields": {...}}'\`(这会把 App 侧的 confirm_decision 重置回 null——旧的批准不再对新值有效),回到第 4 步重新等一次批准,批准前绝不再尝试提交。
 
-6. **节流**:每完成一轮(报告已发、tab 已关闭)到取下一个任务之间等 5-10 秒。
+6. **节流**:每完成一轮(报告已发)直接取下一个——打开页面、等页面加载本身就是间隔,不要另外等。
 
 ${GREENHOUSE_HEURISTICS}
 
@@ -205,7 +230,7 @@ ${GREENHOUSE_HEURISTICS}
 - **专属浏览器档案没登录的站点,不要自己尝试登录**——没有凭据可用,报 login 项(见 §3),让用户去设置里手动打开档案登录一次。
 
 ## 5. 节流与熔断
-- 完成一个到开始下一个之间等 5-10 秒。
+- 完成一个直接开始下一个(不要另外等,没有 sleep 权限)。
 - **连续 3 次暂停(login / manual 项、等答案超时、资格性归档)或连续 2 个 error → 立刻停止循环**,不再取新任务,总结:这次会话提交了几个、最近几次停下的原因是什么。closed / already_applied 不计;孤立的一次不触发熔断;一次成功的 awaiting_confirm 回报会重置连续计数。
 - **本会话硬上限 ${capCount} 份填好待确认的申请**——达到后立刻停止循环并总结,即使 /api/apply/next 还有更多任务。
 

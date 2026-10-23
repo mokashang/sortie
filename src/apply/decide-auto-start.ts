@@ -5,6 +5,7 @@ import { resumePausedChainIfReady } from "@/apply/continue";
 import { isJobSessionReachable, notifyJobSession } from "@/executor/attended";
 import { approvedNotice, rejectedNotice } from "@/executor/attended-session";
 import { queueTargetedRun } from "@/apply/followup";
+import { applyChannelFor } from "@/executor/channel";
 import { JOB_LINKED_SQL } from "@/network/crm";
 
 // Factored out of src/app/api/apply/decide/route.ts into its own module (rather than an extra
@@ -66,7 +67,7 @@ export function maybeAutoStartApply(db: DB, userId: string, options: StartOption
   const start = deps.startExecutor ?? startExecutor;
   try {
     if (!checkLiveOrQueued(db, userId, "apply")) {
-      const channel: ExecutorChannel = getLastChannel(db, userId, "apply") === "headless" ? "headless" : "user_chrome";
+      const channel: ExecutorChannel = applyChannelFor(db, userId, getLastChannel);
       const result = start(db, userId, "apply", options, {}, channel);
       return { autoStarted: true, runId: result.id, channel };
     }

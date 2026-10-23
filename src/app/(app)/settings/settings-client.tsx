@@ -7,7 +7,7 @@ import { postJson, errorMessage } from "@/app/lib/api";
 import type { InboxStatus, MailboxStatus } from "@/inbox/sync";
 import { getChannel, getTheme, setChannel, setTheme, type Channel, type Theme } from "@/app/lib/settings";
 import { relativeTime } from "@/app/lib/time";
-import { Button, Chip, ConfirmDialog, LinkButton, RadioCard, Section, Segmented, useToast } from "@/app/components/ui";
+import { Button, Chip, ConfirmDialog, Input, LinkButton, RadioCard, Section, Segmented, useToast } from "@/app/components/ui";
 import { ScanMenu } from "@/app/components/scan-menu";
 import { useLang, useMessages, useSetLang } from "@/i18n/client";
 import { LANGS, LANG_NAME, type Lang } from "@/i18n/lang";
@@ -34,8 +34,15 @@ export function SettingsClient({
   parallel: parallelInitial,
   chatProvider: chatProviderInitial,
   inbox: inboxInitial,
+  chromeAvailable,
+  ntfyOwn,
 }: {
   ntfyConfigured: boolean;
+  // This account can be served in its own Chrome (src/executor/channel.ts); false for anyone but
+  // the box's owner without an assistant of their own online.
+  chromeAvailable: boolean;
+  // The account's own ntfy channel (src/lib/notify-user.ts), null when unset.
+  ntfyOwn: string | null;
   lastTick: LastTick | null;
   account: AccountInfo;
   auth: AuthPublicConfig;
@@ -63,14 +70,44 @@ export function SettingsClient({
   // What is in flight: "add" (leaving for Google), "sync:<id>" / "sync:all", "disconnect:<id>".
   const [inboxBusy, setInboxBusy] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState<MailboxStatus | null>(null);
+  const [ntfyTopic, setNtfyTopic] = useState(ntfyOwn ?? "");
+  const [ntfySaved, setNtfySaved] = useState(ntfyOwn ?? "");
+  const [ntfyBusy, setNtfyBusy] = useState<"save" | "test" | null>(null);
+  const isOwner = account.role === "owner";
   const connectHandled = useRef(false);
   const { toast } = useToast();
   const router = useRouter();
 
   useEffect(() => {
-    setChannelState(getChannel());
+    setChannelState(chromeAvailable ? getChannel() : "headless");
     setThemeState(getTheme());
-  }, []);
+  }, [chromeAvailable]);
+
+  async function saveNtfy() {
+    setNtfyBusy("save");
+    try {
+      const r = await postJson<{ topic: string | null }>("/api/settings/ntfy", { topic: ntfyTopic.trim() });
+      setNtfySaved(r.topic ?? "");
+      setNtfyTopic(r.topic ?? "");
+      toast({ title: r.topic ? m.settings.notifications.saved : m.settings.notifications.cleared, tone: "good" });
+    } catch (e) {
+      toast({ title: m.settings.notifications.saveFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setNtfyBusy(null);
+    }
+  }
+
+  async function testNtfy() {
+    setNtfyBusy("test");
+    try {
+      await postJson("/api/settings/ntfy", { test: true });
+      toast({ title: m.settings.notifications.testSent, tone: "good" });
+    } catch (e) {
+      toast({ title: m.settings.notifications.testFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setNtfyBusy(null);
+    }
+  }
 
   // Back from Google's consent page (the callback route redirects to /settings?inbox=connected
   // &email=… or ?inbox=error&reason=…): show the outcome once, then drop the query.
@@ -233,35 +270,42 @@ export function SettingsClient({
       </Section>
 
       <Section title={m.settings.channel.title} description={m.settings.channel.description}>
-        <div className="col gap-3" style={{ maxWidth: 640 }}>
-          <RadioCard
-            name="channel"
-            value="user_chrome"
-            checked={channel === "user_chrome"}
-            onChange={chooseChannel}
-            title={
-              <span className="row gap-1">
-                <Globe size={15} aria-hidden /> {m.settings.channel.userChrome} <Chip tone="good">{m.settings.channel.recommended}</Chip>
-              </span>
-            }
-            description={m.settings.channel.userChromeDescription}
-          />
-          <RadioCard
-            name="channel"
-            value="headless"
-            checked={channel === "headless"}
-            onChange={chooseChannel}
-            title={m.settings.channel.headless}
-            description={m.settings.channel.headlessDescription}
-          >
-            <div className="row">
-              <Button size="sm" onClick={openProfile} loading={opening} icon={<ExternalLink size={13} />}>
-                {m.settings.channel.openProfile}
-              </Button>
-              <span className="muted xs">{m.settings.channel.openProfileHint}</span>
-            </div>
-          </RadioCard>
-        </div>
+        {!chromeAvailable ? (
+          <div className="col gap-1" style={{ maxWidth: 640 }}>
+            <div className="strong">{m.settings.channel.memberTitle}</div>
+            <p className="muted small">{m.settings.channel.memberDescription}</p>
+          </div>
+        ) : (
+          <div className="col gap-3" style={{ maxWidth: 640 }}>
+            <RadioCard
+              name="channel"
+              value="user_chrome"
+              checked={channel === "user_chrome"}
+              onChange={chooseChannel}
+              title={
+                <span className="row gap-1">
+                  <Globe size={15} aria-hidden /> {m.settings.channel.userChrome} <Chip tone="good">{m.settings.channel.recommended}</Chip>
+                </span>
+              }
+              description={m.settings.channel.userChromeDescription}
+            />
+            <RadioCard
+              name="channel"
+              value="headless"
+              checked={channel === "headless"}
+              onChange={chooseChannel}
+              title={m.settings.channel.headless}
+              description={m.settings.channel.headlessDescription}
+            >
+              <div className="row">
+                <Button size="sm" onClick={openProfile} loading={opening} icon={<ExternalLink size={13} />}>
+                  {m.settings.channel.openProfile}
+                </Button>
+                <span className="muted xs">{m.settings.channel.openProfileHint}</span>
+              </div>
+            </RadioCard>
+          </div>
+        )}
       </Section>
 
       <Section id="auto-submit" title={m.settings.autoSubmit.title} description={m.settings.autoSubmit.description}>
@@ -378,39 +422,45 @@ export function SettingsClient({
       </Section>
 
       <Section title={m.settings.ai.title} description={m.settings.ai.description}>
-        <div className="col gap-3" style={{ maxWidth: 640 }} aria-busy={savingAi}>
-          {(["codex", "gpt", "claude"] as AiProvider[]).map((provider) => {
-            const status = ai.providers.find((item) => item.provider === provider);
-            const copy = m.settings.ai.providers[provider];
-            return (
-              <RadioCard
-                key={provider}
-                name="ai-provider"
-                value={provider}
-                checked={aiProvider === provider}
-                onChange={(value) => void chooseAiProvider(value)}
-                title={
-                  <span className="row gap-1">
-                    <Bot size={15} aria-hidden /> {copy.title}
-                    {provider === "codex" ? <Chip tone="good">{m.settings.ai.recommended}</Chip> : null}
-                    {!status?.configured ? <Chip tone="warn">{m.settings.ai.notConfigured}</Chip> : null}
-                  </span>
-                }
-                description={
-                  <>
-                    {copy.description}
-                    {!status?.configured && status?.reason ? (
-                      <>
-                        <br />
-                        <code>{status.reason}</code>
-                      </>
-                    ) : null}
-                  </>
-                }
-              />
-            );
-          })}
-        </div>
+        {!isOwner ? (
+          <p className="row gap-1 small">
+            <Bot size={15} aria-hidden className="muted" /> {m.settings.ai.ownerOnly(m.settings.ai.providers[aiProvider].title)}
+          </p>
+        ) : (
+          <div className="col gap-3" style={{ maxWidth: 640 }} aria-busy={savingAi}>
+            {(["codex", "gpt", "claude"] as AiProvider[]).map((provider) => {
+              const status = ai.providers.find((item) => item.provider === provider);
+              const copy = m.settings.ai.providers[provider];
+              return (
+                <RadioCard
+                  key={provider}
+                  name="ai-provider"
+                  value={provider}
+                  checked={aiProvider === provider}
+                  onChange={(value) => void chooseAiProvider(value)}
+                  title={
+                    <span className="row gap-1">
+                      <Bot size={15} aria-hidden /> {copy.title}
+                      {provider === "codex" ? <Chip tone="good">{m.settings.ai.recommended}</Chip> : null}
+                      {!status?.configured ? <Chip tone="warn">{m.settings.ai.notConfigured}</Chip> : null}
+                    </span>
+                  }
+                  description={
+                    <>
+                      {copy.description}
+                      {!status?.configured && status?.reason ? (
+                        <>
+                          <br />
+                          <code>{status.reason}</code>
+                        </>
+                      ) : null}
+                    </>
+                  }
+                />
+              );
+            })}
+          </div>
+        )}
       </Section>
 
       <Section title={m.settings.chat.title} description={m.settings.chat.description}>
@@ -493,42 +543,75 @@ export function SettingsClient({
       </Section>
 
       <Section title={m.settings.notifications.title} description={m.settings.notifications.description}>
-        <div className="row">
-          <Bell size={15} aria-hidden className="muted" />
-          <span>{m.settings.notifications.phonePush}</span>
-          {ntfyConfigured ? <Chip tone="good">{m.settings.notifications.configured}</Chip> : <Chip tone="warn">{m.settings.notifications.notConfigured}</Chip>}
-        </div>
-        {!ntfyConfigured ? (
-          <p className="muted small mt-2">
-            {m.settings.notifications.howTo.before}
-            <code>{m.settings.notifications.howTo.env}</code>
-            {m.settings.notifications.howTo.middle}
-            <code>{m.settings.notifications.howTo.key}</code>
-            {m.settings.notifications.howTo.after}
-          </p>
-        ) : null}
+        {!isOwner ? (
+          <div className="col gap-2" style={{ maxWidth: 640 }}>
+            <div className="row">
+              <Bell size={15} aria-hidden className="muted" />
+              <span className="strong">{m.settings.notifications.ownTitle}</span>
+              {ntfySaved ? <Chip tone="good">{m.settings.notifications.configured}</Chip> : <Chip tone="warn">{m.settings.notifications.notConfigured}</Chip>}
+            </div>
+            <p className="muted small">{m.settings.notifications.ownDescription}</p>
+            <div className="row row-nowrap">
+              <Input
+                value={ntfyTopic}
+                onChange={(e) => setNtfyTopic(e.target.value)}
+                placeholder={m.settings.notifications.ownPlaceholder}
+                aria-label={m.settings.notifications.ownTitle}
+                className="mono"
+                style={{ maxWidth: 300 }}
+              />
+              <Button size="sm" onClick={() => void saveNtfy()} loading={ntfyBusy === "save"} disabled={ntfyBusy !== null || ntfyTopic.trim() === ntfySaved}>
+                {m.settings.notifications.save}
+              </Button>
+              {ntfySaved ? (
+                <Button size="sm" variant="ghost" onClick={() => void testNtfy()} loading={ntfyBusy === "test"} disabled={ntfyBusy !== null}>
+                  {m.settings.notifications.test}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="row">
+              <Bell size={15} aria-hidden className="muted" />
+              <span>{m.settings.notifications.phonePush}</span>
+              {ntfyConfigured ? <Chip tone="good">{m.settings.notifications.configured}</Chip> : <Chip tone="warn">{m.settings.notifications.notConfigured}</Chip>}
+            </div>
+            {!ntfyConfigured ? (
+              <p className="muted small mt-2">
+                {m.settings.notifications.howTo.before}
+                <code>{m.settings.notifications.howTo.env}</code>
+                {m.settings.notifications.howTo.middle}
+                <code>{m.settings.notifications.howTo.key}</code>
+                {m.settings.notifications.howTo.after}
+              </p>
+            ) : null}
+          </>
+        )}
       </Section>
 
-      <Section title={m.settings.sources.title} description={m.settings.sources.description}>
-        <div className="row">
-          <Database size={15} aria-hidden className="muted" />
-          {lastTick ? (
-            <span className="small">
-              {m.settings.sources.lastTick(relativeTime(lastTick.at, lang), lastTick.boards, lastTick.inserted)}
-              {lastTick.errors > 0 ? <span className="text-danger">{m.settings.sources.errors(lastTick.errors)}</span> : null}
-              {m.settings.sources.period}
-            </span>
-          ) : (
-            <span className="muted small">{m.settings.sources.noTick}</span>
-          )}
-        </div>
-        <div className="row mt-3">
-          <ScanMenu />
-          <LinkButton href="/sources" variant="ghost" icon={<ExternalLink size={13} />}>
-            {m.settings.sources.advanced}
-          </LinkButton>
-        </div>
-      </Section>
+      {isOwner ? (
+        <Section title={m.settings.sources.title} description={m.settings.sources.description}>
+          <div className="row">
+            <Database size={15} aria-hidden className="muted" />
+            {lastTick ? (
+              <span className="small">
+                {m.settings.sources.lastTick(relativeTime(lastTick.at, lang), lastTick.boards, lastTick.inserted)}
+                {lastTick.errors > 0 ? <span className="text-danger">{m.settings.sources.errors(lastTick.errors)}</span> : null}
+                {m.settings.sources.period}
+              </span>
+            ) : (
+              <span className="muted small">{m.settings.sources.noTick}</span>
+            )}
+          </div>
+          <div className="row mt-3">
+            <ScanMenu />
+            <LinkButton href="/sources" variant="ghost" icon={<ExternalLink size={13} />}>
+              {m.settings.sources.advanced}
+            </LinkButton>
+          </div>
+        </Section>
+      ) : null}
     </>
   );
 }

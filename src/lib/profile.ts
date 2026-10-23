@@ -128,8 +128,45 @@ function writeProfileData(db: DB, userId: string, data: Record<string, unknown>)
 // sees a half-filled one). Returns the normalized profile (defaults applied).
 export function saveProfile(db: DB, userId: string, data: unknown): Profile {
   const profile = ProfileSchema.parse(data);
+  profile.linkedin = cleanProfileUrl(profile.linkedin);
+  profile.github = cleanProfileUrl(profile.github);
   writeProfileData(db, userId, profile);
   return profile;
+}
+
+// A profile link as it goes into application forms: copied from the address bar it carries
+// tracking bits ("…/in/name/?isSelfProfile=true", the owner's brother, 2026-10-22) that would be
+// pasted into every LinkedIn field. Drops the query and fragment and a trailing slash; anything
+// that is not a URL is left as typed.
+export function cleanProfileUrl(raw: string): string {
+  const s = raw.trim();
+  if (!s) return s;
+  const cut = s.split(/[?#]/)[0];
+  return cut.replace(/\/+$/, "");
+}
+
+// Contact / education fields an import may fill (档案 → 经历 → 从简历导入): only the ones still empty,
+// so nothing the user typed is overwritten. Works on an incomplete profile (a new account imports
+// before it has saved the basics). Returns the keys it filled.
+export const IMPORTABLE_PROFILE_FIELDS = ["phone", "linkedin", "github", "school", "degree", "grad_date"] as const;
+export function fillEmptyProfileFields(
+  db: DB,
+  userId: string,
+  values: Partial<Record<(typeof IMPORTABLE_PROFILE_FIELDS)[number], string>>,
+  seed: { name?: string; email?: string } = {}
+): string[] {
+  const current = getProfileData(db, userId) ?? emptyProfileData(seed);
+  const filled: string[] = [];
+  for (const key of IMPORTABLE_PROFILE_FIELDS) {
+    const v = (values[key] ?? "").trim();
+    if (!v) continue;
+    if (key === "grad_date" && !/^\d{4}-\d{2}$/.test(v)) continue;
+    if (typeof current[key] === "string" && (current[key] as string).trim()) continue;
+    current[key] = key === "linkedin" || key === "github" ? cleanProfileUrl(v) : v;
+    filled.push(key);
+  }
+  if (filled.length > 0) writeProfileData(db, userId, current);
+  return filled;
 }
 
 // Replaces the whole standard_answers map (the editor always sends the full table) and leaves

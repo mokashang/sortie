@@ -9,13 +9,16 @@ import { weekly } from "@/network/stats";
 import { JOB_LINKED_SQL } from "@/network/crm";
 import { profileStatus } from "@/lib/profile";
 import { attendedParallel } from "@/executor/sessions";
+import { attendedAvailable } from "@/executor/channel";
+import { ownerId } from "@/lib/users";
+import { uploadedResumePath } from "@/apply/resume-select";
 
 // One read for the app shell: badge counts for the sidebar, the numbers on the 今日 page, and
 // which assistant task (if any) is in flight. Composed entirely from existing read functions,
 // all scoped to the acting account.
 // The response types (and attentionTotal) live in src/app/lib/overview-types.ts so the client
 // can import them without pulling this module's db dependencies into the browser bundle.
-import type { Overview, OverviewCounts } from "@/app/lib/overview-types";
+import type { Overview, OverviewCounts, SetupProgress } from "@/app/lib/overview-types";
 export { attentionTotal } from "@/app/lib/overview-types";
 export type { Overview, OverviewCounts } from "@/app/lib/overview-types";
 
@@ -77,5 +80,20 @@ export function overview(db: DB, userId: string): Overview {
     parallel: attendedParallel(db),
     counts,
     profileComplete: profileStatus(db, userId).complete,
+    chromeAvailable: attendedAvailable(db, userId),
+    isOwner: ownerId(db) === userId,
+    setup: setupProgress(db, userId),
+  };
+}
+
+// Where a new account stands on the way to its first submitted application (null once there is
+// one — the checklist has done its job, and the owner's busy account never pays for the counts).
+function setupProgress(db: DB, userId: string): SetupProgress | null {
+  if (db.prepare("SELECT 1 FROM applications WHERE user_id = ? AND submitted_at IS NOT NULL LIMIT 1").get(userId)) return null;
+  return {
+    experiences: count(db, "SELECT COUNT(*) n FROM experiences WHERE user_id = ?", userId),
+    hasResume: uploadedResumePath(db, userId) != null || count(db, "SELECT COUNT(*) n FROM resumes WHERE user_id = ?", userId) > 0,
+    scored: count(db, "SELECT COUNT(*) n FROM matches WHERE user_id = ?", userId),
+    applyStarted: count(db, "SELECT COUNT(*) n FROM executor_runs WHERE user_id = ? AND kind = 'apply'", userId) > 0,
   };
 }

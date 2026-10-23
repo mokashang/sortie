@@ -4,6 +4,10 @@ import { buildMatchPrompt, MatchResultSchema, parseMatchResults, excerptJd } fro
 const profile = {
   directions: { swe_backend: 1, ai_infra: 1, quant: 1, embedded: 2 } as Record<string, number>,
   work_auth: { status: "F-1", needs_sponsorship: true },
+  degree: "M.S. ECE",
+  school: "University of Southern California",
+  grad_date: "2027-05",
+  targets: { primary: "newgrad" as const, secondary: "intern" as const },
 };
 const jobs = [
   { id: 1, company: "Acme", title: "Backend Engineer, New Grad", location: "SF", jdText: "Build distributed services in Go." },
@@ -54,12 +58,23 @@ describe("match prompt", () => {
 
   it("includes the candidate context: MS student, grad date, ~0 YoE, F-1 sponsorship", () => {
     const p = buildMatchPrompt(profile, jobs);
-    expect(p.prompt).toMatch(/M\.S\. student/i);
+    expect(p.prompt).toMatch(/M\.S\. ECE student at University of Southern California/i);
     expect(p.prompt).toMatch(/not a PhD/i);
     expect(p.prompt).toMatch(/graduating May 2027/i);
     expect(p.prompt).toMatch(/~0 years full-time industry experience/i);
     expect(p.prompt).toMatch(/internships\/projects/i);
-    expect(p.prompt).toMatch(/F-1 needs sponsorship/i);
+    expect(p.prompt).toMatch(/F-1, needs visa sponsorship/i);
+  });
+
+  it("describes the account being matched, not the owner", () => {
+    const p = buildMatchPrompt(
+      { directions: { embedded: 3 }, work_auth: { status: "citizen", needs_sponsorship: false }, degree: "B.S. CS", grad_date: "2028-12", targets: { primary: "intern" } },
+      jobs
+    );
+    expect(p.prompt).toMatch(/B\.S\. CS student \(not a PhD\), graduating December 2028/);
+    expect(p.prompt).toMatch(/citizen, no sponsorship needed/);
+    expect(p.prompt).toMatch(/looking for internships first/);
+    expect(p.prompt).not.toMatch(/May 2027|F-1/);
   });
 
   it("states the lenient degree rule: only explicit PhD-required-MS-not-accepted causes skip", () => {

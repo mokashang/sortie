@@ -382,6 +382,41 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       seenLogin.add(host);
       const group = loginGroups.get(host)!;
       const busy = busyKey === `login-${host}`;
+      // An account the box can't serve in Chrome works in the server's background browser, which
+      // nobody can sign in to from another computer: these jobs are the user's to apply to by hand.
+      if (overview?.chromeAvailable === false) {
+        return [
+          <Card key={`login-${host}`} tone="warn" className="todo-card">
+            <div className="confirm-title">
+              <span className="serif strong">{group.item.host ?? group.item.label}</span>
+            </div>
+            <div className="row mt-2">
+              <Chip tone="accent">{labelOf(m.labels.infoKind, "login")}</Chip>
+              <Chip tone="neutral">{m.apply.todo.login.memberPaused}</Chip>
+            </div>
+            <p className="muted small mt-3">{m.apply.todo.login.memberInstructions}</p>
+            <ul className="todo-jobs mt-3">
+              {group.rows.map((r) => (
+                <li key={r.jobId} className="todo-job">
+                  <span className="serif strong">{r.company}</span>
+                  <span className="muted">·</span>
+                  <span className="truncate">{r.title}</span>
+                  <span className="grow" />
+                  {r.applyUrl ? (
+                    <LinkButton href={r.applyUrl} external size="sm" variant="ghost" icon={<ExternalLink size={13} />}>
+                      {m.apply.todo.manual.openApplyPage}
+                    </LinkButton>
+                  ) : null}
+                  <Button size="sm" icon={<Check size={13} />} onClick={() => selfSubmitted(r)} loading={busyKey === `self-${r.jobId}`} disabled={busyKey !== null && busyKey !== `self-${r.jobId}`}>
+                    {m.apply.todo.manual.selfDone}
+                  </Button>
+                  {skipButton(r)}
+                </li>
+              ))}
+            </ul>
+          </Card>,
+        ];
+      }
       return [
         <Card key={`login-${host}`} tone="warn" className="todo-card">
           <div className="row between">
@@ -630,7 +665,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
   const loginHosts = orderedKeys.map((k) => loginGroups.get(k)!.item.host).filter((h): h is string => !!h);
   const loginJobs = orderedKeys.reduce((n, k) => n + loginGroups.get(k)!.rows.length, 0);
   const loginAll =
-    loginHosts.length >= 2 ? (
+    loginHosts.length >= 2 && overview?.chromeAvailable !== false ? (
       <Card key="login-all" tone="warn" className="todo-card">
         <div className="confirm-title">
           <span className="serif strong">{m.apply.todo.loginAll.title(loginHosts.length, loginJobs)}</span>

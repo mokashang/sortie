@@ -8,8 +8,10 @@ import { localShort } from "@/app/lib/time";
 import { Button, Card, Chip, Dialog, Drawer, EmptyState, Field, Input, LinkButton, Select, useToast } from "@/app/components/ui";
 import { useMessages } from "@/i18n/client";
 import type { ResumeRow } from "./profile-types";
+import type { DocumentRow } from "./documents-tab";
+import { ResumeUploadCard } from "./resume-upload";
 
-export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; hasExperiences: boolean }) {
+export function ResumesTab({ resumes, hasExperiences, uploaded }: { resumes: ResumeRow[]; hasExperiences: boolean; uploaded: DocumentRow | null }) {
   const m = useMessages();
   const [preview, setPreview] = useState<ResumeRow | null>(null);
   const [genOpen, setGenOpen] = useState(false);
@@ -42,6 +44,11 @@ export function ResumesTab({ resumes, hasExperiences }: { resumes: ResumeRow[]; 
 
   return (
     <div>
+      <ResumeUploadCard initial={uploaded} />
+      <div className="mb-2">
+        <h3>{m.profile.resumes.generatedTitle}</h3>
+        <p className="muted small">{m.profile.resumes.versionsDescription}</p>
+      </div>
       {!hasExperiences ? (
         <div className="notice notice-warn mb-4">
           <span>{m.profile.resumes.needExperiences}</span>

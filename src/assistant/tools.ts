@@ -4,6 +4,7 @@ import type { Lang } from "@/i18n/lang";
 import type { LlmBackend } from "@/llm/types";
 import { tryLoadProfile } from "@/lib/profile";
 import { runMatching } from "@/matcher/run";
+import { matchProfileOf } from "@/matcher/prompt";
 import { queueTargetedRun, type FollowupDeps } from "@/apply/followup";
 import { unarchive } from "@/apply/queue";
 import { upsertJobs } from "@/scanner/upsert";
@@ -221,7 +222,7 @@ async function ensureScored(db: DB, userId: string, jobId: number, deps: ToolDep
   const s = await runMatching(db, {
     userId,
     backend: deps.backend,
-    profile: { directions: profile.directions, work_auth: profile.work_auth },
+    profile: matchProfileOf(profile),
     batchSize: 1,
     threshold: 40,
     jobIds: [jobId],

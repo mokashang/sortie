@@ -33,9 +33,12 @@ export const POST = withUser(async (req, actor) => {
         return NextResponse.json({ ...task, message: inviteBudgetMessage(task.inviteBudget) });
       return NextResponse.json(task);
     }
-    return NextResponse.json(
-      takeNextApplication(db, userId, loadProfile(db, userId), { direction, jobIds, documents: documentsMap(userDocumentsDir(db, userId)), runId })
-    );
+    const task = takeNextApplication(db, userId, loadProfile(db, userId), { direction, jobIds, documents: documentsMap(userDocumentsDir(db, userId)), runId });
+    // The queue still has jobs, but none a resume can go with: say so (the session ends the
+    // direction like any other {done} and writes this into its summary).
+    if ("done" in task && task.reason === "no_resume")
+      return NextResponse.json({ ...task, message: "no resume for these directions: the user has to upload one under Profile > Resumes (or generate one); not an error, move on" });
+    return NextResponse.json(task);
   } catch (e) {
     return failResponse(e);
   }

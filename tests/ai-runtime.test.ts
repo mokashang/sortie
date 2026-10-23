@@ -40,5 +40,9 @@ describe("AI agent runtime", () => {
     expect(launch.bin.toLowerCase()).toContain("claude");
     expect(launch.args).toContain("--mcp-config");
     expect(launch.args).toContain("--strict-mcp-config");
+    // no repo CLAUDE.md (the owner's notes) in an account's session
+    const i = launch.args.indexOf("--setting-sources");
+    expect(i).toBeGreaterThan(-1);
+    expect(launch.args[i + 1]).toBe("");
   });
 });

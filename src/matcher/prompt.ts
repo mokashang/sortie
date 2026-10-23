@@ -2,10 +2,47 @@ import { z } from "zod";
 import { LlmRequest } from "@/llm/types";
 import { DIRECTIONS, isKnownDirection } from "@/matcher/directions";
 import { extractJson } from "@/llm/extract";
+import type { Profile } from "@/lib/profile";
 
 export interface MatchProfile {
   directions: Record<string, number>;
   work_auth: { status: string; needs_sponsorship: boolean };
+  // Who is being matched (2026-10-22: the candidate line used to be the owner's, "M.S. student,
+  // graduating May 2027, F-1", for every account on the box). Optional so a bare profile still
+  // builds a prompt; the matcher passes the account's own.
+  degree?: string;
+  school?: string;
+  grad_date?: string;
+  targets?: { primary: "newgrad" | "intern"; secondary?: "newgrad" | "intern" };
+}
+
+// The slice of an account's profile the matcher works from.
+export function matchProfileOf(p: Profile): MatchProfile {
+  return { directions: p.directions, work_auth: p.work_auth, degree: p.degree, school: p.school, grad_date: p.grad_date, targets: p.targets };
+}
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// "Candidate: M.S. ECE student at USC (not a PhD), graduating May 2027; …" from the account's profile.
+export function candidateLine(p: MatchProfile, now = new Date()): string {
+  const degree = p.degree?.trim() || "M.S.";
+  const phd = /ph\.?\s*d/i.test(degree);
+  const [y, m] = (p.grad_date ?? "").split("-").map(Number);
+  const dated = y > 0 && m >= 1 && m <= 12;
+  const graduated = dated && new Date(y, m - 1, 28) < now;
+  const grad = dated ? `, ${graduated ? "graduated" : "graduating"} ${MONTHS[m - 1]} ${y}` : "";
+  const school = p.school?.trim() ? ` at ${p.school.trim()}` : "";
+  const status = p.work_auth.status?.trim() || "work authorization on file";
+  const visa = p.work_auth.needs_sponsorship ? `${status}, needs visa sponsorship` : `${status}, no sponsorship needed`;
+  return `Candidate: ${degree} ${graduated ? "graduate" : "student"}${school}${phd ? "" : " (not a PhD)"}${grad}; ~0 years full-time industry experience (has internships/projects); ${visa}.`;
+}
+
+function targetsLine(p: MatchProfile): string {
+  if (!p.targets) return "";
+  const name = (t: string) => (t === "intern" ? "internships" : "new-grad full-time roles");
+  const second = p.targets.secondary && p.targets.secondary !== p.targets.primary ? `, then ${name(p.targets.secondary)}` : "";
+  const other = p.targets.secondary && p.targets.secondary !== p.targets.primary ? "" : " A posting of the other kind scores at most 50.";
+  return `Candidate is looking for ${name(p.targets.primary)} first${second}: score a posting of the wanted kind higher than an otherwise equal one.${other}\n\n`;
 }
 
 export interface MatchJobInput {
@@ -48,7 +85,8 @@ export function buildMatchPrompt(profile: MatchProfile, jobs: MatchJobInput[]): 
     .join("\n\n");
 
   const prompt =
-    `Candidate: M.S. student (not a PhD), graduating May 2027; ~0 years full-time industry experience (has internships/projects); F-1 needs sponsorship.\n\n` +
+    `${candidateLine(profile)}\n\n` +
+    targetsLine(profile) +
     `Candidate target directions (slug, tier 1=top priority; assign the single best-fitting slug per job):\n${dirLines}\n\n` +
     `Candidate needs visa sponsorship: ${profile.work_auth.needs_sponsorship}.\n\n` +
     `The candidate only wants US-based roles. If the location is clearly outside the US, set skip=true and give it a low score.\n\n` +

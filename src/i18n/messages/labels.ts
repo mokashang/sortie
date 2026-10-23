@@ -19,6 +19,7 @@ export const labels = defineMessages({
     infoKind: { text: "补信息", file: "传文件", login: "登录一次", action: "现场完成", manual: "亲自完成" },
     // Standing documents in data/documents (src/lib/documents.ts); other keys show as-is.
     documents: {
+      resume: "简历",
       transcript: "成绩单(研究生)",
       transcript_undergrad: "成绩单(本科)",
       cover_letter: "Cover letter 模板",
@@ -82,6 +83,7 @@ export const labels = defineMessages({
     experienceKind: { education: "Education", work: "Work", project: "Project", skill: "Skill", award: "Award", publication: "Publication" },
     infoKind: { text: "Answer a question", file: "Upload a file", login: "Sign in once", action: "Finish in the tab", manual: "Do it yourself" },
     documents: {
+      resume: "Resume",
       transcript: "Transcript (graduate)",
       transcript_undergrad: "Transcript (undergraduate)",
       cover_letter: "Cover letter template",

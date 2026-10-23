@@ -1315,3 +1315,48 @@ td.company {
 .auth-legal a:hover {
   color: var(--ink);
 }
+
+/* 今日 → 新手上路 (setup-checklist.tsx) */
+.setup-steps {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.setup-step {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--line);
+}
+.setup-step:first-child {
+  border-top: 0;
+}
+.setup-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  color: var(--sub);
+  font-size: var(--t-xs);
+  font-family: var(--font-mono);
+}
+.setup-step.is-next .setup-mark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.setup-step.is-done .setup-mark {
+  border-color: transparent;
+  color: var(--good);
+  background: var(--good-soft);
+}
+.setup-step.is-done .strong {
+  color: var(--sub);
+}

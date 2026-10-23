@@ -31,6 +31,25 @@ export interface Overview {
   counts: OverviewCounts;
   // false until the account's 档案 basics validate — the assistant can't match or apply before that.
   profileComplete: boolean;
+  // Whether this account's tasks can run in its own Chrome right now: always for the box's owner,
+  // for anyone else only while their own assistant is online (src/executor/channel.ts). When
+  // false the App runs apply tasks in the background browser and offers no Chrome-only actions
+  // (referrals, Chrome scan, finding people).
+  chromeAvailable: boolean;
+  // The box's owner account (some upkeep — fetching job descriptions — is theirs only).
+  isOwner: boolean;
+  // The 今日 page's 新手上路 checklist, until the account's first application is submitted (null after).
+  setup: SetupProgress | null;
+}
+
+export interface SetupProgress {
+  experiences: number;
+  // A resume an application can carry: the user's own upload, or a generated version.
+  hasResume: boolean;
+  // Jobs the matcher has scored for this account so far (the queue fills as this grows).
+  scored: number;
+  // Any apply task ever started.
+  applyStarted: boolean;
 }
 
 // Things only the user can move forward: unapproved confirmations, the 待处理 cards (missing

@@ -5,6 +5,8 @@ import { APPLY_CHUNK_SIZE } from "@/apply/continue";
 import { withUser, failResponse, requireOwner } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 import { readJsonBody } from "@/lib/request-body";
+import { attendedAvailable } from "@/executor/channel";
+import { hasResumeFor } from "@/apply/resume-select";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
 const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
@@ -32,6 +34,13 @@ const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
 // A channel/mode mismatch (referrals or scanning on the headless channel) comes back as an
 // ExecutorStartError with a code; the message shown in the App's toast is picked in the UI
 // language of the request.
+//
+// An account this box cannot serve in Chrome (anyone but the owner, unless their own assistant is
+// online — src/executor/channel.ts) gets its plain apply task on the background browser instead,
+// whatever channel the page sent; referral / scan / network tasks have no background equivalent
+// and are refused with a message that says so (2026-10-22: they used to queue and wait forever).
+// An apply plan whose directions no resume can go with is refused up front instead of turning
+// every job it takes into a 待处理 card.
 export const POST = withUser(async (req, actor) => {
   const { userId } = actor;
   try {
@@ -43,7 +52,7 @@ export const POST = withUser(async (req, actor) => {
     // JD review rewrites the shared jobs table for every account: the owner's runs only
     // (its batch / report routes refuse anyone else).
     if (kind === "jd_review") requireOwner(actor);
-    const channel = kind === "jd_review" ? "headless" : ((body.channel as string) ?? "user_chrome");
+    let channel = kind === "jd_review" ? "headless" : ((body.channel as string) ?? "user_chrome");
     if (!VALID_CHANNELS.includes(channel as ExecutorChannel)) {
       return NextResponse.json(
         { error: `invalid channel '${channel}' (must be one of ${VALID_CHANNELS.join(", ")})` },
@@ -52,14 +61,27 @@ export const POST = withUser(async (req, actor) => {
     }
     const db = getDb();
     const options: StartOptions = body.options ?? {};
+    const msgs = messagesFor(langFromRequest(req)).errors;
+    const wantsReferral = options.mode === "referral" || (options.plan ?? []).some((p) => p.mode === "referral");
+    if (channel === "user_chrome" && !attendedAvailable(db, userId)) {
+      if (kind !== "apply" || wantsReferral) return NextResponse.json({ error: msgs.attendedUnavailable, code: "attended_unavailable" }, { status: 400 });
+      channel = "headless";
+    }
+    if (kind === "apply" && Array.isArray(options.plan) && options.plan.length > 0) {
+      const direct = options.plan.filter((p) => p.mode !== "referral" && p.count > 0);
+      if (direct.length > 0 && !direct.some((p) => hasResumeFor(db, userId, p.direction)))
+        return NextResponse.json({ error: msgs.noResume, code: "no_resume" }, { status: 400 });
+    }
     if (kind === "apply" && Array.isArray(options.plan) && options.plan.length > 0) {
       if (typeof options.chunk !== "number" || options.chunk <= 0) options.chunk = APPLY_CHUNK_SIZE;
     }
     const parallel = kind === "apply" && channel === "user_chrome";
     const result = startExecutor(db, userId, kind as ExecutorKind, options, parallel ? { queueBehind: true } : {}, channel as ExecutorChannel);
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, channel });
   } catch (e) {
     if (e instanceof ExecutorStartError) return NextResponse.json({ error: messagesFor(langFromRequest(req)).errors[e.code] }, { status: 400 });
+    if (e instanceof Error && /'apply' run is already in progress/.test(e.message))
+      return NextResponse.json({ error: messagesFor(langFromRequest(req)).errors.headlessApplyBusy }, { status: 409 });
     return failResponse(e);
   }
 });

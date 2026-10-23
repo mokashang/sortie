@@ -9,7 +9,7 @@ import { getAutoSubmit, autoApproveIfEnabled } from "@/apply/auto-submit";
 import { autoAnswerPending } from "@/apply/auto-answer";
 import { getBackend } from "@/llm/registry";
 import { langFromRequest, messagesFor } from "@/i18n/server";
-import { notify } from "@/lib/notify";
+import { notifyUser } from "@/lib/notify-user";
 import { withUser, failResponse } from "@/lib/actor";
 
 const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "needs_manual", "error", "closed", "already_applied"]);
@@ -47,7 +47,7 @@ export const POST = withUser(async (req, { userId }) => {
       if (getAutoSubmit(db, userId)) {
         const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;
         const t = messagesFor(lang).notify.autoSubmitted;
-        void notify(t.title(job?.company ?? "?"), t.body(job?.title ?? ""), { priority: "default" });
+        void notifyUser(db, userId, t.title(job?.company ?? "?"), t.body(job?.title ?? ""), { priority: "default" });
       }
       return NextResponse.json({ ok: true });
     }
@@ -110,7 +110,7 @@ export const POST = withUser(async (req, { userId }) => {
       }
       const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;
       const n = needsInfoNotification(job?.company ?? "?", job?.title ?? "", questions, lang);
-      void notify(n.title, n.body, { priority: "high" });
+      void notifyUser(db, userId, n.title, n.body, { priority: "high" });
       return NextResponse.json({ ok: true, autoAnswered, remaining: questions.map((q) => q.key) });
     }
     return NextResponse.json({ ok: true });

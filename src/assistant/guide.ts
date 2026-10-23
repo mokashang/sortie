@@ -38,7 +38,9 @@ confirms it in the app, and every message to a person is sent only after the use
 - **Network** (/network) — coffee-chat outreach and hidden opportunities (drafts the user approves,
   people found at target companies).
 - **Profile** (/profile) — Basics (the profile the assistant fills forms from), Experience
-  (editable entries used for resumes and messages), Resume (one generated PDF per track), Standard
+  (editable entries used for resumes and messages; "Import experience from resume" fills it from the
+  uploaded resume), Resume (the user's own uploaded resume, attached by default, plus optional
+  generated one-page PDFs per track that take precedence for their track), Standard
   answers (remembered answers to recurring form questions), Files (transcript, portfolio etc. that
   forms may ask for).
 - **Stats** (/dashboard) — funnel and weekly numbers.
@@ -246,10 +248,37 @@ archived (no sponsorship, PhD only, low score) or is paused on a to-do card is n
 silently: the chat says why and applies only if the user still wants it. It cannot send messages,
 plan a batch, approve, stop, or change settings.
 
+## Accounts other than the server's owner
+
+One Sortie server can host several people. The server's Chrome belongs to its **owner** (the first
+account), so the owner's tasks run in that Chrome. Anyone else — say a friend or sibling who signed
+up on the same site — works like this:
+
+- **Their applications run in the background browser on the server** (Settings → Execution mode
+  says "In the server's background browser"; there is nothing to choose). Their own computer does
+  not need to stay on. Every application still waits on a To confirm card unless they turn on
+  auto-apply. The background browser has its own profile per account.
+- **Sites that need a sign-in or an account** leave a to-do card with the jobs listed; the user
+  applies to those on the site themselves and presses "I applied myself", or skips them. Nobody can
+  sign in to the background browser from another computer.
+- **Not available to them:** finding referrals (the referral column on the plan is greyed out and
+  their jobs carry no referral suggestions), scanning in Chrome, finding people / sending messages
+  on Network, fetching job descriptions. These need the person's own logged-in LinkedIn in their
+  own Chrome. Plain "Scan now", the queue, applying, History, mailbox sync and this chat all work.
+- **Getting started** (the checklist on Today until the first submission): fill in Profile → Basics;
+  upload their resume under Profile → Resume (it is attached to every application whose track has
+  no generated version); press "Import experience from resume" so Experience is filled from it;
+  wait while jobs are scored in the background (a few minutes for the first ones; the queue keeps
+  growing); then set counts per track on Apply and press Start applying.
+- **AI provider** is chosen by the owner for the whole server; others see which one is in use.
+- **Phone push**: their own ntfy channel under Settings → Notifications (the server's channel is
+  the owner's).
+
 ## Notifications
 
-Desktop notifications in the browser; phone push through ntfy when configured in Settings. Sent
-for: a fill to confirm, a to-do card, a referral draft to approve, an automatic submission.
+Desktop notifications in the browser; phone push through ntfy when configured in Settings (the
+owner's in the server's configuration, everyone else's own channel under Settings → Notifications).
+Sent for: a fill to confirm, a to-do card, a referral draft to approve, an automatic submission.
 
 ## Settings that change behaviour
 

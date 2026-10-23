@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Send, UserSearch } from "lucide-react";
 import { postJson, errorMessage } from "@/app/lib/api";
-import { getChannel, type Channel } from "@/app/lib/settings";
+import { channelFor, type Channel } from "@/app/lib/settings";
 import { Button, useToast } from "@/app/components/ui";
 import { useOverview } from "@/app/components/overview-context";
 import { AssistantCard } from "@/app/components/assistant-card";
@@ -19,7 +19,8 @@ export function NetworkAssistant() {
   const live = data?.liveKinds ?? [];
   const pendingSend = data?.counts.networkPendingSend ?? 0;
 
-  useEffect(() => setChannel(getChannel()), []);
+  const chromeAvailable = data?.chromeAvailable;
+  useEffect(() => setChannel(channelFor(chromeAvailable)), [chromeAvailable]);
 
   async function start(kind: "network_send" | "network_find", label: string) {
     setBusy(kind);
@@ -43,20 +44,24 @@ export function NetworkAssistant() {
       variant="compact"
       filterKinds={["network_send", "network_find"]}
       actions={
-        <>
-          <Button
-            size="sm"
-            icon={<Send size={13} />}
-            loading={busy === "network_send"}
-            disabled={live.includes("network_send") || pendingSend === 0}
-            onClick={() => start("network_send", m.network.assistant.sendLabel)}
-          >
-            {m.network.assistant.sendButton(pendingSend)}
-          </Button>
-          <Button size="sm" variant="ghost" icon={<UserSearch size={13} />} loading={busy === "network_find"} disabled={live.includes("network_find")} onClick={() => start("network_find", m.network.assistant.findLabel)}>
-            {m.network.assistant.findButton}
-          </Button>
-        </>
+        chromeAvailable === false ? (
+          <span className="muted small">{m.network.assistant.chromeOnly}</span>
+        ) : (
+          <>
+            <Button
+              size="sm"
+              icon={<Send size={13} />}
+              loading={busy === "network_send"}
+              disabled={live.includes("network_send") || pendingSend === 0}
+              onClick={() => start("network_send", m.network.assistant.sendLabel)}
+            >
+              {m.network.assistant.sendButton(pendingSend)}
+            </Button>
+            <Button size="sm" variant="ghost" icon={<UserSearch size={13} />} loading={busy === "network_find"} disabled={live.includes("network_find")} onClick={() => start("network_find", m.network.assistant.findLabel)}>
+              {m.network.assistant.findButton}
+            </Button>
+          </>
+        )
       }
     />
   );

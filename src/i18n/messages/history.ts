@@ -18,7 +18,7 @@ export const history = defineMessages({
     },
     row: {
       referralVia: (name: string | null) => (name ? `内推 · ${name}` : "内推"),
-      resume: (version: string) => `简历 ${version}`,
+      resume: (version: string) => (version === "uploaded" ? "简历:你上传的那份" : `简历 ${version}`),
       lastUpdated: "最后更新",
     },
     stage: {
@@ -51,7 +51,7 @@ export const history = defineMessages({
     },
     row: {
       referralVia: (name: string | null) => (name ? `Referral · ${name}` : "Referral"),
-      resume: (version: string) => `Resume ${version}`,
+      resume: (version: string) => (version === "uploaded" ? "Resume: your upload" : `Resume ${version}`),
       lastUpdated: "Last updated",
     },
     stage: {

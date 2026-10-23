@@ -26,6 +26,13 @@ export function getChannel(): Channel {
   return read(CHANNEL_KEY) === "headless" ? "headless" : "user_chrome";
 }
 
+// The channel a task actually starts on: the saved choice, unless this account cannot be served in
+// Chrome (overview.chromeAvailable false — anyone but the box's owner without an assistant of their
+// own online), in which case the background browser (src/executor/channel.ts).
+export function channelFor(chromeAvailable: boolean | undefined): Channel {
+  return chromeAvailable === false ? "headless" : getChannel();
+}
+
 export function setChannel(c: Channel): void {
   write(CHANNEL_KEY, c);
 }

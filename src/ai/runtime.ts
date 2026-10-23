@@ -75,6 +75,11 @@ export function buildHeadlessAgentLaunch(opts: HeadlessLaunchOptions): AgentLaun
         "--mcp-config",
         JSON.stringify({ mcpServers: { playwright: opts.playwright } }),
         "--strict-mcp-config",
+        // The prompt is the whole brief. Without this the session would also load the repo's
+        // CLAUDE.md — the owner's handover notes, EEO answers and all — into every account's
+        // apply session (the Codex path below already runs with --ignore-rules).
+        "--setting-sources",
+        "",
       ],
       env: agentEnv(opts.provider, env),
     };

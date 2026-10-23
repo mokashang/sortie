@@ -275,12 +275,16 @@ export function AccountCard({ account, auth }: { account: AccountInfo; auth: Aut
               <Chip tone="good" icon={<ShieldCheck size={11} />}>
                 {m.settings.accountCard.verified}
               </Chip>
-            ) : (
+            ) : auth.mailerConfigured ? (
               <Chip tone="warn">{m.settings.accountCard.notVerified}</Chip>
+            ) : (
+              // No mail goes out from this server: the link would only land in data/outbox/, which
+              // nobody signing in from another computer can reach — and nothing needs it.
+              <Chip tone="neutral">{m.settings.accountCard.notVerifiedNoMailer}</Chip>
             )}
           </div>
           <div className="row">
-            {!verified ? (
+            {!verified && auth.mailerConfigured ? (
               <Button size="sm" variant="ghost" onClick={() => void resendVerification()}>
                 {m.settings.accountCard.resendVerification}
               </Button>

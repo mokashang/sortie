@@ -40,6 +40,7 @@ export const settings = defineMessages({
       rename: "改名",
       verified: "已验证",
       notVerified: "未验证",
+      notVerifiedNoMailer: "未验证 · 这台服务器不发邮件,不影响使用",
       resendVerification: "重发验证邮件",
       changeEmail: "改邮箱",
       changePassword: "修改密码",
@@ -134,6 +135,9 @@ export const settings = defineMessages({
       openedTitle: "已打开后台浏览器",
       openedDescription: "在弹出的窗口里登录一次 LinkedIn、Workday 等站点,登录状态会保留给之后的后台任务。",
       openFailed: "打开失败",
+      memberTitle: "在服务器的后台浏览器里操作",
+      memberDescription:
+        "这台 Sortie 服务器只能操作主账号自己的 Chrome,所以你的申请由服务器上一个专属于你的后台浏览器来填,你的电脑不用开着。每份申请仍要你点确认才会提交(或者在下面打开全自动)。要先登录或注册账号才能投的网站会留一张待处理卡,你自己去那个网站投,投完点「我自己投完了」。找内推、在 Chrome 里扫描、找人都要用你自己登录好的 LinkedIn,这里做不了。",
     },
     ai: {
       title: "AI 提供方",
@@ -142,6 +146,7 @@ export const settings = defineMessages({
       notConfigured: "未配置",
       switched: (name: string) => `之后的 AI 工作将使用 ${name}`,
       switchFailed: "切换失败",
+      ownerOnly: (name: string) => `由这台服务器的主账号选择,现在用的是 ${name}。`,
       providers: {
         codex: {
           title: "Codex",
@@ -212,6 +217,20 @@ export const settings = defineMessages({
         key: "NTFY_TOPIC=",
         after: " 一个自选的长随机名,并在手机的 ntfy 应用里订阅同名频道,然后重启 Sortie。",
       },
+      ownTitle: "推到我的手机",
+      ownDescription: "在手机上装 ntfy 应用(App Store / Google Play 搜 ntfy),订阅一个自己起的长随机频道名(只用字母、数字、- 和 _),再把同一个名字填在这里。填好后助手需要你确认、补信息,或投递计划跑完时都会推给你。",
+      ownPlaceholder: "如 sortie-xk29-menghe",
+      save: "保存",
+      saved: "已保存,之后的通知会推到这个频道",
+      cleared: "已清除,不再推送",
+      saveFailed: "保存失败",
+      test: "发一条测试",
+      testSent: "测试通知已发出,看看手机",
+      testFailed: "没发出去",
+      testTitle: "Sortie · 测试通知",
+      testBody: "收到这条,说明以后的通知都会推到这里。",
+      noChannel: "还没设置推送频道",
+      invalidChannel: "频道名只能用字母、数字、- 和 _,最长 64 个字符",
     },
     sources: {
       title: "信息源",
@@ -265,6 +284,7 @@ export const settings = defineMessages({
       rename: "Rename",
       verified: "Verified",
       notVerified: "Not verified",
+      notVerifiedNoMailer: "Not verified · this server sends no mail, nothing is affected",
       resendVerification: "Resend verification email",
       changeEmail: "Change email",
       changePassword: "Change password",
@@ -360,6 +380,9 @@ export const settings = defineMessages({
       openedTitle: "Background browser opened",
       openedDescription: "Sign in to LinkedIn, Workday and the like in the window that opened; the sessions are kept for later background tasks.",
       openFailed: "Could not open it",
+      memberTitle: "In the server's background browser",
+      memberDescription:
+        "This Sortie server can only drive its owner's own Chrome, so your applications are filled by a background browser on the server that is yours alone; your computer doesn't need to stay on. Each application still waits for your confirmation before it's submitted (or turn on fully automatic below). A site that needs you to sign in or create an account leaves a to-do card: apply on that site yourself and press I applied myself. Finding referrals, scanning in Chrome and finding people use your own logged-in LinkedIn, so they aren't available here.",
     },
     ai: {
       title: "AI provider",
@@ -368,6 +391,7 @@ export const settings = defineMessages({
       recommended: "Recommended",
       notConfigured: "Not configured",
       switched: (name: string) => `Future AI work will use ${name}`,
+      ownerOnly: (name: string) => `Chosen by this server's owner account; currently ${name}.`,
       switchFailed: "Could not switch provider",
       providers: {
         codex: {
@@ -441,6 +465,20 @@ export const settings = defineMessages({
         key: "NTFY_TOPIC=",
         after: " a long random name of your choice, subscribe to that topic in the ntfy app on your phone, then restart Sortie.",
       },
+      ownTitle: "Push to my phone",
+      ownDescription: "Install the ntfy app on your phone (search ntfy in the App Store or Google Play), subscribe to a long random channel name of your own (letters, digits, - and _ only), and enter the same name here. You'll then get a push whenever the assistant needs a confirmation or an answer, or a plan finishes.",
+      ownPlaceholder: "e.g. sortie-xk29-alex",
+      save: "Save",
+      saved: "Saved; notifications now go to this channel",
+      cleared: "Cleared; no more pushes",
+      saveFailed: "Could not save",
+      test: "Send a test",
+      testSent: "Test sent; check your phone",
+      testFailed: "Could not send it",
+      testTitle: "Sortie · test notification",
+      testBody: "If you see this, your notifications will arrive here.",
+      noChannel: "No push channel set yet",
+      invalidChannel: "Channel names use letters, digits, - and _ only, up to 64 characters",
     },
     sources: {
       title: "Sources",

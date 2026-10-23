@@ -9,6 +9,7 @@ import { Button, Card, Chip, ConfirmDialog, EmptyState, Menu, Section, useToast 
 import { useMessages } from "@/i18n/client";
 import { ExperienceDialog } from "./experience-dialog";
 import { EXPERIENCE_KINDS, type Exp } from "./profile-types";
+import { ImportFromResumeButton } from "./resume-upload";
 
 // `present` is the word for an open-ended range (至今 / Present) in the current language.
 function dateRange(e: Exp, present: string): string {
@@ -16,7 +17,7 @@ function dateRange(e: Exp, present: string): string {
   return `${e.start_date ?? ""}${e.end_date ? ` – ${e.end_date}` : e.start_date ? ` – ${present}` : ""}`;
 }
 
-export function ExperiencesTab({ initial }: { initial: Exp[] }) {
+export function ExperiencesTab({ initial, canImport }: { initial: Exp[]; canImport: boolean }) {
   const m = useMessages();
   const [items, setItems] = useState<Exp[]>(initial);
   const [editing, setEditing] = useState<Exp | "new" | null>(null);
@@ -64,13 +65,21 @@ export function ExperiencesTab({ initial }: { initial: Exp[] }) {
           art="paper"
           title={m.profile.experiences.emptyTitle}
           description={m.profile.experiences.emptyDescription}
-          action={addButton}
+          action={
+            <div className="row">
+              {canImport ? <ImportFromResumeButton variant="primary" onDone={() => void reload()} /> : null}
+              {addButton}
+            </div>
+          }
         />
       ) : (
         <>
           <div className="row between mb-2">
             <span className="muted small">{m.profile.experiences.summary(items.length)}</span>
-            {addButton}
+            <div className="row">
+              {canImport ? <ImportFromResumeButton variant="ghost" onDone={() => void reload()} /> : null}
+              {addButton}
+            </div>
           </div>
           {EXPERIENCE_KINDS.filter((k) => items.some((i) => i.kind === k)).map((k) => (
             <Section key={k} title={labelOf(m.labels.experienceKind, k)} count={items.filter((i) => i.kind === k).length}>
