@@ -45,4 +45,12 @@ describe("upsertJobs", () => {
     const rich = db.prepare("SELECT t.jd_text, j.source FROM jobs j JOIN job_texts t ON t.job_id = j.id WHERE j.title = 'Rich'").get();
     expect(rich).toEqual({ jd_text: "Full JD text here.", source: "greenhouse" });
   });
+
+  it("an upgrade whose link is unusable keeps the stored link", () => {
+    const db = openDb(":memory:");
+    upsertJobs(db, [job({ jdText: "", source: "github_list", ats: null })]);
+    const s = upsertJobs(db, [job({ jdText: "Full JD text here.", applyUrl: "javascript:alert(1)" })]);
+    expect(s.upgraded).toBe(1);
+    expect(db.prepare("SELECT apply_url FROM jobs").get()).toEqual({ apply_url: "https://boards.greenhouse.io/acme/jobs/1" });
+  });
 });
