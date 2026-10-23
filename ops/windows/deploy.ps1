@@ -68,6 +68,10 @@ if (-not $Force) {
   }
   $attended = Get-JsonPatient "$Base/api/executor/dispatch"
   $status = Get-JsonPatient "$Base/api/executor/status"
+  # Only the App's own answers count: an HTML page (a proxy error, some other server on the port)
+  # is no evidence that nothing is running.
+  if ($attended -isnot [System.Management.Automation.PSCustomObject] -or -not ($attended.PSObject.Properties.Name -contains "spawns" -or $attended.PSObject.Properties.Name -contains "spawn")) { $attended = $null }
+  if ($status -isnot [System.Management.Automation.PSCustomObject] -or -not ($status.PSObject.Properties.Name -contains "runs")) { $status = $null }
   if ($null -eq $attended -or $null -eq $status) {
     Write-Host "Refusing to deploy: the server did not answer the attended-work check ($Base/api/executor/dispatch, /status), so live work cannot be ruled out." -ForegroundColor Yellow
     Write-Host "If the server is down or wedged and needs this deploy, re-run with -Force." -ForegroundColor Yellow
