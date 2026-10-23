@@ -3,6 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { openDb, DB } from "@/lib/db";
+import { setJdText } from "@/lib/job-texts";
 import { seedOwner } from "./helpers";
 import { parseProfile, saveProfile } from "@/lib/profile";
 import { parseAction, searchJobs, applyToJob, addJob, runTool, type ToolDeps } from "@/assistant/tools";
@@ -48,8 +49,9 @@ function setup(): { db: DB; deps: ToolDeps } {
 
 function seedJob(db: DB, company: string, title: string, opts: { status?: string; reason?: string; score?: number | null; url?: string } = {}): number {
   const id = db
-    .prepare("INSERT INTO jobs (fingerprint, company, title, source, apply_url, jd_text) VALUES (?,?,?,?,?,?)")
-    .run(`fp-${Math.random()}`, company, title, "manual", opts.url ?? `https://${company.toLowerCase()}.example/jobs/${Math.random().toString(36).slice(2, 6)}`, "Build things.").lastInsertRowid as number;
+    .prepare("INSERT INTO jobs (fingerprint, company, title, source, apply_url) VALUES (?,?,?,?,?)")
+    .run(`fp-${Math.random()}`, company, title, "manual", opts.url ?? `https://${company.toLowerCase()}.example/jobs/${Math.random().toString(36).slice(2, 6)}`).lastInsertRowid as number;
+  setJdText(db, id, "Build things.");
   if (opts.score !== null) db.prepare("INSERT INTO matches (job_id, direction, score, tier) VALUES (?,?,?,?)").run(id, "swe_general", opts.score ?? 80, 1);
   db.prepare("INSERT INTO applications (job_id, status, needs_manual_reason) VALUES (?,?,?)").run(id, opts.status ?? "matched", opts.reason ?? null);
   return id;
@@ -155,7 +157,7 @@ describe("addJob", () => {
     const { db, deps } = setup();
     const r = await addJob(db, { url: "https://amazon.jobs/en/jobs/123", company: "Amazon", title: "SDE Intern 2027", location: "Seattle, WA" }, deps);
     expect(r.event).toMatchObject({ tool: "add_job", ok: true, company: "Amazon" });
-    const job = db.prepare("SELECT id, source, jd_text FROM jobs WHERE apply_url = ?").get("https://amazon.jobs/en/jobs/123") as { id: number; source: string; jd_text: string };
+    const job = db.prepare("SELECT j.id, j.source, t.jd_text FROM jobs j JOIN job_texts t ON t.job_id = j.id WHERE j.apply_url = ?").get("https://amazon.jobs/en/jobs/123") as { id: number; source: string; jd_text: string };
     expect(job.source).toBe("manual");
     expect(job.jd_text.length).toBeGreaterThan(200);
     const again = await addJob(db, { url: "https://amazon.jobs/en/jobs/123", company: "Amazon", title: "SDE Intern 2027" }, deps);

@@ -26,7 +26,79 @@ function readSchema(): string {
 // v17 (2026-09-21): mail_accounts + mail_events (邮箱同步, spec 2026-09-21 inbox-sync).
 // v18 (same day): several mailboxes per account — mail_accounts keyed by id with UNIQUE(user_id,
 // email), mail_events.account_id. See migrateV18.
-const SCHEMA_VERSION = 18;
+// v19 (2026-10-22): jobs.jd_text moves to its own table, job_texts. See migrateV19.
+const SCHEMA_VERSION = 19;
+
+// v18 -> v19: the posting text leaves the jobs row. It was 683 MB of the 1042 MB db (191k jobs,
+// 2026-10-22) and sat ahead of the eligibility columns added later, so every filtered scan of jobs
+// walked the JD overflow pages; mmap (below) only hides that until the file outgrows SQLite's 2 GB
+// mmap ceiling. Clearing the column in place is not enough: SQLite leaves the shrunken rows two to
+// a page (385 MB of 82%-empty pages on that db), so jobs is rebuilt the way migrateV16 rebuilds
+// tables — under a temporary name, foreign keys off, then drop and rename.
+// One transaction, in id-range batches: a batch's texts are copied to job_texts and checked (row
+// count and byte total must equal the source), its rows are copied to the new jobs table and
+// counted, and only then deleted from the old one, so the pages they free take the next batch and
+// the file barely grows. Any mismatch throws and the whole move rolls back. The indexes the drop
+// takes with it come back from schema.sql here and from openDb right after. Re-runnable: a jobs
+// table without jd_text is already done.
+const V19_BATCH = 5000;
+export function migrateV19(db: DB, schema: string): { moved: number; bytes: number; ms: number } | null {
+  if (!columnsOf(db, "jobs").includes("jd_text")) return null;
+  const started = Date.now();
+  const maxId = (db.prepare("SELECT COALESCE(MAX(id), 0) m FROM jobs").get() as { m: number }).m;
+  let moved = 0;
+  let bytes = 0;
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      // The old table's indexes would only slow every delete below down.
+      const oldIndexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'jobs' AND sql IS NOT NULL").all() as { name: string }[];
+      for (const { name } of oldIndexes) db.exec(`DROP INDEX "${name}"`);
+      db.exec(tableDdl(schema, "jobs").replace(/CREATE TABLE IF NOT EXISTS "?jobs"? \(/, "CREATE TABLE jobs__v19 ("));
+      // (Read after the AUTOINCREMENT table above exists, so sqlite_sequence does too.)
+      const seq = (db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'jobs'").get() as { seq: number } | undefined)?.seq ?? 0;
+      const newCols = columnsOf(db, "jobs__v19");
+      const common = columnsOf(db, "jobs").filter((c) => newCols.includes(c)).join(", ");
+      // octet_length reads the record header only, never the text itself.
+      const textsIn = db.prepare("SELECT COUNT(*) n, TOTAL(octet_length(jd_text)) b FROM jobs WHERE id > ? AND id <= ? AND jd_text IS NOT NULL");
+      const textsOut = db.prepare("SELECT COUNT(*) n, TOTAL(octet_length(jd_text)) b FROM job_texts WHERE job_id > ? AND job_id <= ?");
+      const copyTexts = db.prepare("INSERT INTO job_texts (job_id, jd_text) SELECT id, jd_text FROM jobs WHERE id > ? AND id <= ? AND jd_text IS NOT NULL");
+      const rowsIn = db.prepare("SELECT COUNT(*) n FROM jobs WHERE id > ? AND id <= ?");
+      const copyRows = db.prepare(`INSERT INTO jobs__v19 (${common}) SELECT ${common} FROM jobs WHERE id > ? AND id <= ?`);
+      const dropRows = db.prepare("DELETE FROM jobs WHERE id > ? AND id <= ?");
+      for (let lo = 0; lo < maxId; lo += V19_BATCH) {
+        const hi = lo + V19_BATCH;
+        const want = textsIn.get(lo, hi) as { n: number; b: number };
+        copyTexts.run(lo, hi);
+        const got = textsOut.get(lo, hi) as { n: number; b: number };
+        if (got.n !== want.n || got.b !== want.b) {
+          throw new Error(`v19: job ids ${lo + 1}-${hi} copied ${got.n} texts / ${got.b} bytes of ${want.n} / ${want.b}; rolled back, nothing moved`);
+        }
+        const rows = (rowsIn.get(lo, hi) as { n: number }).n;
+        const copied = copyRows.run(lo, hi).changes;
+        if (copied !== rows) throw new Error(`v19: job ids ${lo + 1}-${hi} copied ${copied} of ${rows} rows; rolled back, nothing moved`);
+        dropRows.run(lo, hi);
+        moved += want.n;
+        bytes += want.b;
+      }
+      const left = (db.prepare("SELECT COUNT(*) n FROM jobs").get() as { n: number }).n;
+      if (left > 0) throw new Error(`v19: ${left} jobs rows were left behind; rolled back, nothing moved`);
+      db.exec("DROP TABLE jobs");
+      db.exec("ALTER TABLE jobs__v19 RENAME TO jobs");
+      // New ids keep counting from where the old table stopped, not from the highest id still present.
+      db.prepare("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'jobs'").run(seq);
+      db.exec(schema);
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+  // The move went through the WAL (~0.9 GB on the production db); give that file back now rather
+  // than leaving it at full size until some later checkpoint truncates it.
+  db.pragma("wal_checkpoint(TRUNCATE)");
+  const ms = Date.now() - started;
+  console.log(`[db] v19: moved ${moved} job descriptions (${(bytes / 1048576).toFixed(0)} MB) from jobs into job_texts and rebuilt jobs in ${(ms / 1000).toFixed(1)} s`);
+  return { moved, bytes, ms };
+}
 
 // v17 -> v18: the two mail tables are rebuilt in their new shape (the only production rows were one
 // mailbox and no events, hours old). Detected by the old primary key: v17's mail_accounts had no
@@ -110,11 +182,12 @@ export function openDb(file?: string): DB {
   const db = new Database(dbFile);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  // Read through the OS file cache instead of SQLite's 2 MB page cache. The columns every
-  // eligibility filter reads (duplicate_of, sponsorship, role_kind, …) were added after jd_text,
-  // so reading them walks each row's JD overflow pages; at 178k jobs (800 MB, 2026-10-15) the
+  // Read through the OS file cache instead of SQLite's 2 MB page cache. Until v19 the columns every
+  // eligibility filter reads (duplicate_of, sponsorship, role_kind, …) sat after jd_text, so
+  // reading them walked each row's JD overflow pages; at 178k jobs (800 MB, 2026-10-15) the
   // per-minute backlog check, consolidate and the 5-second overview each took 0.7–5 s with the
   // event loop blocked, and stacked up into 30 s page loads and 502s. Mapped: about 5× faster.
+  // migrateV19 removed the cause; the mapping still saves copies on every read.
   // SQLite clamps this to its compile-time ceiling (~2 GB); beyond that it reads normally.
   if (dbFile !== ":memory:") db.pragma("mmap_size = 2147483648");
 
@@ -194,8 +267,10 @@ export function openDb(file?: string): DB {
     ] as const) {
       if (!jobCols10.includes(col)) db.exec(`ALTER TABLE jobs ADD COLUMN ${col} ${type}`);
     }
-    // Backfill in JS: norm() lives in TS, not SQL. Only rows never keyed — re-runnable.
-    const pending = db.prepare("SELECT id, company, title, jd_text FROM jobs WHERE dedup_key IS NULL").all() as
+    // Backfill in JS: norm() lives in TS, not SQL. Only rows never keyed — re-runnable. A db whose
+    // v19 move committed before the version bump below has its text in job_texts already.
+    const jdCol10 = jobCols10.includes("jd_text") ? "jd_text" : "(SELECT jd_text FROM job_texts WHERE job_id = jobs.id) AS jd_text";
+    const pending = db.prepare(`SELECT id, company, title, ${jdCol10} FROM jobs WHERE dedup_key IS NULL`).all() as
       { id: number; company: string; title: string; jd_text: string | null }[];
     const upd = db.prepare("UPDATE jobs SET dedup_key = ?, jd_status = ? WHERE id = ?");
     const tx = db.transaction(() => {
@@ -250,6 +325,9 @@ export function openDb(file?: string): DB {
     migrateV16(db, schema);
     // v17 -> v18: multi-mailbox 邮箱同步 tables (new tables, so nothing above depends on them).
     migrateV18(db, schema);
+    // v18 -> v19: last, because the v10 step above still reads jobs.jd_text and the rebuild copies
+    // every column the steps above have added.
+    migrateV19(db, schema);
   }
   // Tenant indexes (schema v16). Created here rather than in schema.sql for the same reason as
   // the job indexes below: schema.sql runs before an old db has gained user_id.

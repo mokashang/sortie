@@ -1,5 +1,6 @@
 import type { DB } from "@/lib/db";
 import { logEvent } from "@/lib/db";
+import { setJdText } from "@/lib/job-texts";
 import type { Lang } from "@/i18n/lang";
 import type { LlmBackend } from "@/llm/types";
 import { tryLoadProfile } from "@/lib/profile";
@@ -216,10 +217,15 @@ async function ensureScored(db: DB, userId: string, jobId: number, deps: ToolDep
   const profile = tryLoadProfile(db, userId);
   if (!profile) return "the profile is incomplete (Profile → Basics), so the posting cannot be scored or applied to";
   if (!deps.backend) return "no AI backend available to score the posting";
-  const job = db.prepare("SELECT apply_url, jd_text FROM jobs WHERE id = ?").get(jobId) as { apply_url: string | null; jd_text: string | null } | undefined;
+  const job = db.prepare("SELECT j.apply_url, t.jd_text FROM jobs j LEFT JOIN job_texts t ON t.job_id = j.id WHERE j.id = ?").get(jobId) as { apply_url: string | null; jd_text: string | null } | undefined;
   if (job && (!job.jd_text || job.jd_text.startsWith("[listing metadata]")) && job.apply_url) {
     const text = await (deps.fetchJd ?? fetchJdText)(job.apply_url);
-    if (text && text.trim().length > 200) db.prepare("UPDATE jobs SET jd_text = ?, jd_status = NULL WHERE id = ?").run(text, jobId);
+    if (text && text.trim().length > 200) {
+      db.transaction(() => {
+        setJdText(db, jobId, text);
+        db.prepare("UPDATE jobs SET jd_status = NULL WHERE id = ?").run(jobId);
+      })();
+    }
   }
   const s = await runMatching(db, {
     userId,

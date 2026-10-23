@@ -29,8 +29,28 @@ describe("upsertJobs", () => {
     upsertJobs(db, [job({ jdText: "[listing metadata] no visa sponsorship", source: "github_list", ats: null })]);
     const s = upsertJobs(db, [job({ jdText: "Full JD text here. We sponsor visas." })]);
     expect(s).toMatchObject({ inserted: 0, upgraded: 1 });
-    const row = db.prepare("SELECT jd_text, source FROM jobs").get() as { jd_text: string; source: string };
+    const row = db.prepare("SELECT t.jd_text, j.source FROM jobs j JOIN job_texts t ON t.job_id = j.id").get() as { jd_text: string; source: string };
     expect(row.source).toBe("greenhouse"); expect(row.jd_text).toContain("Full JD");
     expect((db.prepare("SELECT COUNT(*) n FROM applications").get() as { n: number }).n).toBe(1);
+  });
+
+  it("neither a re-emitted listing marker nor a thin row after a rich one counts as an upgrade", () => {
+    const db = openDb(":memory:");
+    const marker = job({ jdText: "[listing metadata] sponsorship: unknown", source: "github_list", ats: null });
+    upsertJobs(db, [marker]);
+    expect(upsertJobs(db, [marker])).toMatchObject({ inserted: 0, upgraded: 0, duplicates: 1 });
+
+    upsertJobs(db, [job({ title: "Rich", jdText: "Full JD text here." })]);
+    expect(upsertJobs(db, [job({ title: "Rich", jdText: "", source: "github_list", ats: null })])).toMatchObject({ upgraded: 0, duplicates: 1 });
+    const rich = db.prepare("SELECT t.jd_text, j.source FROM jobs j JOIN job_texts t ON t.job_id = j.id WHERE j.title = 'Rich'").get();
+    expect(rich).toEqual({ jd_text: "Full JD text here.", source: "greenhouse" });
+  });
+
+  it("an upgrade whose link is unusable keeps the stored link", () => {
+    const db = openDb(":memory:");
+    upsertJobs(db, [job({ jdText: "", source: "github_list", ats: null })]);
+    const s = upsertJobs(db, [job({ jdText: "Full JD text here.", applyUrl: "javascript:alert(1)" })]);
+    expect(s.upgraded).toBe(1);
+    expect(db.prepare("SELECT apply_url FROM jobs").get()).toEqual({ apply_url: "https://boards.greenhouse.io/acme/jobs/1" });
   });
 });

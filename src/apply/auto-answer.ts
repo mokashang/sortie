@@ -202,7 +202,7 @@ export async function autoAnswerPending(db: DB, userId: string, jobId: number, d
 
   const profile = tryLoadProfile(db, userId);
   if (!profile) return { answered: {}, remaining: questions, status: "skipped", error: "profile incomplete" };
-  const job = db.prepare("SELECT company, title, location, jd_text FROM jobs WHERE id = ?").get(jobId) as
+  const job = db.prepare("SELECT j.company, j.title, j.location, t.jd_text FROM jobs j LEFT JOIN job_texts t ON t.job_id = j.id WHERE j.id = ?").get(jobId) as
     | { company: string; title: string; location: string | null; jd_text: string | null }
     | undefined;
   if (!job) return { answered: {}, remaining: questions, status: "skipped", error: "job missing" };

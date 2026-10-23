@@ -70,15 +70,17 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
   const rows = (
     opts.rescoreMatched
       ? db.prepare(
-          `SELECT j.id, j.company, j.title, j.location, j.jd_text, a.pinned, a.status
+          `SELECT j.id, j.company, j.title, j.location, t.jd_text, a.pinned, a.status
            FROM jobs j JOIN applications a ON a.job_id = j.id AND a.user_id = ? JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+           LEFT JOIN job_texts t ON t.job_id = j.id
            WHERE a.status = 'matched' AND j.duplicate_of IS NULL AND j.visa_flag IS NULL AND j.loc_flag IS NULL
-             AND j.jd_text <> '' AND j.jd_text NOT LIKE '[listing metadata]%'${sinceClause}
+             AND t.jd_text <> '' AND t.jd_text NOT LIKE '[listing metadata]%'${sinceClause}
            ORDER BY j.created_at DESC ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
         ).all(userId, ...sinceParams)
       : db.prepare(
-          `SELECT j.id, j.company, j.title, j.location, j.jd_text, a.pinned, a.status
+          `SELECT j.id, j.company, j.title, j.location, t.jd_text, a.pinned, a.status
            FROM jobs j JOIN applications a ON a.job_id = j.id AND a.user_id = ? LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
+           LEFT JOIN job_texts t ON t.job_id = j.id
            WHERE j.visa_flag IS NULL AND j.loc_flag IS NULL AND j.duplicate_of IS NULL AND (m.id IS NULL${rescoreClause})${sinceClause}
            ORDER BY j.created_at DESC ${opts.limit ? "LIMIT " + Number(opts.limit) : ""}`
         ).all(userId, ...sinceParams)

@@ -346,7 +346,7 @@ describe("inbox/sync v17 -> v18 migration", () => {
     raw.close();
 
     const db = openDb(file);
-    expect(db.pragma("user_version", { simple: true })).toBe(18);
+    expect(db.pragma("user_version", { simple: true })).toBe(19);
     const cols = (db.prepare("PRAGMA table_info(mail_accounts)").all() as { name: string }[]).map((c) => c.name);
     expect(cols).toContain("id");
     expect((db.prepare("PRAGMA table_info(mail_events)").all() as { name: string }[]).map((c) => c.name)).toContain("account_id");
@@ -356,7 +356,7 @@ describe("inbox/sync v17 -> v18 migration", () => {
     db.close();
     // re-opening is a no-op
     const again = new Database(file);
-    expect(again.pragma("user_version", { simple: true })).toBe(18);
+    expect(again.pragma("user_version", { simple: true })).toBe(19);
     again.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
