@@ -122,9 +122,13 @@ export function getBoard(db: DB, key: string): BoardRow | undefined {
   return db.prepare("SELECT * FROM boards WHERE key = ?").get(key) as BoardRow | undefined;
 }
 
-export interface DueOpts { now: Date; limit: number; families?: Family[]; skipFamilies?: Family[]; tiers?: Tier[]; keys?: string[]; localHour: number; }
+// 每个 family 一跳最多挑这么多。一跳 90 秒里 Workday 只做得完二十来个,挑多了也只是占名额:
+// 2026-10-23 慢跳时代积压的 535 个 Workday 板块(最早到期)把 300 个名额全占了,Greenhouse / Workable
+// 等到期板块排了一个多小时。
+export const DUE_PER_FAMILY = 100;
+export interface DueOpts { now: Date; limit: number; perFamily?: number; families?: Family[]; skipFamilies?: Family[]; tiers?: Tier[]; keys?: string[]; localHour: number; }
 // 到期板块:静音和 chrome 家族永不入选;LinkedIn 只在本地 08:00–22:00;顺序 core → longtail → dormant,
-// 同层清单优先,再按到期时间早者先。
+// 同层清单优先,再按到期时间早者先;每个 family 最多 perFamily 个(默认 DUE_PER_FAMILY)。
 export function dueBoards(db: DB, o: DueOpts): BoardRow[] {
   const conds = ["tier <> 'muted'", "family <> 'chrome'", "(next_due_at IS NULL OR next_due_at <= ?)"];
   const params: unknown[] = [iso(o.now)];
@@ -132,14 +136,19 @@ export function dueBoards(db: DB, o: DueOpts): BoardRow[] {
   inList("family", o.families); inList("tier", o.tiers); inList("key", o.keys);
   if (o.skipFamilies?.length) { conds.push(`family NOT IN (${o.skipFamilies.map(() => "?").join(",")})`); params.push(...o.skipFamilies); }
   if (o.localHour < 8 || o.localHour >= 22) conds.push("family <> 'linkedin'");
-  params.push(o.limit);
-  return db.prepare(
-    `SELECT * FROM boards WHERE ${conds.join(" AND ")}
-     ORDER BY CASE tier WHEN 'core' THEN 0 WHEN 'longtail' THEN 1 ELSE 2 END,
+  params.push(o.perFamily ?? DUE_PER_FAMILY, o.limit);
+  const order = `CASE tier WHEN 'core' THEN 0 WHEN 'longtail' THEN 1 ELSE 2 END,
               CASE family WHEN 'github_list' THEN 0 ELSE 1 END,
-              COALESCE(next_due_at, '') ASC, id ASC
+              COALESCE(next_due_at, '') ASC, id ASC`;
+  const rows = db.prepare(
+    `SELECT * FROM (
+       SELECT *, ROW_NUMBER() OVER (PARTITION BY family ORDER BY ${order}) AS family_rank
+       FROM boards WHERE ${conds.join(" AND ")}
+     ) WHERE family_rank <= ?
+     ORDER BY ${order}
      LIMIT ?`
-  ).all(...params) as BoardRow[];
+  ).all(...params) as (BoardRow & { family_rank?: number })[];
+  return rows.map(({ family_rank: _rank, ...b }) => b);
 }
 
 export function nextDueAfter(tier: Tier, failCount: number, now: Date, rand: () => number = Math.random, family?: Family): string | null {

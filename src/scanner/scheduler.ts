@@ -13,7 +13,7 @@ export const DEFAULT_SEED = seedJson as SeedEntry[];
 // 每分钟一跳的调度器(spec 2026-09-06 §3.1):挑到期板块,按 family 分组并发问,统一入库,回写板块状态。
 // 一次最多 budgetBoards 个板块或 budgetMs 毫秒,处理不完的下一分钟接着来。
 export interface TickOptions {
-  now?: Date; budgetBoards?: number; budgetMs?: number; families?: Family[]; tiers?: Tier[]; keys?: string[];
+  now?: Date; budgetBoards?: number; budgetMs?: number; perFamily?: number; families?: Family[]; tiers?: Tier[]; keys?: string[];
   registry?: Registry; fetcher?: Fetcher; seed?: SeedEntry[] | null; rand?: () => number; localHour?: number;
 }
 export interface TickSummary {
@@ -65,7 +65,7 @@ export async function runTick(db: DB, opts: TickOptions = {}): Promise<TickSumma
     if (!opts.seed) registrySynced = true;
   }
   const paused = [...familyPauses.keys()].filter((f) => familyPausedUntil(f, now));
-  const due = dueBoards(db, { now, limit: opts.budgetBoards ?? 300, families: opts.families, skipFamilies: paused, tiers: opts.tiers, keys: opts.keys, localHour: opts.localHour ?? now.getHours() });
+  const due = dueBoards(db, { now, limit: opts.budgetBoards ?? 300, perFamily: opts.perFamily, families: opts.families, skipFamilies: paused, tiers: opts.tiers, keys: opts.keys, localHour: opts.localHour ?? now.getHours() });
   const summary: TickSummary = { boards: 0, inserted: 0, upgraded: 0, duplicates: 0, visaSkipped: 0, locSkipped: 0, byFamily: {}, errors: [], durationMs: 0 };
   const knownStmt = db.prepare("SELECT 1 FROM jobs WHERE apply_url = ?");
   const isKnownUrl = (u: string) => !!knownStmt.get(u);
@@ -136,5 +136,7 @@ export async function runSweep(db: DB, opts: TickOptions = {}): Promise<TickSumm
   const inList = (col: string, vals?: string[]) => { if (vals?.length) { conds.push(`${col} IN (${vals.map(() => "?").join(",")})`); params.push(...vals); } };
   inList("tier", opts.tiers); inList("family", opts.families); inList("key", opts.keys);
   db.prepare(`UPDATE boards SET next_due_at = NULL WHERE ${conds.join(" AND ")}`).run(...params);
-  return runTick(db, { ...opts, budgetBoards: opts.budgetBoards ?? 5000, budgetMs: opts.budgetMs ?? 10 * 60_000 });
+  // 「立即扫描」要的是全部问一遍:不设每个 family 的名额上限。
+  const budgetBoards = opts.budgetBoards ?? 5000;
+  return runTick(db, { ...opts, budgetBoards, perFamily: opts.perFamily ?? budgetBoards, budgetMs: opts.budgetMs ?? 10 * 60_000 });
 }

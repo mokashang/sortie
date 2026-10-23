@@ -42,6 +42,19 @@ describe("boards", () => {
     expect(dueBoards(db, { now: NOW, limit: 10, localHour: 12, keys: ["greenhouse:a"] })).toHaveLength(0);
   });
 
+  it("caps each family so one family's backlog cannot take every slot", () => {
+    const db = openDb(":memory:");
+    // 积压:5 个早就到期的 Workday 核心板块;另外 2 个 Greenhouse 核心板块刚到期
+    upsertBoards(db, [1, 2, 3, 4, 5].map((n) => ({ key: `workday:t${n}.wd1/s`, origin: "seed" as const })));
+    upsertBoards(db, [{ key: "greenhouse:a", origin: "seed" }, { key: "greenhouse:b", origin: "seed" }]);
+    db.prepare("UPDATE boards SET next_due_at = ? WHERE family = 'workday'").run(iso(new Date(NOW.getTime() - 6 * 3600_000)));
+    db.prepare("UPDATE boards SET next_due_at = ? WHERE family = 'greenhouse'").run(iso(new Date(NOW.getTime() - 60_000)));
+    const pick = (perFamily?: number) => dueBoards(db, { now: NOW, limit: 4, perFamily, localHour: 12 }).map((b) => b.key);
+    expect(pick(100)).toEqual(["workday:t1.wd1/s", "workday:t2.wd1/s", "workday:t3.wd1/s", "workday:t4.wd1/s"]);   // 没有上限:全是 Workday
+    expect(pick(2)).toEqual(["workday:t1.wd1/s", "workday:t2.wd1/s", "greenhouse:a", "greenhouse:b"]);
+    expect(Object.keys(dueBoards(db, { now: NOW, limit: 10, perFamily: 2, localHour: 12 })[0])).not.toContain("family_rank");
+  });
+
   it("writes poll results: cadence with jitter, exponential backoff, 429 → tomorrow, 404×5 → muted", () => {
     const db = openDb(":memory:");
     upsertBoards(db, [{ key: "greenhouse:a", origin: "seed" }, { key: "greenhouse:gone", origin: "url" }]);
