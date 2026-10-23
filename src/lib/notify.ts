@@ -1,4 +1,6 @@
 import { execFile } from "child_process";
+import type { DB } from "@/lib/db";
+import { ownerId } from "@/lib/users";
 
 type MacNotifier = (title: string, body: string) => void;
 
@@ -49,8 +51,18 @@ export async function notify(
     fetcher?: typeof fetch;
     execMacNotifier?: MacNotifier;
     platform?: NodeJS.Platform;
+    // Whose news this is. There is one ntfy topic per machine and it is the owner's phone, so
+    // another account's events (its companies, jobs and contacts) are not pushed there.
+    account?: { db: DB; userId: string };
   } = {}
 ): Promise<void> {
+  if (opts.account) {
+    try {
+      if (ownerId(opts.account.db) !== opts.account.userId) return;
+    } catch {
+      return;
+    }
+  }
   const topic = opts.ntfyTopic ?? process.env.NTFY_TOPIC;
   const fetcher = opts.fetcher ?? fetch;
   const platform = opts.platform ?? process.platform;

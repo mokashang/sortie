@@ -182,7 +182,7 @@ export function notifyFailedRun(db: DB, userId: string, runId: number, push?: (t
     const alert = planAlertFor(db, userId, runId);
     if (!alert || alert.kind !== "failed") return false;
     const t = messages[serverLang()].notify.plan;
-    const send = push ?? ((a: string, b: string) => void notify(a, b, { priority: "high" }));
+    const send = push ?? ((a: string, b: string) => void notify(a, b, { priority: "high", account: { db, userId } }));
     send(t.failedTitle(runId), t.failedBody(alert.untouched.length));
     return true;
   } catch (e) {

@@ -204,7 +204,7 @@ export async function syncMailbox(db: DB, account: MailAccountRow, deps: SyncDep
       const inputs: ClassifyMail[] = parsed.map((m) => ({ id: m.id, from: m.from, subject: m.subject, receivedAt: isoOf(m.receivedAtMs), text: m.text }));
       const results = await classifyMails(backend, inputs, apps);
       const lang = deps.lang ?? serverLang();
-      const notifier = deps.notifier ?? ((t: string, b: string) => notify(t, b));
+      const notifier = deps.notifier ?? ((t: string, b: string) => notify(t, b, { account: { db, userId } }));
       const byId = new Map(results.map((r) => [r.message_id, r]));
       for (const m of parsed) {
         const r = byId.get(m.id);

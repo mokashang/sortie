@@ -2,7 +2,7 @@ import { execFile, type ExecFileException } from "child_process";
 import { resolveCodexBin } from "@/lib/codex-bin";
 import type { LlmBackend, LlmRequest, LlmResult } from "@/llm/types";
 import type { EnvMap } from "@/ai/config";
-import { withoutParentSession } from "@/lib/agent-env";
+import { agentProcessEnv } from "@/lib/agent-env";
 
 export type CodexRunner = (
   bin: string,
@@ -46,7 +46,7 @@ export class CodexBackend implements LlmBackend {
   constructor(opts: CodexBackendOptions = {}) {
     const sourceEnv = opts.env ?? process.env;
     this.bin = opts.bin ?? resolveCodexBin({ env: sourceEnv });
-    this.env = withoutParentSession(sourceEnv);
+    this.env = agentProcessEnv(sourceEnv);
     // This backend uses saved ChatGPT/Codex auth. Never expose an unrelated API key to the
     // model process or to any shell it might try to spawn after reading untrusted JD text.
     delete this.env.OPENAI_API_KEY;

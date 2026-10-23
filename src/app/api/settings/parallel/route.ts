@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { attendedParallel, setAttendedParallel } from "@/executor/sessions";
 import { isParallelChoice, PARALLEL_CHOICES } from "@/app/lib/parallel";
-import { withUser, failResponse, requireOwner } from "@/lib/actor";
+import { withUser, failResponse, requireOwner, requireBrowser } from "@/lib/actor";
 import { readJsonBody } from "@/lib/request-body";
 
 // 设置 → 同时进行的任务: how many apply tasks run at once, one attended session each
@@ -13,6 +13,7 @@ export const GET = withUser(async () => {
 });
 
 export const POST = withUser(async (req, actor) => {
+  requireBrowser(actor);
   try {
     requireOwner(actor);
     const body = (await readJsonBody(req)) as { value?: unknown };

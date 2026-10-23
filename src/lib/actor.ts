@@ -33,12 +33,12 @@ export interface Actor {
 
 // `kind` picks the message shown to the user in their language (src/i18n/messages/errors.ts);
 // the English message on the Error itself is for logs.
-export type AuthErrorKind = "signIn" | "ownerOnly";
+export type AuthErrorKind = "signIn" | "ownerOnly" | "browserOnly";
 export class AuthError extends Error {
   status: number;
   kind: AuthErrorKind;
   constructor(kind: AuthErrorKind = "signIn", status = 401) {
-    super(kind === "ownerOnly" ? "only the owner account may do this" : "sign in first");
+    super(kind === "ownerOnly" ? "only the owner account may do this" : kind === "browserOnly" ? "only the signed-in user in the browser may do this" : "sign in first");
     this.name = "AuthError";
     this.status = status;
     this.kind = kind;
@@ -88,7 +88,10 @@ export async function requireActor(req: Request, db: DB = getDb()): Promise<Acto
 export function errorResponse(e: unknown, lang: Lang = serverLang()): Response | null {
   const t = messages[lang].errors;
   if (e instanceof AuthError) {
-    return NextResponse.json({ error: e.kind === "ownerOnly" ? t.ownerOnly : t.signInFirst, code: "unauthenticated" }, { status: e.status });
+    return NextResponse.json(
+      { error: e.kind === "ownerOnly" ? t.ownerOnly : e.kind === "browserOnly" ? t.browserOnly : t.signInFirst, code: e.kind === "browserOnly" ? "browser_only" : "unauthenticated" },
+      { status: e.status }
+    );
   }
   if (e instanceof ProfileIncompleteError) {
     return NextResponse.json({ error: t.profileIncomplete, code: "profile_incomplete", issues: e.issues }, { status: 409 });
@@ -105,6 +108,15 @@ export function errorResponse(e: unknown, lang: Lang = serverLang()): Response |
 // to their own codes first.
 export function failResponse(e: unknown, status = 400, lang: Lang = serverLang()): Response {
   return errorResponse(e, lang) ?? NextResponse.json({ error: String(e instanceof Error ? e.message : e) }, { status });
+}
+
+// The user's own decisions — approving a fill or a message, answering a card, saying "I submitted
+// it", switching 自动投递 or the AI provider — come only from the signed-in browser. Every token
+// (an assistant run's, a personal one, the machine's internal one) is an assistant's, and the red
+// line is that an assistant never approves its own work: with Bash(curl) it could otherwise call
+// /api/apply/decide on the form it just filled (security review 2026-10-22).
+export function requireBrowser(actor: Actor): void {
+  if (actor.via !== "session") throw new AuthError("browserOnly", 403);
 }
 
 // Routes that change shared machine state (information sources) are the owner's to call.

@@ -46,3 +46,30 @@ describe("backupDatabase", () => {
     live.close();
   });
 });
+
+import { mirrorBackup } from "@/lib/backup";
+describe("mirrorBackup", () => {
+  it("copies the newest backup to the mirror and prunes old mirrored days only", () => {
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), "sortie-bk-src-"));
+    const mirror = fs.mkdtempSync(path.join(os.tmpdir(), "sortie-bk-mirror-"));
+    const today = new Date(2026, 9, 22);
+    const file = path.join(src, backupFileName(today));
+    fs.writeFileSync(file, "db");
+    for (const n of ["jobseeker-2026-10-01.db", "jobseeker-2026-10-21.db", "jobseeker-pre-migration.db"]) fs.writeFileSync(path.join(mirror, n), "old");
+    const r = mirrorBackup(file, mirror, { today, keepDays: 3 });
+    expect(r.error).toBeUndefined();
+    expect(r.pruned).toEqual(["jobseeker-2026-10-01.db"]);
+    expect(fs.readdirSync(mirror).sort()).toEqual(["jobseeker-2026-10-21.db", "jobseeker-2026-10-22.db", "jobseeker-pre-migration.db"]);
+    expect(fs.readFileSync(path.join(mirror, "jobseeker-2026-10-22.db"), "utf8")).toBe("db");
+  });
+  it("reports instead of throwing when the mirror disk is unusable", () => {
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), "sortie-bk-src-"));
+    const file = path.join(src, "jobseeker-2026-10-22.db");
+    fs.writeFileSync(file, "db");
+    const blocker = path.join(src, "not-a-dir");
+    fs.writeFileSync(blocker, "x");
+    const r = mirrorBackup(file, path.join(blocker, "mirror"));
+    expect(r.dest).toBeNull();
+    expect(r.error).toBeTruthy();
+  });
+});

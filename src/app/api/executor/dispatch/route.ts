@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { dispatchAttended, attendedStatus } from "@/executor/attended";
+import { dispatchAttended, attendedStatus, failUnservableMemberRuns } from "@/executor/attended";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
 import { autoAnswerParkedText } from "@/apply/auto-answer";
 import { pollEmailCodes } from "@/apply/email-code";
 import { resumeDuePausedChains } from "@/apply/continue";
+import { sweepTabs } from "@/executor/tabs";
 import { ownerId } from "@/lib/users";
 import { withInternal } from "@/lib/actor";
 import { reapStaleRuns } from "@/executor/runner";
@@ -32,6 +33,8 @@ export const POST = withInternal(async () => {
     // no browser open (nights, days away) a hung headless claude -p kept its process and Chrome
     // forever, and its 'running' row held back every auto-start guard.
     reapStaleRuns(db);
+    const unservable = failUnservableMemberRuns(db);
+    if (unservable.length > 0) console.log(`[attended] failed ${unservable.join(",")}: another account's Chrome task with no session of its own`);
     // Jobs taken by a run that is over and never reported (src/apply/followup.ts): back to the
     // queue, and the ones the user answered questions for become a targeted run.
     const reclaimed = owner ? reclaimStrandedPrepared(db, owner) : undefined;
@@ -50,10 +53,16 @@ export const POST = withInternal(async () => {
     // has no approval or finish to wake it: it is picked up here once its time has come.
     const resumed = resumeDuePausedChains(db);
     for (const r of resumed) if (r.action === "queued") console.log(`[attended] paused plan resumed as run #${r.runId}`);
+    // Tabs stuck past an hour, and the oldest ones whenever more than 30 are open: the owning
+    // session closes them and their jobs are detached (src/executor/tabs.ts). Before the stranded
+    // check, so an approval whose tab was just closed gets its refill queued this same tick.
+    const tabs = owner ? sweepTabs(db, owner) : undefined;
+    if (tabs && tabs.released.length > 0)
+      console.log(`[attended] closing ${tabs.released.length} tab(s) (${tabs.open} open): ${tabs.released.map((t) => `${t.jobId}/${t.why}`).join(", ")}`);
     const stranded = owner ? requeueStrandedApprovals(db, owner) : undefined;
     if (stranded?.autoStarted) console.log(`[attended] queued resume run #${stranded.runId}: approved applications nobody was acting on`);
     const r = dispatchAttended(db);
-    return NextResponse.json({ ok: true, ...r, stranded, reclaimed, retried });
+    return NextResponse.json({ ok: true, ...r, stranded, reclaimed, retried, tabs });
   } catch (e) {
     const msg = String(e);
     const now = Date.now();

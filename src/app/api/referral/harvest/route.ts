@@ -65,7 +65,7 @@ export const POST = withUser(async (req, actor) => {
           .prepare("SELECT p.name, p.company FROM outreach o JOIN people p ON p.id = o.person_id WHERE o.id = ?")
           .get(outreachId) as { name: string; company: string | null };
         const n = followupNotification({ person: who.name, company: who.company ?? "", newReceived: result.newReceived, summary: result.summary, after }, lang);
-        if (n) void notify(n.title, n.body, { priority: n.priority });
+        if (n) void notify(n.title, n.body, { priority: n.priority, account: { db, userId } });
       } catch (e) {
         // An incomplete profile or a drafting hiccup never fails the harvest itself.
         console.warn("[referral harvest] follow-up step failed:", e);
