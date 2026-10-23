@@ -159,6 +159,17 @@ export function nextDueAfter(tier: Tier, failCount: number, now: Date, rand: () 
   return iso(new Date(now.getTime() + CADENCE_MS[tier] * mult * jitter * backoff));
 }
 
+// 一时的失败(网络错误、超时、5xx、维护页这类没有 4xx 状态的):1、2、4…小时后再试,最晚不晚于正常周期。
+// 以前也按 2^n 拉长周期:2026-10-17 Workday 维护的那一个小时,491 个板块里休眠的要等 42 天(本该 21 天)才再问。
+// 4xx(站点不对、受限)仍按 2^n 退避,持续的由静音规则收尾。
+export const TRANSIENT_RETRY_MS = 3600_000;
+export function nextDueAfterTransient(tier: Tier, failCount: number, now: Date, rand: () => number = Math.random, family?: Family): string | null {
+  const regular = nextDueAfter(tier, 0, now, rand, family);
+  if (regular === null) return null;
+  const soon = iso(new Date(now.getTime() + TRANSIENT_RETRY_MS * 2 ** Math.min(Math.max(failCount, 1) - 1, 10) * (0.9 + rand() * 0.2)));
+  return soon < regular ? soon : regular;
+}
+
 // retryAfterMs:429 时对方给的 Retry-After(调度器从错误消息里读出、已夹在合理范围内);没给就明天再问。
 // truncated:适配器到了截止时刻提前收手(还有新岗没拉详情)→ 最晚一小时后再问,不用等一整个周期
 // (长尾 Workday 的周期是 3 天)。
@@ -209,8 +220,12 @@ export function markBoardResult(db: DB, key: string, o: PollOutcome): void {
   const mute = reason !== null;
   if (streak) meta.fail_streak = streak; else delete meta.fail_streak;
   const metaOut = streak || prevStreak ? JSON.stringify(meta) : b.meta;
-  // 429 = 对方限流:按 Retry-After(没给就 24 小时)再问。其余失败按 2^n 退避(封顶 8 倍)。
-  const nextDue = mute ? null : status === 429 ? iso(new Date(o.now.getTime() + (o.retryAfterMs ?? 24 * 3600_000))) : nextDueAfter(b.tier, failCount, o.now, o.rand, b.family);
+  // 429 = 对方限流:按 Retry-After(没给就 24 小时)再问。一时的失败几小时后重试;4xx 按 2^n 退避(封顶 8 倍)。
+  const transient = status === null || status >= 500;
+  const nextDue = mute ? null
+    : status === 429 ? iso(new Date(o.now.getTime() + (o.retryAfterMs ?? 24 * 3600_000)))
+    : transient ? nextDueAfterTransient(b.tier, failCount, o.now, o.rand, b.family)
+    : nextDueAfter(b.tier, failCount, o.now, o.rand, b.family);
   db.prepare("UPDATE boards SET fail_count=?, last_polled_at=?, last_error=?, next_due_at=?, tier=?, tier_reason=?, meta=?, updated_at=datetime('now') WHERE key=?")
     .run(failCount, now, (o.error ?? "error").slice(0, 300), nextDue, mute ? "muted" : b.tier, mute ? reason : b.tier_reason, metaOut, key);
   if (mute) logEvent(db, "board_retier", { entity: "board", entityId: b.id, payload: { key, from: b.tier, to: "muted", reason } });
