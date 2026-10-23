@@ -17,6 +17,18 @@ describe("boards", () => {
     expect(getBoard(db, "greenhouse:acme")!.tier).toBe("muted");
   });
 
+  it("a seed sync does not bring back a board the system muted; the user still can", () => {
+    const db = openDb(":memory:");
+    syncBoardsSeed(db, [{ key: "greenhouse:wayve", company: "Wayve" }]);
+    for (let i = 0; i < 5; i++) markBoardResult(db, "greenhouse:wayve", { ok: false, error: "greenhouse wayve: HTTP 404", httpStatus: 404, now: NOW });
+    expect(getBoard(db, "greenhouse:wayve")).toMatchObject({ tier: "muted", tier_reason: "404 x5", tier_locked: 0 });
+    syncBoardsSeed(db, [{ key: "greenhouse:wayve", company: "Wayve" }]);   // 每次进程启动都会同步一次
+    expect(getBoard(db, "greenhouse:wayve")).toMatchObject({ tier: "muted", tier_reason: "404 x5", next_due_at: null });
+    expect(dueBoards(db, { now: NOW, limit: 10, localHour: 12 })).toHaveLength(0);
+    setBoardTier(db, "greenhouse:wayve", "core");                            // 来源页手动改回
+    expect(getBoard(db, "greenhouse:wayve")).toMatchObject({ tier: "core", tier_locked: 1 });
+  });
+
   it("discovers boards from jobs.board_key", () => {
     const db = openDb(":memory:");
     const ins = db.prepare("INSERT INTO jobs (fingerprint, company, title, source, apply_url, board_key) VALUES (?,?,?,?,?,?)");

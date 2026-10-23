@@ -37,7 +37,9 @@ export function splitKey(key: string): { family: Family; ident: string } {
 }
 
 // 插入或补全。已存在的行:公司名 / 方向 / meta 只在原来为空时补;种子(seed/builtin)可以把 origin 拉到
-// 种子值并升 core,除非用户锁定过 tier。
+// 种子值并升 core,除非用户锁定过 tier,或者板块已经静音(404×5、持续失败、搬家、执行器看到板块没了)——
+// 静音只由用户在来源页撤销。2026-10-23 之前种子同步会把静音的种子板块拉回 core:greenhouse:wayve
+// 每次进程启动 / 每个路由第一次扫描都被复活、问一次 404、再静音,一个多星期静音了 16 次。
 export function upsertBoards(db: DB, specs: BoardSpec[]): { inserted: number; touched: number } {
   const stmt = db.prepare(
     `INSERT INTO boards (key, family, ident, company, origin, tier, tier_reason, directions, meta)
@@ -47,8 +49,8 @@ export function upsertBoards(db: DB, specs: BoardSpec[]): { inserted: number; to
        directions  = COALESCE(boards.directions, excluded.directions),
        meta        = COALESCE(boards.meta, excluded.meta),
        origin      = CASE WHEN excluded.origin IN ('seed','builtin') THEN excluded.origin ELSE boards.origin END,
-       tier_reason = CASE WHEN boards.tier_locked = 0 AND excluded.origin IN ('seed','builtin') AND boards.tier <> 'core' THEN 'seed' ELSE boards.tier_reason END,
-       tier        = CASE WHEN boards.tier_locked = 1 THEN boards.tier
+       tier_reason = CASE WHEN boards.tier_locked = 0 AND boards.tier NOT IN ('core','muted') AND excluded.origin IN ('seed','builtin') THEN 'seed' ELSE boards.tier_reason END,
+       tier        = CASE WHEN boards.tier_locked = 1 OR boards.tier = 'muted' THEN boards.tier
                           WHEN excluded.origin IN ('seed','builtin') THEN 'core'
                           ELSE boards.tier END,
        updated_at  = datetime('now')`
