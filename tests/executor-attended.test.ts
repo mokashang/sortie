@@ -28,6 +28,7 @@ import type { WindowsSpawnOptions } from "@/executor/attended-win";
 import { clearNotices } from "@/executor/attended-session";
 import { startExecutor, finishRun, claimNextRun } from "@/executor/runner";
 import { seedOwner } from "./helpers";
+import { SECRET_FILE_DENY } from "@/ai/runtime";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
@@ -609,7 +610,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
 
   it("buildAttendedArgs is the single argv both launchers hand to claude", () => {
     const args = buildAttendedArgs({ runId: 3, prompt: "P" });
-    expect(args).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools", ...ATTENDED_ALLOWED_TOOLS, "-n", "sortie-run-3", "P"]);
+    expect(args).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools", ...ATTENDED_ALLOWED_TOOLS, "--disallowedTools", ...SECRET_FILE_DENY, "-n", "sortie-run-3", "P"]);
+    // The server's secrets stay unreadable to the session (its run token is in its prompt).
+    expect(SECRET_FILE_DENY).toEqual(expect.arrayContaining(["Read(./.env)", "Read(./data/internal-token)", "Bash(cat data/internal-token:*)"]));
     expect(buildAttendedArgs({ runId: 3, prompt: "P", sessionName: "custom" })).toContain("custom");
     const script = buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 3, prompt: "P" });
     for (const tool of ATTENDED_ALLOWED_TOOLS) expect(script).toContain(tool);
@@ -662,5 +665,28 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
     expect(attendedSpawnModeFromEnv({})).toBe("pty");
     expect(attendedSpawnModeFromEnv({ ATTENDED_SPAWN_MODE: "console" })).toBe("console");
     expect(attendedSpawnModeFromEnv({ ATTENDED_SPAWN_MODE: "bogus" })).toBe("pty");
+  });
+});
+
+import { failUnservableMemberRuns, MEMBER_QUEUED_GIVE_UP_MS } from "@/executor/attended";
+import { seedUser } from "./helpers";
+describe("another account's Chrome task with no session of its own", () => {
+  it("is failed after the give-up window instead of sitting queued forever; the owner's and a connected member's stay", () => {
+    const db = openDb(":memory:");
+    seedOwner(db, U);
+    seedUser(db, "m1", "m1@example.com", { role: "member" });
+    seedUser(db, "m2", "m2@example.com", { role: "member" });
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "sortie-member-"));
+    const ownerRun = startExecutor(db, U, "apply", {}, { logDir }, "user_chrome");
+    const lonely = startExecutor(db, "m1", "apply", {}, { logDir }, "user_chrome");
+    const connected = startExecutor(db, "m2", "apply", {}, { logDir }, "user_chrome");
+    const later = new Date(Date.now() + MEMBER_QUEUED_GIVE_UP_MS + 60_000);
+    recordHeartbeat(db, "m2", "desktop-1", "desktop", later);
+    expect(failUnservableMemberRuns(db, new Date())).toEqual([]); // too early for anyone
+    expect(failUnservableMemberRuns(db, later)).toEqual([lonely.id]);
+    const status = (id: number) => (db.prepare("SELECT status FROM executor_runs WHERE id = ?").get(id) as { status: string }).status;
+    expect(status(lonely.id)).toBe("failed");
+    expect(status(connected.id)).toBe("queued");
+    expect(status(ownerRun.id)).toBe("queued");
   });
 });

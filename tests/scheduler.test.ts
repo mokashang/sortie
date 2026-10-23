@@ -87,6 +87,23 @@ describe("runTick: rate limits and per-board time", () => {
     expect(later.byFamily.workable).toEqual({ boards: 3, inserted: 0, errors: 0 });   // a 的 Retry-After 也到了
   });
 
+  it("a board that moved: registers the new one with the old one's origin and tier, mutes the old one, polls neither again right away", async () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, [{ key: "workday:netflix.wd1/Netflix", company: "Netflix", origin: "seed", directions: ["swe_general"] }]);
+    const registry: Registry = { workday: { concurrency: 1, minGapMs: 0, gated: true, fetch: async (_b, ctx) => {
+      ctx.moved?.("workday:netflix.wd108/Netflix");
+      return [job({ company: "Netflix", source: "workday", ats: "workday", applyUrl: "https://netflix.wd108.myworkdayjobs.com/Netflix/job/R1" })];
+    } } };
+    const s = await runTick(db, { now: NOW, registry, seed: null, rand: () => 0.5, localHour: 12 });
+    expect(s.inserted).toBe(1);
+    expect(s.byFamily.workday.moved).toBe(1);
+    expect(getBoard(db, "workday:netflix.wd108/Netflix")).toMatchObject({ origin: "seed", tier: "core", company: "Netflix", directions: '["swe_general"]', next_due_at: iso(new Date(NOW.getTime() + 3 * 3600_000)) });
+    expect(getBoard(db, "workday:netflix.wd1/Netflix")).toMatchObject({ tier: "muted", tier_reason: "moved to workday:netflix.wd108/Netflix", tier_locked: 0, next_due_at: null });
+    const ev = db.prepare("SELECT payload FROM events WHERE kind='board_retier'").all() as { payload: string }[];
+    expect(ev.map((e) => JSON.parse(e.payload).reason)).toEqual(["moved to workday:netflix.wd108/Netflix"]);
+    expect((await runTick(db, { now: NOW, registry, seed: null, localHour: 12 })).boards).toBe(0);
+  });
+
   it("hands adapters a deadline, the title gate (non-seed only) and a truncation hook", async () => {
     const db = openDb(":memory:");
     upsertBoards(db, [{ key: "workday:dir.wd1/s", origin: "directory" }, { key: "workday:seed.wd1/s", origin: "seed" }]);

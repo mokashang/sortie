@@ -9,8 +9,9 @@ export type Block = { kind: "p"; spans: Span[] } | { kind: "ul"; items: Span[][]
 
 const INLINE = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|(\[([^\]]+)\]\(([^)\s]+)\))/g;
 
+// Same-site paths only: "//host" and "/\\host" (a browser reads the backslash as a slash) leave it.
 export function isInternalHref(href: string): boolean {
-  return href.startsWith("/") && !href.startsWith("//");
+  return href.startsWith("/") && !/^\/[\/\\]/.test(href);
 }
 
 export function parseInline(text: string): Span[] {

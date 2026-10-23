@@ -90,3 +90,21 @@ describe("encodeNtfyTitle", () => {
     expect(encoded.startsWith("=?UTF-8?B?")).toBe(true);
   });
 });
+
+import { openDb } from "@/lib/db";
+import { seedOwner, seedUser } from "./helpers";
+describe("notify only reaches the owner's phone with the owner's news", () => {
+  it("pushes an owner event and drops another account's", async () => {
+    const db = openDb(":memory:");
+    seedOwner(db, "legacy");
+    seedUser(db, "m1", "m1@example.com", { role: "member" });
+    const sent: string[] = [];
+    const fetcher = (async (_u: string, init?: RequestInit) => {
+      sent.push(String(init?.body));
+      return new Response("ok");
+    }) as unknown as typeof fetch;
+    await notify("t", "owner news", { ntfyTopic: "topic", fetcher, platform: "win32", account: { db, userId: "legacy" } });
+    await notify("t", "member news", { ntfyTopic: "topic", fetcher, platform: "win32", account: { db, userId: "m1" } });
+    expect(sent).toEqual(["owner news"]);
+  });
+});

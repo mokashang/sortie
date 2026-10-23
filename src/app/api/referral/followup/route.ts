@@ -17,7 +17,7 @@ import { enqueueReferralCheck } from "@/apply/referral-check";
 import { leaseSendables, FOLLOWUP_LEASE_KEY } from "@/network/send-lease";
 import { sessionOfCaller } from "@/executor/sessions";
 import { isSessionReachable } from "@/executor/attended";
-import { withUser, failResponse } from "@/lib/actor";
+import { withUser, failResponse, requireBrowser } from "@/lib/actor";
 
 // GET — approved follow-ups waiting to be sent (the attended session's sweep at the end of a
 // referral check: open each thread, harvest again, send what the harvest response hands back).
@@ -43,9 +43,12 @@ export const GET = withUser(async (_req, actor) => {
 //   edit text       — save an edit without approving
 //   answer answer   — the user answered the question only they could; the App drafts the reply
 //   sent [text]     — session -> App after the message went out (RED LINE: pending_send only)
-export const POST = withUser(async (req, { userId }) => {
+export const POST = withUser(async (req, actor) => {
+  const { userId } = actor;
   try {
     const body = await readJsonBody(req);
+    // Approving, editing, answering or rejecting is the user's call; a session only reports what it sent.
+    if (body.action !== "sent") requireBrowser(actor);
     const db = getDb();
     const id = Number(body.followupId);
     switch (body.action) {

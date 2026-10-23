@@ -46,7 +46,7 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
        jd_text=excluded.jd_text,
        visa_flag=excluded.visa_flag,
        loc_flag=excluded.loc_flag,
-       apply_url=excluded.apply_url,
+       apply_url=COALESCE(excluded.apply_url, jobs.apply_url),
        source=excluded.source,
        ats=excluded.ats,
        jd_status=excluded.jd_status,
@@ -67,7 +67,10 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
   const seenBoards = new Map<string, string | null>();
 
   const tx = db.transaction((batch: RawJob[]) => {
-    for (const r of batch) {
+    for (const raw of batch) {
+      // A link from a third-party feed is opened by the App (window.open) and by the assistant:
+      // only http(s) is kept; anything else (javascript:, data:, a bare path) is stored as no link.
+      const r = /^https?:\/\//i.test(raw.applyUrl ?? "") ? raw : { ...raw, applyUrl: null };
       const fp = fingerprint(r.company, r.title, r.location);
       const flag = visaFlag(r.jdText);
       const locF = locFlag(r.location);

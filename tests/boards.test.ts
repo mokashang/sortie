@@ -63,9 +63,9 @@ describe("boards", () => {
     let b = getBoard(db, "greenhouse:a")!;
     expect(b.next_due_at).toBe(iso(new Date(NOW.getTime() + 3600_000)));
     expect(b.last_ok_at).toBe(iso(NOW)); expect(b.fail_count).toBe(0);
-    markBoardResult(db, "greenhouse:a", { ok: false, error: "greenhouse a: HTTP 500", httpStatus: 500, now: NOW, rand });
+    markBoardResult(db, "greenhouse:a", { ok: false, error: "greenhouse a: HTTP 403", httpStatus: 403, now: NOW, rand });
     b = getBoard(db, "greenhouse:a")!;
-    expect(b.fail_count).toBe(1); expect(b.next_due_at).toBe(iso(new Date(NOW.getTime() + 2 * 3600_000)));
+    expect(b.fail_count).toBe(1); expect(b.next_due_at).toBe(iso(new Date(NOW.getTime() + 2 * 3600_000)));   // 4xx:周期 × 2^n
     markBoardResult(db, "greenhouse:a", { ok: false, error: "HTTP 429", httpStatus: 429, now: NOW, rand });
     expect(getBoard(db, "greenhouse:a")!.next_due_at).toBe(iso(new Date(NOW.getTime() + 24 * 3600_000)));
     for (let i = 0; i < 5; i++) markBoardResult(db, "greenhouse:gone", { ok: false, error: "greenhouse gone: HTTP 404", httpStatus: 404, now: NOW, rand });
@@ -172,6 +172,21 @@ describe("persistent non-404 failures (broken tenants / sites)", () => {
     expect(JSON.parse(getBoard(db, "github_list:x/y")!.meta!)).toMatchObject({ etag: "W/1", fail_streak: { status: 500, n: 1 } });
     markBoardResult(db, "github_list:x/y", { ok: true, now: day(1), rand: () => 0.5 });
     expect(JSON.parse(getBoard(db, "github_list:x/y")!.meta!)).toEqual({ etag: "W/1" });
+  });
+
+  it("retries temporary failures within hours instead of stretching the cadence", () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, [{ key: "workday:dormant.wd1/s", origin: "url", tier: "dormant" }, { key: "workday:core.wd1/s", origin: "url" }]);
+    db.prepare("UPDATE boards SET tier='core' WHERE key='workday:core.wd1/s'").run();
+    const hours = (k: string) => (new Date(getBoard(db, k)!.next_due_at!.replace(" ", "T") + "Z").getTime() - NOW.getTime()) / 3600_000;
+    // 休眠的 Workday(正常 21 天一次):维护页 / 断网 / 500 → 1、2、4 小时后再试,而不是 42、84、168 天
+    for (const [e, h] of [["workday dormant.wd1/s: response is not JSON (text/html)", 1], ["fetch failed", 2], ["workday dormant.wd1/s: HTTP 500", 4]] as const) {
+      markBoardResult(db, "workday:dormant.wd1/s", { ok: false, error: e, now: NOW, rand: () => 0.5 });
+      expect(hours("workday:dormant.wd1/s")).toBe(h);
+    }
+    // 核心 Workday(3 小时一次):重试最晚不晚于正常周期
+    for (let i = 0; i < 4; i++) markBoardResult(db, "workday:core.wd1/s", { ok: false, error: "fetch failed", now: NOW, rand: () => 0.5 });
+    expect(hours("workday:core.wd1/s")).toBe(3);
   });
 
   it("429 waits for Retry-After when given; a cut-short poll comes due again within the hour", () => {

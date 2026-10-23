@@ -16,6 +16,8 @@ export interface FetchCtx {
   // 调度器的工程标题门(只对非精选来源)。门外的岗不拉详情:反正入不了库,拉了下次还得再拉。
   wantTitle?: (title: string) => boolean;
   truncated?: () => void;                 // 适配器因截止时刻提前收手时告诉调度器(记进 scan_tick 事件)
+  // 板块搬家了(Workday 租户换了 pod):这次已经从新地址取数;调度器登记新板块、把老板块静音(可撤销)。
+  moved?: (newKey: string) => void;
 }
 export type BoardFetcher = (board: BoardRow, ctx: FetchCtx) => Promise<RawJob[]>;
 export interface FamilyConfig {

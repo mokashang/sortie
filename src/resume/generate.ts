@@ -22,8 +22,16 @@ export type Compiler = (tex: string, outPdfPath: string) => Promise<CompileResul
 
 // versionName is user-supplied and gets joined into a filesystem path (outDir/<versionName>.tex
 // / .pdf). Reject anything with a path separator or a ".." segment so it can't escape outDir.
+// The name becomes a file name on Windows: no path separators or "..", none of the characters
+// Windows refuses or reads specially (":" opens an alternate data stream), no control characters,
+// no trailing dot or space, no reserved device name, and not absurdly long. Any other script
+// (a Chinese name typed on 档案) is fine.
 export function isSafeVersionName(name: string): boolean {
-  return !/[/\\]|\.\./.test(name);
+  if (!name || name.length > 80) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[<>:"/\\|?*\x00-\x1f]|\.\./.test(name)) return false;
+  if (/[. ]$/.test(name)) return false;
+  return !/^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(name);
 }
 
 // The model no longer chooses section HEADINGS or structure — it only selects which

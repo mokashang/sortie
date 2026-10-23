@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { rejectOutreach, unapproveOutreach } from "@/network/gate";
 import { approveOutreachAndMaybeAutoStart } from "@/apply/referral-glue";
-import { withUser, failResponse } from "@/lib/actor";
+import { withUser, failResponse, requireBrowser } from "@/lib/actor";
 import { readJsonBody } from "@/lib/request-body";
 
 // POST {outreachId, decision: 'approve'|'reject'} — user's decision from the draft-approval UI.
-export const POST = withUser(async (req, { userId }) => {
+export const POST = withUser(async (req, actor) => {
+  requireBrowser(actor);
+  const { userId } = actor;
   try {
     const body = await readJsonBody(req);
     const outreachId = Number(body.outreachId);

@@ -2,8 +2,13 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
+import { revokePersonalTokens } from "@/lib/api-tokens";
+import { getUser } from "@/lib/users";
 import { getDb } from "@/lib/db";
-import { onUserCreated, purgeUserData } from "@/lib/users";
+import { onUserCreated, purgeUserData, removeUserFiles } from "@/lib/users";
+import { listMailAccounts } from "@/inbox/store";
+import { revokeToken } from "@/inbox/google";
 import { mailerConfigured, sendMail, verificationMail, resetPasswordMail, changeEmailMail, deleteAccountMail } from "@/lib/mailer";
 import { langFromCookieHeader, type Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
@@ -110,6 +115,9 @@ export function buildAuth() {
       disableSignUp: signupDisabled(env),
       requireEmailVerification: mailerConfigured(env),
       revokeSessionsOnPasswordReset: true,
+      onPasswordReset: async ({ user }) => {
+        revokePersonalTokens(getDb(), user.id);
+      },
       sendResetPassword: async ({ user, url }, request) => {
         await sendMail(resetPasswordMail(user.email, user.name, url, mailLang(request)));
       },
@@ -123,12 +131,12 @@ export function buildAuth() {
     },
     socialProviders: google,
     account: {
-      // Google is trusted, so a Google sign-in with the same email links to the existing
-      // password account. Better Auth 1.7 additionally insists the LOCAL email be verified before
-      // linking; without a mailer nobody's local email ever gets verified (verification is not
-      // required then), so that check is waived — Google itself vouches for the address. With a
-      // mailer the check stays on: an unverified local account cannot be entered via Google.
-      accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: mailerConfigured() },
+      // Google is trusted, so a Google sign-in with the same email links to the existing password
+      // account — but only one whose local email was verified. Waiving that check when no mailer is
+      // configured (until 2026-10-22) let anyone who registered a password account under someone
+      // else's address inherit that person's Google sign-in later, password included. The owner's
+      // Google is already linked; linking from Settings while signed in is unaffected.
+      accountLinking: { enabled: true, trustedProviders: ["google"], requireLocalEmailVerified: true },
     },
     session: {
       expiresIn: SESSION_TTL_S,
@@ -161,12 +169,31 @@ export function buildAuth() {
               },
             }
           : {}),
+        // The owner account holds this machine (the internal token, the dispatcher, the job-search
+        // Chrome); deleting it would let the next sign-up become owner. Refused outright.
+        beforeDelete: async (user) => {
+          if (getUser(getDb(), user.id)?.role === "owner") {
+            throw new APIError("FORBIDDEN", { message: messages[serverLang()].errors.ownerCannotDelete });
+          }
+        },
         afterDelete: async (user) => {
-          purgeUserData(getDb(), user.id);
+          const db = getDb();
+          // Its Gmail grants are revoked at Google first (best effort), not just forgotten here.
+          await Promise.all(listMailAccounts(db, user.id).map((a) => revokeToken(a.refreshToken).catch(() => false)));
+          purgeUserData(db, user.id);
+          removeUserFiles(user.id);
         },
       },
     },
     databaseHooks: {
+      account: {
+        update: {
+          // Better Auth writes a credential account only to change its password.
+          after: async (account) => {
+            if (account.providerId === "credential") revokePersonalTokens(getDb(), account.userId);
+          },
+        },
+      },
       user: {
         create: {
           after: async (user) => {

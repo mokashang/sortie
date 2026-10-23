@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { dispatchAttended, attendedStatus, heartbeatAgeMs, HEARTBEAT_STALE_MS } from "@/executor/attended";
+import { dispatchAttended, attendedStatus, failUnservableMemberRuns, heartbeatAgeMs, HEARTBEAT_STALE_MS } from "@/executor/attended";
 import { maybeRefreshChrome } from "@/executor/chrome-refresh";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
@@ -34,6 +34,8 @@ export const POST = withInternal(async () => {
     // no browser open (nights, days away) a hung headless claude -p kept its process and Chrome
     // forever, and its 'running' row held back every auto-start guard.
     reapStaleRuns(db);
+    const unservable = failUnservableMemberRuns(db);
+    if (unservable.length > 0) console.log(`[attended] failed ${unservable.join(",")}: another account's Chrome task with no session of its own`);
     // Jobs taken by a run that is over and never reported (src/apply/followup.ts): back to the
     // queue, and the ones the user answered questions for become a targeted run.
     const reclaimed = owner ? reclaimStrandedPrepared(db, owner) : undefined;

@@ -1,6 +1,6 @@
 import { DB, logEvent } from "@/lib/db";
 import { Family } from "@/scanner/board-key";
-import { BoardRow, SeedEntry, Tier, discoverBoardsFromJobs, dueBoards, iso, markBoardResult, mergeBoardMeta, syncBoardsSeed } from "@/scanner/boards";
+import { BoardRow, SeedEntry, Tier, discoverBoardsFromJobs, dueBoards, iso, markBoardResult, mergeBoardMeta, muteBoard, syncBoardsSeed, upsertBoards } from "@/scanner/boards";
 import { LIVE_REGISTRY } from "@/scanner/sources/index";
 import { FamilyConfig, Registry } from "@/scanner/sources/types";
 import { upsertJobs } from "@/scanner/upsert";
@@ -19,10 +19,11 @@ export interface TickOptions {
 export interface TickSummary {
   boards: number; inserted: number; upgraded: number; duplicates: number; visaSkipped: number; locSkipped: number;
   // truncated = 因截止时刻提前收手的板块数;pausedUntil = 共用主机的 family 吃到 429 后歇到什么时候(都只在发生时出现)
-  byFamily: Record<string, { boards: number; inserted: number; errors: number; truncated?: number; pausedUntil?: string }>;
+  byFamily: Record<string, { boards: number; inserted: number; errors: number; truncated?: number; pausedUntil?: string; moved?: number }>;
   errors: { key: string; error: string }[]; durationMs: number;
 }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const parseDirections = (s: string | null): string[] | undefined => { try { const v = s ? JSON.parse(s) : null; return Array.isArray(v) ? v : undefined; } catch { return undefined; } };
 
 // 一跳的预算只管「还挑不挑新板块」;已经开始的板块由截止时刻收住:跳的截止时刻,但至少留给它这么久
 // (第 89 秒才开始的板块也要能把列表问完)。所以一跳最长约 预算 + 20 秒 + 一个请求的超时。
@@ -80,17 +81,26 @@ export async function runTick(db: DB, opts: TickOptions = {}): Promise<TickSumma
     // 工程标题门只对非精选来源生效:种子公司和清单不设门(spec §2)。门也交给适配器,门外的岗不拉详情。
     const gate = cfg.gated && b.origin !== "seed";
     let cut = false;
+    let movedTo: string | null = null;
     try {
       let rows = await cfg.fetch(b, {
         fetcher, depth: b.tier === "core" ? "core" : "longtail", isKnownUrl, now, setMeta: (p) => mergeBoardMeta(db, b.key, p),
         deadline: Math.max(deadline, Date.now() + BOARD_MIN_MS), wantTitle: gate ? isEngineeringTitle : undefined,
         truncated: () => { cut = true; fam.truncated = (fam.truncated ?? 0) + 1; },
+        moved: (k) => { movedTo = k; },
       });
       if (gate) rows = rows.filter((r) => isEngineeringTitle(r.title));
-      const s = upsertJobs(db, rows, { boardKey: b.key, now });
+      // 搬家:先按老板块的身份登记新板块(入库时按链接自动登记的话会丢掉 origin / 层级),再入库。
+      if (movedTo) upsertBoards(db, [{ key: movedTo, company: b.company, origin: b.origin, tier: b.tier === "muted" ? undefined : b.tier, directions: parseDirections(b.directions) }]);
+      const s = upsertJobs(db, rows, { boardKey: movedTo ?? b.key, now });
       summary.inserted += s.inserted; summary.upgraded += s.upgraded; summary.duplicates += s.duplicates;
       summary.visaSkipped += s.visaSkipped; summary.locSkipped += s.locSkipped; fam.inserted += s.inserted;
       for (const e of s.errors) summary.errors.push({ key: b.key, error: e.error });
+      if (movedTo) {
+        markBoardResult(db, movedTo, { ok: true, truncated: cut, now, rand: opts.rand });
+        muteBoard(db, b.key, `moved to ${movedTo}`);           // 记 board_retier;来源页可以改回
+        fam.moved = (fam.moved ?? 0) + 1;
+      }
       markBoardResult(db, b.key, { ok: true, truncated: cut, now, rand: opts.rand });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

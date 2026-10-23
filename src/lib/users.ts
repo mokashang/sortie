@@ -151,7 +151,10 @@ export function onUserCreated(db: DB, user: { id: string; email: string }, opts:
   let becameOwner = false;
   let claimed: ClaimResult | null = null;
   const ownerEmail = opts.ownerEmail?.trim().toLowerCase() || null;
-  const eligible = ownerEmail ? user.email.trim().toLowerCase() === ownerEmail : true;
+  // Without SORTIE_OWNER_EMAIL only the very first account may become owner: if the owner row ever
+  // went missing with other accounts around, the next sign-up must not inherit this machine.
+  const others = (db.prepare("SELECT COUNT(*) n FROM user WHERE id <> ?").get(user.id) as { n: number }).n;
+  const eligible = ownerEmail ? user.email.trim().toLowerCase() === ownerEmail : others === 0;
   if (!ownerId(db) && eligible) {
     setRole(db, user.id, "owner");
     becameOwner = true;
@@ -196,4 +199,15 @@ export function purgeUserData(db: DB, userId: string): Record<string, number> {
 export { dataDir };
 export function userDataDir(userId: string): string {
   return path.join(dataDir(), "users", userId);
+}
+
+// A deleted account's files go with it: its documents (transcripts), résumés, generated work and
+// its background-browser profile with that account's signed-in cookies. Only a plain id under
+// data/users/ is ever removed.
+export function removeUserFiles(userId: string): boolean {
+  if (!/^[A-Za-z0-9_-]+$/.test(userId) || userId === "legacy") return false;
+  const dir = userDataDir(userId);
+  if (!fs.existsSync(dir)) return false;
+  fs.rmSync(dir, { recursive: true, force: true });
+  return true;
 }
