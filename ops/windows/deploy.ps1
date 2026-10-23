@@ -56,8 +56,23 @@ function Get-Json($url) {
 }
 
 if (-not $Force) {
-  $attended = Get-Json "$Base/api/executor/dispatch"
-  $status = Get-Json "$Base/api/executor/status"
+  # Fail closed: a probe that does not answer is NOT "nothing running". On 2026-10-22 both probes
+  # timed out at 5 s while the server was busy, the guard read that as idle, and the restart cut
+  # off a running apply task (#620). Each probe gets three tries with a longer timeout; if the
+  # server still does not answer, refuse — when it is really down, re-run with -Force.
+  function Get-JsonPatient($url) {
+    for ($i = 0; $i -lt 3; $i++) {
+      try { return Invoke-RestMethod -Uri $url -TimeoutSec 20 -Headers (Get-AuthHeaders) } catch { Start-Sleep -Seconds 5 }
+    }
+    return $null
+  }
+  $attended = Get-JsonPatient "$Base/api/executor/dispatch"
+  $status = Get-JsonPatient "$Base/api/executor/status"
+  if ($null -eq $attended -or $null -eq $status) {
+    Write-Host "Refusing to deploy: the server did not answer the attended-work check ($Base/api/executor/dispatch, /status), so live work cannot be ruled out." -ForegroundColor Yellow
+    Write-Host "If the server is down or wedged and needs this deploy, re-run with -Force." -ForegroundColor Yellow
+    exit 2
+  }
   # Since 2026-09-30 several sessions can run side by side (parallel apply tasks): `spawns` lists
   # them all; an older server only reports the one `spawn`.
   $spawns = @()
