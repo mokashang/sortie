@@ -43,6 +43,12 @@ export const notify = defineMessages({
       title: (company: string) => `Sortie · 已自动投出 ${company}`,
       body: (jobTitle: string) => `${jobTitle} — 自动投递已开启,助手填好后直接提交了;记录在「历史」里。`,
     },
+    // An approved fill whose Submit click the assistant was refused (src/apply/submit-blocked.ts).
+    submitBlocked: {
+      title: (company: string) => `Sortie · ${company} 填好了,等你点提交`,
+      titleMany: (n: number) => `Sortie · ${n} 份申请填好了,等你点提交`,
+      body: (jobTitle: string) => `${jobTitle} — 助手的提交被拦下了。去求职 Chrome 里那个标签页点 Submit,再到投递页「待处理」点「我提交了」;也可以让助手再试一次。`,
+    },
     // How a plan (接力链) ended, and a task that gave up with jobs untouched (src/apply/continue.ts,
     // src/apply/plan-alerts.ts). Only stuckTitle / failedTitle come with a 待处理 card.
     plan: {
@@ -133,6 +139,11 @@ export const notify = defineMessages({
     autoSubmitted: {
       title: (company: string) => `Sortie · auto-submitted to ${company}`,
       body: (jobTitle: string) => `${jobTitle} — auto-apply is on, so the assistant submitted as soon as the form was filled; it is in History.`,
+    },
+    submitBlocked: {
+      title: (company: string) => `Sortie · ${company} is filled and waiting for your Submit`,
+      titleMany: (n: number) => `Sortie · ${n} applications are filled and waiting for your Submit`,
+      body: (jobTitle: string) => `${jobTitle} — the assistant wasn't allowed to click Submit. Click it in that tab of the job-search Chrome, then press I submitted it under To do on the Apply page; or have the assistant try again.`,
     },
     plan: {
       doneTitle: (root: number) => `Sortie · plan #${root} is done`,

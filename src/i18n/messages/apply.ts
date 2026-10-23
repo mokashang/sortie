@@ -109,6 +109,17 @@ export const apply = defineMessages({
         retry: "让助手再试一次",
         selfDone: "我自己投完了",
       },
+      // The fill is approved but the assistant's Submit click was refused by its own permission check.
+      submit: {
+        title: "表单已填好、已批准,但助手没能点提交",
+        chip: "已批准 · 等你点提交",
+        instructions: "去求职 Chrome 里这家公司的那个标签页点 Submit,看到提交成功后点「我提交了」。那个标签页已经没了就点「让助手再试一次」,助手会重新填好再提交。",
+        notePlaceholder: "给助手留言(可选),比如「标签页里的 reCAPTCHA 我勾好了」",
+        done: "我提交了",
+        retry: "让助手再试一次",
+        retriedTab: (company: string) => `已让助手回到 ${company} 的标签页再点一次提交`,
+        retriedFresh: (company: string) => `${company} 已交回助手,会重新填好再提交`,
+      },
       field: {
         optional: "(可选)",
         rememberTip: (key: string) => `答案会以「${key}」存进标准答案,下次自动填`,
@@ -402,6 +413,16 @@ export const apply = defineMessages({
         handle: "Go handle it",
         retry: "Let the assistant try again",
         selfDone: "I applied myself",
+      },
+      submit: {
+        title: "Filled and approved, but the assistant wasn't allowed to click Submit",
+        chip: "Approved · waiting for your Submit",
+        instructions: "Open this company's tab in the job-search Chrome and click Submit; once it says it went through, press I submitted it. If the tab is gone, press Have the assistant try again and it fills the form afresh and submits.",
+        notePlaceholder: "Message to the assistant (optional), e.g. \"I ticked the reCAPTCHA in the tab\"",
+        done: "I submitted it",
+        retry: "Have the assistant try again",
+        retriedTab: (company: string) => `Asked the assistant to go back to the ${company} tab and click Submit again`,
+        retriedFresh: (company: string) => `${company} is back with the assistant; it fills the form afresh and submits`,
       },
       field: {
         optional: "(optional)",

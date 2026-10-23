@@ -6,6 +6,7 @@ import { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT } from "@/app/lib
 import { rowResult, plannedCounts, recordChainEnd, ClaimedRow, ChainEnd } from "@/apply/run-outcome";
 import { startExecutor, hasLiveOrQueuedRun, ExecutorChannel, StartOptions } from "@/executor/runner";
 import { inviteBudget } from "@/apply/invite-budget";
+import { SUBMIT_BLOCKED_PREFIX } from "@/apply/queue";
 import { notify } from "@/lib/notify";
 import { serverLang } from "@/lib/prefs";
 import { messages } from "@/i18n/messages";
@@ -61,12 +62,18 @@ export type ContinueResult =
   | { action: "queued"; runId: number; channel: ExecutorChannel }
   | { action: "paused"; runId: number; unconfirmed: number; until?: string };
 
-// Filled applications the account has not decided on yet — each one is an open Chrome tab
-// waiting for a click on /apply. Approving or rejecting shrinks it; submitting does not change it.
+// Filled applications waiting on the user — each one is an open Chrome tab: the ones not decided
+// on yet (a click on /apply), and the approved ones whose Submit the assistant was not allowed to
+// click (a 「点提交」 card, 2026-10-22: the user clicks Submit in that tab). Approving, rejecting,
+// 「我提交了」, a retry or a skip shrinks it.
 export function unconfirmedCount(db: DB, userId: string): number {
   return (
     db
-      .prepare("SELECT COUNT(*) n FROM applications WHERE user_id = ? AND status = 'awaiting_confirm' AND confirm_decision IS NULL")
+      .prepare(
+        `SELECT COUNT(*) n FROM applications WHERE user_id = ?
+           AND ((status = 'awaiting_confirm' AND confirm_decision IS NULL)
+             OR (status = 'matched' AND needs_manual_reason LIKE '${SUBMIT_BLOCKED_PREFIX}%'))`
+      )
       .get(userId) as { n: number }
   ).n;
 }
@@ -128,10 +135,10 @@ function insertPausedRun(db: DB, userId: string, channel: ExecutorChannel, optio
   const summary =
     why ??
     (unconfirmed >= BACKLOG_PAUSE_AT
-      ? `等待确认:${unconfirmed} 份填好的申请还没确认,降到 ${BACKLOG_RESUME_AT} 份以下自动继续`
+      ? `等你处理:${unconfirmed} 份填好的申请还没确认或还没点提交,降到 ${BACKLOG_RESUME_AT} 份以下自动继续`
       : live
         ? "等排在前面的任务做完再继续"
-        : `等待确认:${unconfirmed} 份填好的申请还没确认,降到 ${BACKLOG_RESUME_AT} 份以下自动继续`);
+        : `等你处理:${unconfirmed} 份填好的申请还没确认或还没点提交,降到 ${BACKLOG_RESUME_AT} 份以下自动继续`);
   const r = db
     .prepare("INSERT INTO executor_runs (user_id, kind, status, channel, pid, options, summary) VALUES (?, 'apply', 'paused', ?, NULL, ?, ?)")
     .run(userId, channel, JSON.stringify(options), summary);

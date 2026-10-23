@@ -11,8 +11,9 @@ import { getBackend } from "@/llm/registry";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 import { notify } from "@/lib/notify";
 import { withUser, failResponse } from "@/lib/actor";
+import { notifySubmitBlocked } from "@/apply/submit-blocked";
 
-const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "needs_manual", "error", "closed", "already_applied"]);
+const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "needs_manual", "error", "closed", "already_applied", "submit_blocked"]);
 
 // Executor -> App: status reports during and after a fill attempt.
 // body.status === 'submitted' is routed to reportSubmitted (the red-line gate) instead of
@@ -25,6 +26,10 @@ const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "need
 // candidate's facts (response `autoAnswered: true` + `infoAnswers` — the assistant fills them into
 // the tab it still has open). Only what the App could not answer, and the items nobody but the
 // user can do (sign in, captcha, a missing file, a manual step), still become a 待处理 card.
+//
+// submit_blocked (2026-10-22): the session's own permission check refused the Submit click on an
+// approved fill. The row becomes a 「点提交」 card (queue.ts parkBlockedSubmit) and the user gets a
+// push — at most one per half hour (src/apply/submit-blocked.ts); the session moves on.
 export const POST = withUser(async (req, { userId }) => {
   const body = await readJsonBody(req);
   try {
@@ -68,6 +73,11 @@ export const POST = withUser(async (req, { userId }) => {
     reportFill(db, userId, { ...body, jobId: Number(body.jobId), archive: flag(body.archive), boardGone: flag(body.boardGone) } as ReportFillInput);
     const jobId = Number(body.jobId);
     const autoSubmit = getAutoSubmit(db, userId);
+
+    if (body.status === "submit_blocked") {
+      notifySubmitBlocked(db, userId, jobId, lang);
+      return NextResponse.json({ ok: true, card: "submit" });
+    }
 
     if (body.status === "awaiting_confirm" && autoSubmit) {
       const autoApproved = autoApproveIfEnabled(db, userId, jobId);
