@@ -174,6 +174,15 @@ the card automatically continues the work — there is no dead end:
   records it, or skip. Take-home tasks, coding exercises, reports and writing samples are NOT
   cards: the assistant does them from the user's real experience and they show up on the To
   confirm card for review.
+- **Click Submit** (2026-10-22) — the form is filled and approved, but the assistant's own
+  permission check refused its click on the final Submit button (it treats submitting an
+  application as a real-world transaction a person has to make; this is a Claude Code setting on
+  the always-on machine, not something the app controls). The assistant reports it, leaves the tab
+  open and moves on. The user clicks Submit in that tab of the job-search Chrome and presses "I
+  submitted it"; or "Have the assistant try again" (the session holding the tab clicks again; if
+  that session is gone the form is filled afresh); or skips. A push notification goes out, at most
+  one per half hour. These cards count as filled for the plan, and 10 or more of them pause the
+  relay like unconfirmed applications do, until they are down to 5.
 - **Assistant error** — a tool failure or a page that would not render. The app retries an error
   by itself (after an hour, then after six more hours) without showing a card; only a third
   failure becomes a card ("Let the assistant try again").

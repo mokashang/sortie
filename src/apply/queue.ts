@@ -237,7 +237,9 @@ export function takeNextApplication(
 //   login  — a sign-in / registration wall; the user logs in once in their own Chrome
 //   action — something to do in the open tab right now (CAPTCHA, 2FA); the assistant waits
 //   manual — only the user can finish this one (video answer, repeated errors, a rejected fill)
-export type InfoKind = "text" | "file" | "login" | "action" | "manual";
+//   submit — the form is filled and approved, but the assistant's Submit click was refused by its
+//            own permission check (2026-10-22): the user clicks Submit in that tab
+export type InfoKind = "text" | "file" | "login" | "action" | "manual" | "submit";
 
 export interface InfoQuestion {
   key: string; // text: standard_answers key (e.g. "high_school"); file: document key (e.g. "transcript"); others: any id
@@ -254,17 +256,18 @@ export interface InfoQuestion {
 }
 
 export const MULTI_ANSWER_SEP = "; ";
-const INFO_KINDS: InfoKind[] = ["text", "file", "login", "action", "manual"];
+const INFO_KINDS: InfoKind[] = ["text", "file", "login", "action", "manual", "submit"];
 
 export function infoKind(q: InfoQuestion): InfoKind {
   return q.kind ?? "text";
 }
 
-// Items the executor doesn't wait for: a login wall or something only the user can finish by
-// hand pause the application right away (status matched + reason + items) and the executor
-// moves on; everything else keeps it on the tab (needs_info) until answered or timed out.
+// Items the executor doesn't wait for: a login wall, something only the user can finish by hand,
+// or a Submit click the user has to make pause the application right away (status matched +
+// reason + items) and the executor moves on; everything else keeps it on the tab (needs_info)
+// until answered or timed out.
 export function pausesImmediately(questions: InfoQuestion[]): boolean {
-  return questions.some((q) => infoKind(q) === "login" || infoKind(q) === "manual");
+  return questions.some((q) => infoKind(q) === "login" || infoKind(q) === "manual" || infoKind(q) === "submit");
 }
 
 export function hostOf(url: string | null | undefined): string {
@@ -330,6 +333,40 @@ export function parkWithItems(db: DB, userId: string, jobId: number, items: Info
   ).run(reason, JSON.stringify(items), userId, jobId);
 }
 
+// 提交被拦 (2026-10-22, the user: 「提交被拦时会话报给 App 然后继续下一个,App 出一张卡」). The
+// dispatcher-spawned sessions are Claude Code processes whose own permission check refuses the
+// final Submit click as a real-world transaction — inconsistently at first (IMC and OpenAI went
+// through on 10-16, Perpay did not), then every time (task #606: ten forms filled, auto-approved,
+// none sent). The session used to stop and wait for someone to allow the click in a terminal
+// nobody sees, and the stranded-approval guard kept queueing resume runs that refilled and got
+// refused again. Now the session reports submit_blocked and moves on; the row is parked with a
+// `submit` item: the user clicks Submit in that tab and presses 「我提交了」, or has the assistant
+// try again (src/apply/submit-blocked.ts), or skips the job. The approval stays on the row
+// (confirm_decision 'approved'): the form was filled and approved, so it counts as filled for the
+// plan (run-outcome rowResult), and a retry can hand it straight back to the session.
+export const SUBMIT_ITEM_KEY = "submit";
+export const SUBMIT_BLOCKED_PREFIX = "submit blocked: ";
+
+export function isSubmitBlockedReason(reason: string | null | undefined): boolean {
+  return !!reason && reason.startsWith(SUBMIT_BLOCKED_PREFIX);
+}
+
+export function parkBlockedSubmit(db: DB, userId: string, jobId: number, reason: string): void {
+  const row = db.prepare("SELECT a.status, a.confirm_decision, j.apply_url FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.user_id = ? AND a.job_id = ?").get(userId, jobId) as
+    | { status: string; confirm_decision: string | null; apply_url: string | null }
+    | undefined;
+  if (!row) throw new Error(`parkBlockedSubmit: no application for job ${jobId}`);
+  // Only an approved fill is ever submitted, so only an approved fill can have its Submit refused.
+  if (row.status !== "awaiting_confirm" || row.confirm_decision !== "approved") {
+    throw new Error(`parkBlockedSubmit: job ${jobId} is not approved+awaiting_confirm (status=${row.status}, confirm_decision=${row.confirm_decision ?? "none"})`);
+  }
+  const item: InfoQuestion = { key: SUBMIT_ITEM_KEY, label: "表单已填好并批准,助手的提交被拦下了", kind: "submit" };
+  if (reason.trim()) item.hint = reason.trim().slice(0, 600);
+  if (row.apply_url) item.url = row.apply_url;
+  parkWithItems(db, userId, jobId, [item], `${SUBMIT_BLOCKED_PREFIX}${reason.trim() || "the session's permission check refused the Submit click"}`);
+  logEvent(db, "application_submit_blocked", { userId, entity: "application", entityId: jobId, payload: { reason: reason.slice(0, 300) } });
+}
+
 // Errors retry themselves (2026-10-06, the user: "为啥还需要我点击重试,必须自动重试"). Ten of the
 // 68 cards on 2026-10-01 were errors whose only exit was 「让助手再试一次」 — eight of them LinkedIn
 // refusing to render pages for a few hours. An error is parked out of sight with this reason
@@ -387,7 +424,9 @@ export interface ReportFillInput {
   jobId: number;
   // closed = the posting is gone (404 / "no longer available"): archived, never a to-do.
   // already_applied = the ATS already has an application on file: recorded into /history.
-  status: "awaiting_confirm" | "needs_manual" | "needs_info" | "error" | "closed" | "already_applied";
+  // submit_blocked = the fill was approved but the assistant's Submit click was refused by its own
+  // permission check: a 待处理 card for the user to click Submit in that tab (parkBlockedSubmit).
+  status: "awaiting_confirm" | "needs_manual" | "needs_info" | "error" | "closed" | "already_applied" | "submit_blocked";
   // closed only: the whole board is gone (the company left this ATS), not just this posting —
   // mute the board so the scanner stops asking it.
   boardGone?: boolean;
@@ -472,6 +511,11 @@ export function reportFill(db: DB, userId: string, input: ReportFillInput): void
       input.jobId,
       `助手打开申请页时发现此前已投过(${input.reason?.trim() ? input.reason.trim() : "already applied"}),提交日期未知`
     );
+    return;
+  }
+
+  if (input.status === "submit_blocked") {
+    parkBlockedSubmit(db, userId, input.jobId, input.reason ?? "");
     return;
   }
 
