@@ -45,6 +45,13 @@ describe("runTick", () => {
     expect((await runTick(db, { now: NOW, registry, seed: null, localHour: 12 })).boards).toBe(0);
     expect((await runSweep(db, { now: NOW, registry, seed: null, tiers: ["longtail"], localHour: 12 })).boards).toBe(2);
   });
+  it("caps boards per family in a tick, but a sweep asks every board", async () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, ["a", "b", "c"].map((k) => ({ key: `greenhouse:${k}`, origin: "url" as const })));
+    const registry: Registry = { greenhouse: { concurrency: 1, minGapMs: 0, gated: false, fetch: async () => [] } };
+    expect((await runTick(db, { now: NOW, registry, seed: null, perFamily: 1, localHour: 12 })).boards).toBe(1);
+    expect((await runSweep(db, { now: NOW, registry, seed: null, localHour: 12 })).boards).toBe(3);
+  });
   it("syncs the seed on first tick when seed is provided", async () => {
     const db = openDb(":memory:");
     await runTick(db, { now: NOW, registry: {}, seed: [{ key: "ashby:openai", company: "OpenAI" }], localHour: 12 });
