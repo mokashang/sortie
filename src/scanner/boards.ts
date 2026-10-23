@@ -75,10 +75,47 @@ export function syncBoardsSeed(db: DB, seed: SeedEntry[]): void {
   upsertBoards(db, seed.map((e) => ({ key: e.key, company: e.company ?? null, origin: e.builtin ? "builtin" : "seed", directions: e.directions, meta: e.meta })));
 }
 
-// 每个已入库岗位的 board_key 都是一个可轮询板块的证据:没见过的建成 longtail。
-export function discoverBoardsFromJobs(db: DB): number {
-  const rows = db.prepare("SELECT board_key AS key, MIN(company) AS company FROM jobs WHERE board_key IS NOT NULL GROUP BY board_key").all() as { key: string; company: string }[];
-  return upsertBoards(db, rows.map((r) => ({ key: r.key, company: r.company, origin: "url" as const }))).inserted;
+// 能从岗位链接里长出来的只有公司自己的 ATS 板块。LinkedIn 游客接口、Amazon、字节门户、Chrome 站点、
+// GitHub 清单都是种子 / 内置的单行,只由种子(和 ingest)建。
+export const URL_DISCOVERABLE: ReadonlySet<Family> = new Set<Family>(["greenhouse", "lever", "ashby", "workday", "smartrecruiters", "oracle", "icims", "workable"]);
+// 新发现的板块首轮轮询在这几个小时内错开(同 importDirectory):一个清单一次冒出几十家,也不会挤进同一跳、压垮打分器。
+export const DISCOVERY_SPREAD_HOURS = 6;
+export interface DiscoverOpts { now?: Date; rand?: () => number; spreadHours?: number; }
+
+// 岗位链接 → 板块(origin=url,longtail,工程标题门照常生效)。只建没见过的 key:已有的行(种子、静音、
+// 用户锁定的)一个字段都不碰。返回新建了几个。
+export function registerUrlBoards(db: DB, found: Map<string, string | null>, opts: DiscoverOpts = {}): number {
+  const exists = db.prepare("SELECT 1 FROM boards WHERE key = ?");
+  const fresh: BoardSpec[] = [];
+  for (const [key, company] of found) {
+    const i = key.indexOf(":");
+    if (i <= 0 || !URL_DISCOVERABLE.has(key.slice(0, i) as Family) || exists.get(key)) continue;
+    fresh.push({ key, company, origin: "url" });
+  }
+  if (!fresh.length) return 0;
+  const now = (opts.now ?? new Date()).getTime();
+  const rand = opts.rand ?? Math.random;
+  const spread = (opts.spreadHours ?? DISCOVERY_SPREAD_HOURS) * 3600_000;
+  const upd = db.prepare("UPDATE boards SET next_due_at = ? WHERE key = ?");
+  db.transaction(() => {
+    upsertBoards(db, fresh);
+    for (const s of fresh) upd.run(iso(new Date(now + rand() * spread)), s.key);
+  })();
+  return fresh.length;
+}
+
+// 补登:jobs.board_key 里出现过、boards 里还没有的 key。只走 idx_jobs_board_key(生产库 19 万行 ~10 ms),
+// 公司名逐个按索引取一行;不要改回对 jobs 全表 GROUP BY(~300 ms,还会把 jd_text 溢出页读一遍)。
+// 平时由 upsertJobs 随到随登,这里是迁移和每个进程第一跳的兜底。
+export function discoverBoardsFromJobs(db: DB, opts: DiscoverOpts = {}): number {
+  const orphans = db.prepare(
+    `SELECT k.board_key AS key FROM (SELECT DISTINCT board_key FROM jobs WHERE board_key IS NOT NULL) k
+     WHERE NOT EXISTS (SELECT 1 FROM boards b WHERE b.key = k.board_key)`
+  ).all() as { key: string }[];
+  if (!orphans.length) return 0;
+  const company = db.prepare("SELECT company FROM jobs WHERE board_key = ? LIMIT 1");
+  const found = new Map(orphans.map((o) => [o.key, (company.get(o.key) as { company: string | null } | undefined)?.company ?? null]));
+  return registerUrlBoards(db, found, opts);
 }
 
 export function getBoard(db: DB, key: string): BoardRow | undefined {

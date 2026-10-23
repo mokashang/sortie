@@ -31,6 +31,9 @@ import { ownerId } from "@/lib/users";
 import { settleRunOutcome } from "@/apply/run-outcome";
 import { getAiProvider, type AiProvider } from "@/ai/config";
 import { buildAttendedAgentLaunch } from "@/ai/runtime";
+import { notify } from "@/lib/notify";
+import { messages } from "@/i18n/messages";
+import { serverLang } from "@/lib/prefs";
 
 export type { SpawnRecord } from "@/executor/sessions";
 
@@ -87,8 +90,38 @@ export const BOOT_GRACE_MS = 5 * 60 * 1000;
 // after every further silence of this length, until the run ends. A single long form can take
 // a while, so this is well above one fill; a reminder typed mid-fill is only read afterwards.
 export const STALL_NUDGE_MS = 10 * 60 * 1000;
+// ...and one still silent after this many reminders (the next one due, so another STALL_NUDGE_MS
+// of silence) is wedged — a hung browser tool call, a usage-limit screen, a TUI stuck at startup:
+// it is reaped, and its run chains on to a fresh session (closeOutReapedSession). Before
+// 2026-10-16 the reminders repeated forever, the run stayed 'running', and the queue and every
+// approval waited behind it.
+export const STALL_REAP_AFTER_NUDGES = 3;
+type StallCounts = Map<number, { nudges: number; mtime: number | null }>;
+function stallCountsOf(db: DB): StallCounts {
+  const g = globalThis as { __sortieStallCounts?: WeakMap<DB, StallCounts> };
+  const all = (g.__sortieStallCounts ??= new WeakMap());
+  let m = all.get(db);
+  if (!m) all.set(db, (m = new Map()));
+  return m;
+}
 // Only the macOS expect wrapper's `set timeout`: the session itself has no age limit.
 export const SPAWN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// A session that exits before claiming anything (an expired CLI login, a flag a CLI update no
+// longer takes) used to be respawned every other tick forever — a fresh token and a longer
+// attended-<run>.log each time, the run never failing, nobody told. Each such exit waits twice as
+// long before the next spawn for that run (1, 2 min …); after this many the run is failed and
+// the user gets a notification.
+export const EARLY_EXIT_LIMIT = 3;
+const EARLY_EXIT_BACKOFF_MS = 60_000;
+type EarlyExits = Map<number, { count: number; at: number }>;
+// Per database (run ids are only unique within one), kept across dev hot reloads.
+function earlyExitsOf(db: DB): EarlyExits {
+  const g = globalThis as { __sortieEarlyExits?: WeakMap<DB, EarlyExits> };
+  const all = (g.__sortieEarlyExits ??= new WeakMap());
+  let m = all.get(db);
+  if (!m) all.set(db, (m = new Map()));
+  return m;
+}
 
 export function heartbeatKey(userId: string): string {
   return `${HEARTBEAT_KEY}:${userId}`;
@@ -161,6 +194,8 @@ export interface SessionInput {
   runningQuietMs: number | null;
   // The stall reminder for that run has not been typed recently.
   stallNoticeDue: boolean;
+  // Reminders already typed during this silence of that run (STALL_REAP_AFTER_NUDGES).
+  stallNudgesSent?: number;
   // Spawned moments ago and has not claimed anything yet (BOOT_GRACE_MS).
   booting: boolean;
   // An approved application in one of its tabs (only matters when it is unreachable).
@@ -198,11 +233,29 @@ export function planDispatch(input: PlanInput): Plan {
       reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} exited` });
       continue;
     }
+    if (
+      s.runningRunId != null &&
+      s.runningQuietMs != null &&
+      s.runningQuietMs >= STALL_NUDGE_MS &&
+      s.stallNoticeDue &&
+      (s.stallNudgesSent ?? 0) >= STALL_REAP_AFTER_NUDGES
+    ) {
+      reaps.push({
+        action: "reap",
+        pid: s.pid,
+        reason: `child ${s.pid} wedged: run #${s.runningRunId} silent for ${Math.round(s.runningQuietMs / 60_000)} min after ${s.stallNudgesSent} reminders`,
+      });
+      continue;
+    }
     const idle = s.idleForMs != null && s.idleForMs >= IDLE_REAP_MS;
     if (!s.reachable) {
       // It cannot be told anything. One still on a run of its own is left to finish it; one
       // between runs is in the way of the work waiting for it.
       if (s.approvalsWaiting) reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} is unreachable (server restarted?) and approvals wait in its tabs` });
+      // It cannot be reminded either: a run of its own silent as long as the reminders would
+      // have taken is just as wedged.
+      else if (s.runningRunId != null && s.runningQuietMs != null && s.runningQuietMs >= (STALL_REAP_AFTER_NUDGES + 1) * STALL_NUDGE_MS)
+        reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} is unreachable and run #${s.runningRunId} has been silent for ${Math.round(s.runningQuietMs / 60_000)} min` });
       else if (input.queued.length > 0 && s.runningRunId == null)
         reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} is unreachable (server restarted?) and work is waiting` });
       else if (idle) reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} idle for ${Math.round((s.idleForMs as number) / 60_000)} min` });
@@ -650,9 +703,14 @@ function approvalsIn(db: DB, userId: string, rec: SpawnRecord, spawns: SpawnReco
 function closeOutReapedSession(db: DB, rec: SpawnRecord, reason: string, spawns: SpawnRecord[]): void {
   const run = db.prepare("SELECT user_id FROM executor_runs WHERE id = ?").get(rec.runId) as { user_id: string } | undefined;
   if (run) {
+    // A session's token is bound to the run it was spawned for, not to the runs it claimed — and
+    // claim-next hands out the oldest queued run, so session B often works on the run session A
+    // was spawned for. Revoking by the claimed run's id killed A's token mid-work (every curl a
+    // 401). Tokens of runs another session was spawned for stay.
+    const spawnedForByOthers = new Set(spawns.filter((s) => !sameSession(s, rec)).map((s) => s.runId));
     for (const row of runsOfSession(db, run.user_id, rec, spawns).filter((r) => r.status === "running")) {
       db.prepare("UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=?").run(`attended session ended: ${reason}`, row.id);
-      revokeRunTokens(db, row.id);
+      if (!spawnedForByOthers.has(row.id)) revokeRunTokens(db, row.id);
       settleRunOutcome(db, row.id);
       // The session is gone, not the plan: a mid-segment apply run (a deploy restarted the
       // server, the child crashed) chains on to a fresh session with whatever is left, exactly
@@ -679,6 +737,8 @@ export interface DispatchResult {
 // the owner's queue only (see the module comment); with no owner yet there is nothing to do.
 export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResult {
   const now = (deps.now ?? (() => new Date()))();
+  const exitsByRun = earlyExitsOf(db);
+  const stalls = stallCountsOf(db);
   const isAlive = deps.isAlive ?? defaultIsAlive;
   const reachable = deps.reachable ?? isAttendedReachable;
   const mtime = deps.mtime ?? defaultMtime;
@@ -692,6 +752,8 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
 
   const views: SessionInput[] = [];
   const quietBy = new Map<number, number | null>();
+  const mtimeBy = new Map<number, number | null>();
+  const neverClaimed = new Set<number>();
   let busy: AttendedBusy | undefined;
   let changed = false;
   const updated = spawns.map((rec) => {
@@ -705,10 +767,18 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
     else if (!idleSince) idleSince = now.toISOString();
     if (idleSince !== (rec.idleSince ?? null)) changed = true;
     const mine = owner ? runsOfSession(db, owner, rec, spawns) : [];
+    if (mine.length === 0) neverClaimed.add(rec.pid);
+    else exitsByRun.delete(rec.runId); // it started fine: earlier exits no longer count
     const running = mine.find((r) => r.status === "running") ?? null;
     const runMtime = running?.log_path ? mtime(running.log_path) : null;
     const quiet = runMtime != null ? Math.max(0, now.getTime() - runMtime) : null;
     if (running) quietBy.set(running.id, quiet);
+    if (running) {
+      // A new log line ends the silence: its reminders no longer count.
+      const st = stalls.get(running.id);
+      if (st && st.mtime !== runMtime) stalls.delete(running.id);
+      mtimeBy.set(running.id, runMtime);
+    }
     views.push({
       pid: rec.pid,
       runId: rec.runId,
@@ -718,6 +788,7 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
       runningRunId: running?.id ?? null,
       runningQuietMs: quiet,
       stallNoticeDue: running ? noticeDue(`stall:${running.id}`, now.getTime(), STALL_NUDGE_MS) : false,
+      stallNudgesSent: running ? stalls.get(running.id)?.nudges ?? 0 : 0,
       booting: mine.length === 0 && now.getTime() - Date.parse(rec.startedAt) < BOOT_GRACE_MS,
       approvalsWaiting: owner ? approvalsIn(db, owner, rec, spawns) : false,
     });
@@ -740,6 +811,10 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
       (deps.kill ?? killTree)(d.pid);
       const rec = updated.find((s) => s.pid === d.pid);
       if (rec) closeOutReapedSession(db, rec, d.reason, updated);
+      if (rec && neverClaimed.has(d.pid) && !views.find((v) => v.pid === d.pid)?.alive) {
+        const prev = exitsByRun.get(rec.runId);
+        exitsByRun.set(rec.runId, { count: (prev?.count ?? 0) + 1, at: now.getTime() });
+      }
       remaining = remaining.filter((s) => s.pid !== d.pid);
       clearNoticesFor(d.pid);
       saveSpawns(db, remaining);
@@ -755,9 +830,25 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
       const ok = (deps.write ?? writeToAttended)(d.pid, stalledRunNotice(d.runId, quietMin));
       // Marked either way so an unwritable terminal is not retried every 10 s.
       markNotice(`stall:${d.runId}`, now.getTime());
+      stalls.set(d.runId, { nudges: (stalls.get(d.runId)?.nudges ?? 0) + 1, mtime: mtimeBy.get(d.runId) ?? null });
       notified ??= ok;
       console.log(`[attended] ${ok ? "nudged" : "could not nudge"} child ${d.pid}: ${d.reason}`);
     } else if (d.action === "spawn") {
+      const exits = exitsByRun.get(d.runId);
+      if (exits && exits.count >= EARLY_EXIT_LIMIT) {
+        exitsByRun.delete(d.runId);
+        const failed = db
+          .prepare("UPDATE executor_runs SET status='failed', summary=?, ended_at=datetime('now') WHERE id=? AND status='queued'")
+          .run(`the assistant exited ${exits.count} times right after starting, before taking this task (check the AI provider's login on this computer)`, d.runId);
+        if (failed.changes > 0) {
+          settleRunOutcome(db, d.runId);
+          const t = messages[serverLang()].notify.assistantWontStart;
+          void notify(t.title(d.runId), t.body(exits.count), { priority: "high" });
+        }
+        console.error(`[attended] run #${d.runId} failed: the assistant exited ${exits.count} times before claiming it`);
+        continue;
+      }
+      if (exits && now.getTime() - exits.at < EARLY_EXIT_BACKOFF_MS * 2 ** (exits.count - 1)) continue;
       const rec = spawnAttendedSession(db, d.runId, deps);
       spawned ??= rec;
       console.log(`[attended] spawned ${deps.aiProvider ?? getAiProvider(db)} assistant (pid ${rec.pid}) for run #${d.runId}: ${d.reason}`);

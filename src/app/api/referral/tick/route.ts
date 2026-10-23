@@ -21,7 +21,9 @@ export const POST = withInternal(async () => {
   }
   const key = dueSlot(new Date(), fired);
   if (!key) return NextResponse.json({ due: false, resolved });
-  fired.add(key);
   const runIds = enqueueReferralChecksForAll(db);
+  // Marked only once the checks are queued: a throw above retries next minute instead of losing
+  // the slot for the day.
+  fired.add(key);
   return NextResponse.json({ due: true, slot: key, runIds, resolved });
 });

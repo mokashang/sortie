@@ -4,12 +4,13 @@ import { getBackend } from "@/llm/registry";
 import { loadProfile } from "@/lib/profile";
 import { generateDraft } from "@/network/draft";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // POST {personId, playbook, jobId?, channel?} — the "AI 草稿" button (Task 4). Runs the live
 // backend synchronously; the plan's own budget for this is 30s.
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const db = getDb();
     const result = await generateDraft(db, {
       userId,

@@ -6,6 +6,7 @@ import { PersonInputSchema } from "@/network/crm";
 import { createReferralOutreach } from "@/apply/referral";
 import { withUser, failResponse } from "@/lib/actor";
 import { autoApproveOutreachIfEnabled } from "@/apply/auto-submit";
+import { readJsonBody } from "@/lib/request-body";
 import { inviteBudget, inviteBudgetMessage, isTargetedReferral, releaseUncontacted } from "@/apply/invite-budget";
 
 // Session -> App: found a person at the company; upsert them, draft the referral request
@@ -21,7 +22,7 @@ import { inviteBudget, inviteBudgetMessage, isTargetedReferral, releaseUncontact
 // 换人再问) are exempt.
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const person = PersonInputSchema.parse(body.person);
     const jobIds = (body.jobIds as unknown[]).map(Number);
     const db = getDb();

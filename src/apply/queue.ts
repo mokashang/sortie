@@ -98,8 +98,19 @@ export function takeNextApplication(
   // Without this they're invisible forever: 'prepared' fails the picker's 'matched' filter below,
   // and nothing else ever moves them. 30 minutes is generously past any real fill+report round
   // trip, so a still-fresh 'prepared' row (a live executor genuinely mid-fill) is left alone.
+  //
+  // Only rows whose run is over, though (2026-10-16). With tasks side by side, a long form (a
+  // Workday application, a take-home the assistant writes itself) can take session A past 30
+  // minutes; flipping it back here handed the same top-ranked job to session B mid-fill, and with
+  // 自动投递 on both could submit it. A row whose run is still live belongs to that run; the
+  // dispatcher's reclaimStrandedPrepared (src/apply/followup.ts) judges it once the run ends.
+  // Rows carrying the user's answers are left to that reclaim too: it turns them into a targeted
+  // run instead of dropping them silently back into the pool.
   db.prepare(
-    "UPDATE applications SET status = 'matched' WHERE user_id = ? AND status = 'prepared' AND updated_at < datetime('now', '-30 minutes')"
+    `UPDATE applications SET status = 'matched'
+     WHERE user_id = ? AND status = 'prepared' AND updated_at < datetime('now', '-30 minutes')
+       AND info_answers IS NULL
+       AND NOT EXISTS (SELECT 1 FROM executor_runs r WHERE r.id = applications.run_id AND r.status IN ('running','queued','paused'))`
   ).run(userId);
 
   for (;;) {
@@ -361,7 +372,9 @@ export function openLoginWalls(db: DB, userId: string): Map<string, InfoQuestion
   for (const r of rows) {
     let items: InfoQuestion[] = [];
     try {
-      items = JSON.parse(r.pending_questions);
+      const parsed: unknown = JSON.parse(r.pending_questions);
+      // This runs on every /api/apply/next: one odd row must not stop every task from taking work.
+      items = Array.isArray(parsed) ? (parsed.filter((q) => q && typeof q === "object") as InfoQuestion[]) : [];
     } catch {
       continue;
     }

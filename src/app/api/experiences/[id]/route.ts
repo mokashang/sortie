@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { updateExperience, deleteExperience, ExperienceInputSchema } from "@/resume/experiences";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 export const PUT = withUser(async (req, { userId }, { params }) => {
   const { id } = await params;
-  const body = await req.json();
+  const body = await readJsonBody(req);
   const parsed = ExperienceInputSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
   try {

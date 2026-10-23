@@ -9,6 +9,8 @@ import type { Lang } from "@/i18n/lang";
 import { langFromCookieHeader } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
 import { serverLang } from "@/lib/prefs";
+import { ZodError } from "zod";
+import { BadRequestError } from "@/lib/request-body";
 
 // Who is calling an API route (spec 2026-09-13 accounts §2). Three principals resolve to an
 // account:
@@ -90,6 +92,11 @@ export function errorResponse(e: unknown, lang: Lang = serverLang()): Response |
   }
   if (e instanceof ProfileIncompleteError) {
     return NextResponse.json({ error: t.profileIncomplete, code: "profile_incomplete", issues: e.issues }, { status: 409 });
+  }
+  if (e instanceof BadRequestError) return NextResponse.json({ error: e.message, code: "bad_request" }, { status: 400 });
+  if (e instanceof ZodError) {
+    const issue = e.issues[0];
+    return NextResponse.json({ error: issue ? `${issue.path.join(".") || "body"}: ${issue.message}` : "invalid request", code: "bad_request" }, { status: 400 });
   }
   return null;
 }

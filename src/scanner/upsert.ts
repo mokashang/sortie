@@ -6,6 +6,7 @@ import { visaFlag } from "@/scanner/visa-filter";
 import { locFlag } from "@/scanner/location-filter";
 import { jobKindFromTitle } from "@/scanner/entry-level";
 import { parseBoard, atsFromUrl } from "@/scanner/board-key";
+import { registerUrlBoards } from "@/scanner/boards";
 
 export interface UpsertSummary {
   inserted: number;
@@ -33,8 +34,9 @@ export interface UpsertSummary {
 // loc_flag is always set on both insert and the richer-record upgrade path (excluded.loc_flag)
 // — location rarely changes between a thin listing-metadata row and its rich ATS counterpart.
 // board_key / ats: 由 apply_url 解析(所有来源都算,清单带来的岗也归到它所属的板块);解析不出板块时
-// 用调用方给的 boardKey(清单本身、Chrome 站点)。
-export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | null } = {}): UpsertSummary {
+// 用调用方给的 boardKey(清单本身、Chrome 站点)。新写入(插入 / 升级)的岗位链接解析出的板块若还没登记,
+// 当场登记成 url 板块(registerUrlBoards);调用方给的 boardKey 不登记。
+export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | null; now?: Date } = {}): UpsertSummary {
   const summary: UpsertSummary = { inserted: 0, upgraded: 0, duplicates: 0, visaSkipped: 0, locSkipped: 0, errors: [] };
   const findByFp = db.prepare("SELECT id FROM jobs WHERE fingerprint = ?");
   const insJob = db.prepare(
@@ -62,6 +64,8 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
      UNION ALL SELECT 'legacy', ? WHERE NOT EXISTS (SELECT 1 FROM "user")`
   );
 
+  const seenBoards = new Map<string, string | null>();
+
   const tx = db.transaction((batch: RawJob[]) => {
     for (const r of batch) {
       const fp = fingerprint(r.company, r.title, r.location);
@@ -81,6 +85,7 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
           r.source, ats, r.postedAt, r.jobKind ?? jobKindFromTitle(r.title), flag, locF,
           dedupKey(r.company, r.title), jdStatusFor(r.jdText), boardKey
         );
+        if (parsed && (!existing || info.changes > 0) && !seenBoards.has(parsed.key)) seenBoards.set(parsed.key, r.company);
         if (!existing) {
           // Brand-new job: create its application row. Never done for upgrades — the job id
           // (and its application) must stay stable across re-scans of the same fingerprint.
@@ -108,5 +113,6 @@ export function upsertJobs(db: DB, rows: RawJob[], opts: { boardKey?: string | n
     }
   });
   tx(rows);
+  if (seenBoards.size) registerUrlBoards(db, seenBoards, { now: opts.now });
   return summary;
 }

@@ -205,6 +205,26 @@ describe("auto-answer", () => {
     expect(saved.why_us).toBeUndefined();
   });
 
+  it("drops its answers when the user acted on the card while the model was answering", async () => {
+    const db = openDb(":memory:");
+    seedProfile(db);
+    const jobId = seedJob(db);
+    reportFill(db, U, { jobId, status: "needs_info", questions: [{ key: "relocate", label: "Willing to relocate?" }] });
+    // The user answers the card themselves during the model call.
+    const backend = fakeBackend(() => {
+      db.prepare("UPDATE applications SET status = 'prepared', pending_questions = NULL, info_answers = ? WHERE job_id = ?").run(
+        JSON.stringify({ relocate: "No" }),
+        jobId
+      );
+      return JSON.stringify([{ key: "relocate", answer: "Yes" }]);
+    });
+    const r = await autoAnswerPending(db, U, jobId, { backend });
+    expect(r.status).toBe("skipped");
+    const row = db.prepare("SELECT status, info_answers FROM applications WHERE job_id = ?").get(jobId) as { status: string; info_answers: string };
+    expect(row.status).toBe("prepared");
+    expect(JSON.parse(row.info_answers)).toEqual({ relocate: "No" });
+  });
+
   it("answers every open text item: the row moves to prepared with the answers, remembered as standard answers", async () => {
     const db = openDb(":memory:");
     seedProfile(db);

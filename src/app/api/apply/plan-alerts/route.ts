@@ -4,6 +4,7 @@ import { planAlerts, resolvePlanAlert } from "@/apply/plan-alerts";
 import { ExecutorStartError } from "@/executor/runner";
 import { withUser, failResponse } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
+import { readJsonBody } from "@/lib/request-body";
 
 // GET → the task-level 待处理 cards (a plan that stopped short, a task that gave up with jobs
 // untouched — src/apply/plan-alerts.ts). POST {runId, action:'continue'|'dismiss'} → the card's
@@ -18,7 +19,7 @@ export const GET = withUser(async (_req, { userId }) => {
 
 export const POST = withUser(async (req, { userId }) => {
   try {
-    const body = await req.json();
+    const body = await readJsonBody(req);
     const action = body.action === "continue" ? "continue" : body.action === "dismiss" ? "dismiss" : null;
     if (!action) return NextResponse.json({ error: "action must be 'continue' or 'dismiss'" }, { status: 400 });
     return NextResponse.json(resolvePlanAlert(getDb(), userId, Number(body.runId), action));

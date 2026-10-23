@@ -218,6 +218,17 @@ export async function autoAnswerPending(db: DB, userId: string, jobId: number, d
     return { answered: {}, remaining: questions, status: "needs_info", error };
   }
 
+  // The model call can take minutes. If the user acted on the card meanwhile (answered it, skipped
+  // the job, the assistant re-reported), these answers are for a card that no longer exists:
+  // writing them would overwrite the user's own answers, or queue a run for an archived job.
+  const nowRow = db
+    .prepare("SELECT status, pending_questions, needs_manual_reason FROM applications WHERE user_id = ? AND job_id = ?")
+    .get(userId, jobId) as { status: string; pending_questions: string | null; needs_manual_reason: string | null } | undefined;
+  if (!nowRow || nowRow.status !== row.status || nowRow.pending_questions !== row.pending_questions || nowRow.needs_manual_reason !== row.needs_manual_reason) {
+    logEvent(db, "application_info_auto_answer_stale", { userId, entity: "application", entityId: jobId, payload: { from: row.status, to: nowRow?.status ?? null } });
+    return { answered: {}, remaining: [], status: "skipped", error: "the card changed while the App was answering it" };
+  }
+
   const remaining = questions.filter((q) => infoKind(q) !== "text" || (!(q.key in answered) && !q.optional));
   const complete = remaining.length === 0;
 

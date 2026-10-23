@@ -7,6 +7,7 @@ import { inviteBudgetMessage } from "@/apply/invite-budget";
 import { documentsMap, userDocumentsDir } from "@/lib/documents";
 import { callerApplyRunId } from "@/executor/sessions";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // Executor -> App: "give me the next task". {mode:'referral'} returns a ReferralTask (a company
 // + up to 3 jobs to seek a referral for); anything else returns an ApplyTask for a direct fill.
@@ -19,7 +20,7 @@ import { withUser, failResponse } from "@/lib/actor";
 export const POST = withUser(async (req, actor) => {
   try {
     const userId = actor.userId;
-    const body = await req.json().catch(() => ({}));
+    const body = await readJsonBody(req, { allowEmpty: true });
     const direction = typeof body?.direction === "string" ? body.direction : undefined;
     const jobIds = Array.isArray(body?.jobIds)
       ? (body.jobIds as unknown[]).map(Number).filter((n) => Number.isInteger(n) && n > 0)

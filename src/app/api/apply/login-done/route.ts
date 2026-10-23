@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { resolveLogins } from "@/apply/info";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // User -> App from a 登录一次 card: {host, note?}, or {hosts:[…], note?} from 「全部登好了」. The user
 // signed in / registered on those sites in their own Chrome, so every paused application of
@@ -10,7 +11,7 @@ import { withUser, failResponse } from "@/lib/actor";
 // run is already live or queued — the next run takes them). note = a message to the assistant
 // for these jobs (e.g. "sign in with Google"), stored as custom.assistant_note.
 export const POST = withUser(async (req, { userId }) => {
-  const body = await req.json();
+  const body = await readJsonBody(req);
   try {
     const db = getDb();
     const hosts = Array.isArray(body.hosts) ? body.hosts.map((h: unknown) => String(h ?? "")) : [String(body.host ?? "")];

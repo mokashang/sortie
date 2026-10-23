@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { unpark } from "@/apply/queue";
 import { maybeAutoStartApply } from "@/apply/decide-auto-start";
 import { withUser, failResponse } from "@/lib/actor";
+import { readJsonBody } from "@/lib/request-body";
 
 // User -> App from a 待处理 card's 「让助手再试一次 / 让助手重新来」: clear the paused
 // application's reason and to-do items so it re-enters the executor's pool, and re-queue it as a
@@ -11,7 +12,7 @@ import { withUser, failResponse } from "@/lib/actor";
 // ("the video question is optional", "the résumé is in my Drive") — rides along in the answer
 // pack as custom.assistant_note.
 export const POST = withUser(async (req, { userId }) => {
-  const body = await req.json();
+  const body = await readJsonBody(req);
   try {
     const db = getDb();
     const jobId = Number(body.jobId);
