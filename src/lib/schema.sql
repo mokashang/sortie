@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS jobs (
   company TEXT NOT NULL,
   title TEXT NOT NULL,
   location TEXT,
-  jd_text TEXT,
   apply_url TEXT,
   source TEXT NOT NULL,            -- github_list | greenhouse | lever | ashby | linkedin | handshake | manual
   ats TEXT,                        -- greenhouse | lever | ashby | workday | other
@@ -27,6 +26,14 @@ CREATE TABLE IF NOT EXISTS jobs (
   jd_status TEXT,                  -- NULL(ATS 自带正文) | missing | reviewed | login_wall | unreachable | closed
   board_key TEXT,                  -- 所属轮询板块 family:ident(由 apply_url 解析,所有来源都算)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 岗位正文(v19 起从 jobs 行里搬到这里,迁移见 db.ts migrateV19):JD 占了库的七成,留在 jobs 行里时
+-- 每次按资格列过滤都要把正文的溢出页读一遍。搬家前 jd_text 不为 NULL 的岗都有一行(空串照存,含义同前:
+-- 还没有正文)。读正文 LEFT JOIN job_texts t ON t.job_id = j.id,写用 src/lib/job-texts.ts 的 setJdText。
+CREATE TABLE IF NOT EXISTS job_texts (
+  job_id INTEGER PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+  jd_text TEXT NOT NULL
 );
 
 -- 每个账号对每个岗位的打分(一人一行;打分依赖各自的档案)。

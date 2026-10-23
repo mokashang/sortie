@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb } from "@/lib/db";
+import { setJdText } from "@/lib/job-texts";
 import { runMatching } from "@/matcher/run";
 import { LlmBackend } from "@/llm/types";
 
@@ -8,11 +9,12 @@ const U = "legacy";
 
 function seedJobs(db: ReturnType<typeof openDb>) {
   const ins = db.prepare(
-    "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+    "INSERT INTO jobs (fingerprint, company, title, location, source, visa_flag) VALUES (?,?,?,?,?,?)"
   );
   const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
   const mk = (fp: string, title: string, visa: string | null = null) => {
-    const info = ins.run(fp, "Acme", title, "SF", "Do the thing.", "greenhouse", visa);
+    const info = ins.run(fp, "Acme", title, "SF", "greenhouse", visa);
+    setJdText(db, info.lastInsertRowid, "Do the thing.");
     insApp.run(info.lastInsertRowid);
     return Number(info.lastInsertRowid);
   };
@@ -90,10 +92,11 @@ describe("runMatching", () => {
   it("excludes loc-flagged (non-US) jobs from scoring, mirroring the visa-flag exclusion", async () => {
     const db = openDb(":memory:");
     const ins = db.prepare(
-      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, loc_flag) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO jobs (fingerprint, company, title, location, source, loc_flag) VALUES (?,?,?,?,?,?)"
     );
     const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
-    const info = ins.run("loc1", "Acme", "Backend Engineer New Grad", "London, UK", "Do the thing.", "greenhouse", "non_us");
+    const info = ins.run("loc1", "Acme", "Backend Engineer New Grad", "London, UK", "greenhouse", "non_us");
+    setJdText(db, info.lastInsertRowid, "Do the thing.");
     const jobId = Number(info.lastInsertRowid);
     insApp.run(jobId);
 
@@ -139,10 +142,11 @@ describe("runMatching", () => {
   it("first-occurrence wins when a batch response contains a duplicate job_id (a stray duplicate can't clobber a good score)", async () => {
     const db = openDb(":memory:");
     const ins = db.prepare(
-      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO jobs (fingerprint, company, title, location, source, visa_flag) VALUES (?,?,?,?,?,?)"
     );
     const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
-    const info = ins.run("dup1", "Acme", "Backend Engineer New Grad", "SF", "Do the thing.", "greenhouse", null);
+    const info = ins.run("dup1", "Acme", "Backend Engineer New Grad", "SF", "greenhouse", null);
+    setJdText(db, info.lastInsertRowid, "Do the thing.");
     const jobId = Number(info.lastInsertRowid);
     insApp.run(jobId);
 
@@ -173,10 +177,11 @@ describe("runMatching", () => {
   it("rescoreArchived:true re-scores archived jobs and can rescue an under-scored one", async () => {
     const db = openDb(":memory:");
     const ins = db.prepare(
-      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO jobs (fingerprint, company, title, location, source, visa_flag) VALUES (?,?,?,?,?,?)"
     );
     const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
-    const info = ins.run("resc1", "Acme", "Backend Engineer New Grad", "SF", "Do the thing.", "greenhouse", null);
+    const info = ins.run("resc1", "Acme", "Backend Engineer New Grad", "SF", "greenhouse", null);
+    setJdText(db, info.lastInsertRowid, "Do the thing.");
     const jobId = Number(info.lastInsertRowid);
     insApp.run(jobId);
     db.prepare("UPDATE applications SET status='archived' WHERE job_id=?").run(jobId);
@@ -236,10 +241,11 @@ describe("runMatching", () => {
   it("only counts matched/archived when the application status actually changed", async () => {
     const db = openDb(":memory:");
     const ins = db.prepare(
-      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO jobs (fingerprint, company, title, location, source, visa_flag) VALUES (?,?,?,?,?,?)"
     );
     const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
-    const info = ins.run("sub1", "Acme", "Backend Engineer New Grad", "SF", "Do the thing.", "greenhouse", null);
+    const info = ins.run("sub1", "Acme", "Backend Engineer New Grad", "SF", "greenhouse", null);
+    setJdText(db, info.lastInsertRowid, "Do the thing.");
     const jobId = Number(info.lastInsertRowid);
     insApp.run(jobId);
     db.prepare("UPDATE applications SET status='submitted' WHERE job_id=?").run(jobId);
@@ -270,12 +276,13 @@ describe("runMatching", () => {
   it("concurrency=3 runs multiple batches in flight and still scores every job correctly", async () => {
     const db = openDb(":memory:");
     const ins = db.prepare(
-      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO jobs (fingerprint, company, title, location, source, visa_flag) VALUES (?,?,?,?,?,?)"
     );
     const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
     const jobIds: number[] = [];
     for (let i = 0; i < 6; i++) {
-      const info = ins.run(`conc${i}`, "Acme", `Job ${i}`, "SF", "Do the thing.", "greenhouse", null);
+      const info = ins.run(`conc${i}`, "Acme", `Job ${i}`, "SF", "greenhouse", null);
+      setJdText(db, info.lastInsertRowid, "Do the thing.");
       const id = Number(info.lastInsertRowid);
       insApp.run(id);
       jobIds.push(id);
@@ -319,12 +326,13 @@ describe("runMatching", () => {
   it("concurrency=3 produces identical results to concurrency=1 for the same scripted inputs", async () => {
     function seedSix(db: ReturnType<typeof openDb>) {
       const ins = db.prepare(
-        "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+        "INSERT INTO jobs (fingerprint, company, title, location, source, visa_flag) VALUES (?,?,?,?,?,?)"
       );
       const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
       const ids: number[] = [];
       for (let i = 0; i < 6; i++) {
-        const info = ins.run(`par${i}`, "Acme", `Job ${i}`, "SF", "Do the thing.", "greenhouse", null);
+        const info = ins.run(`par${i}`, "Acme", `Job ${i}`, "SF", "greenhouse", null);
+        setJdText(db, info.lastInsertRowid, "Do the thing.");
         const id = Number(info.lastInsertRowid);
         insApp.run(id);
         ids.push(id);
@@ -391,12 +399,13 @@ describe("runMatching", () => {
   it("under concurrency>1, a batch failure is still isolated and other batches succeed", async () => {
     const db = openDb(":memory:");
     const ins = db.prepare(
-      "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, visa_flag) VALUES (?,?,?,?,?,?,?)"
+      "INSERT INTO jobs (fingerprint, company, title, location, source, visa_flag) VALUES (?,?,?,?,?,?)"
     );
     const insApp = db.prepare("INSERT INTO applications (job_id) VALUES (?)");
     const jobIds: number[] = [];
     for (let i = 0; i < 5; i++) {
-      const info = ins.run(`fail${i}`, "Acme", `Job ${i}`, "SF", "Do the thing.", "greenhouse", null);
+      const info = ins.run(`fail${i}`, "Acme", `Job ${i}`, "SF", "greenhouse", null);
+      setJdText(db, info.lastInsertRowid, "Do the thing.");
       const id = Number(info.lastInsertRowid);
       insApp.run(id);
       jobIds.push(id);

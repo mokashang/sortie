@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
+import { setJdText } from "@/lib/job-texts";
 import { nextJdReviewBatch, pendingJdReviewCount, reportJdReview, reportFromFormData } from "@/jd-review/service";
 
 function seed(db: DB, fp: string, o: { jdStatus?: string | null; status?: string; score?: number; tier?: number; pinned?: number; parked?: string | null; url?: string | null } = {}) {
-  const info = db.prepare("INSERT INTO jobs (fingerprint, company, title, source, jd_text, jd_status, apply_url, dedup_key) VALUES (?,?,?,?,?,?,?,?)")
-    .run(fp, "Acme", `T-${fp}`, "github_list", "", o.jdStatus === undefined ? "missing" : o.jdStatus, o.url === undefined ? `https://x/${fp}` : o.url, "acme|t");
+  const info = db.prepare("INSERT INTO jobs (fingerprint, company, title, source, jd_status, apply_url, dedup_key) VALUES (?,?,?,?,?,?,?)")
+    .run(fp, "Acme", `T-${fp}`, "github_list", o.jdStatus === undefined ? "missing" : o.jdStatus, o.url === undefined ? `https://x/${fp}` : o.url, "acme|t");
   const id = Number(info.lastInsertRowid);
+  setJdText(db, id, "");
   db.prepare("INSERT INTO applications (job_id, status, pinned, needs_manual_reason) VALUES (?,?,?,?)").run(id, o.status ?? "matched", o.pinned ?? 0, o.parked ?? null);
   db.prepare("INSERT INTO matches (job_id, direction, score, tier) VALUES (?,?,?,?)").run(id, "swe_general", o.score ?? 50, o.tier ?? 2);
   return id;
@@ -35,7 +37,7 @@ describe("reportJdReview", () => {
     const id = seed(db, "a");
     const out = reportJdReview(db, { jobId: id, status: "reviewed", jdText: "Full JD", sponsorship: "unknown", degree: "ms_ok", role: "eng" });
     expect(out).toEqual({ jdStatus: "reviewed", archived: false, skipReason: null, requeued: true });
-    const j = db.prepare("SELECT jd_text, jd_status, elig_source FROM jobs WHERE id=?").get(id) as any;
+    const j = db.prepare("SELECT t.jd_text, j.jd_status, j.elig_source FROM jobs j LEFT JOIN job_texts t ON t.job_id = j.id WHERE j.id=?").get(id) as any;
     expect(j).toEqual({ jd_text: "Full JD", jd_status: "reviewed", elig_source: "jd_review" });
     expect(db.prepare("SELECT COUNT(*) n FROM matches WHERE job_id=?").get(id)).toEqual({ n: 0 });
     expect((db.prepare("SELECT status FROM applications WHERE job_id=?").get(id) as any).status).toBe("discovered");

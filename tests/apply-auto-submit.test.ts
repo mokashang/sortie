@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
+import { setJdText } from "@/lib/job-texts";
 import { parseProfile, saveProfile, getProfileData } from "@/lib/profile";
 import { createExperience } from "@/resume/experiences";
 import { reportFill, reportSubmitted, confirmStatus } from "@/apply/queue";
@@ -47,9 +48,10 @@ function seedProfile(db: DB): void {
 
 function seedJob(db: DB, status = "prepared"): number {
   const jobId = db
-    .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at, jd_text) VALUES (?,?,?,?,?,?,?,?)")
-    .run(`fp-${Math.random()}`, "Acme", "SWE", "https://acme.example/apply", "greenhouse", "manual", "2026-01-01 00:00:00", "Build things in Python.")
+    .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, ats, source, created_at) VALUES (?,?,?,?,?,?,?)")
+    .run(`fp-${Math.random()}`, "Acme", "SWE", "https://acme.example/apply", "greenhouse", "manual", "2026-01-01 00:00:00")
     .lastInsertRowid as number;
+  setJdText(db, jobId, "Build things in Python.");
   db.prepare("INSERT INTO matches (job_id, direction, score, tier) VALUES (?,?,?,?)").run(jobId, "ai_infra", 80, 1);
   db.prepare("INSERT INTO applications (job_id, status) VALUES (?,?)").run(jobId, status);
   return jobId;

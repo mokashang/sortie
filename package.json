@@ -18,7 +18,8 @@
     "referral-fit": "tsx scripts/referral-fit.ts",
     "import-directory": "tsx scripts/import-directory.ts",
     "retier": "tsx scripts/retier.ts",
-    "backup": "tsx scripts/backup-db.ts"
+    "backup": "tsx scripts/backup-db.ts",
+    "vacuum-db": "tsx scripts/vacuum-db.ts"
   },
   "dependencies": {
     "better-auth": "^1.7.4",

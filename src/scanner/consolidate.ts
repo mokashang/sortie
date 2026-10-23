@@ -24,8 +24,8 @@ export function pendingGroupKeys(db: DB, limit?: number): string[] {
 
 function loadGroup(db: DB, key: string): RawRow[] {
   return db.prepare(
-    `SELECT j.id, j.location, j.posted_at, j.source, j.ats, j.apply_url, j.jd_text, j.duplicate_of, j.dedup_judged_at, a.status
-     FROM jobs j JOIN applications a ON a.job_id = j.id
+    `SELECT j.id, j.location, j.posted_at, j.source, j.ats, j.apply_url, t.jd_text, j.duplicate_of, j.dedup_judged_at, a.status
+     FROM jobs j JOIN applications a ON a.job_id = j.id LEFT JOIN job_texts t ON t.job_id = j.id
      WHERE j.dedup_key = ? AND j.loc_flag IS NULL ORDER BY j.id`
   ).all(key) as RawRow[];
 }
@@ -36,7 +36,8 @@ const isRich = (jd: string | null) => !!jd && !jd.startsWith("[listing metadata]
 // 主行选择是代码规则,不交给 LLM(spec §4)。
 export function pickCanonical(db: DB, ids: number[]): number {
   const rows = db.prepare(
-    `SELECT j.id, j.location, j.jd_text, j.source, a.status FROM jobs j JOIN applications a ON a.job_id = j.id
+    `SELECT j.id, j.location, t.jd_text, j.source, a.status FROM jobs j JOIN applications a ON a.job_id = j.id
+     LEFT JOIN job_texts t ON t.job_id = j.id
      WHERE j.id IN (${ids.map(() => "?").join(",")})`
   ).all(...ids) as { id: number; location: string | null; jd_text: string | null; source: string; status: string }[];
   const score = (r: (typeof rows)[number]) => [

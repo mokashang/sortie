@@ -1,4 +1,5 @@
 import { DB } from "@/lib/db";
+import { setJdText } from "@/lib/job-texts";
 import { QUEUE_ELIGIBLE_SQL } from "@/apply/queue";
 import { applyEligibility, archiveCluster, Sponsorship, DegreeReq, RoleKind } from "@/apply/eligibility";
 import { visaFlag } from "@/scanner/visa-filter";
@@ -90,7 +91,8 @@ export function reportJdReview(db: DB, input: JdReviewReport): JdReviewOutcome {
   const text = input.jdText.slice(0, MAX_JD);
   const flag = visaFlag(text);
   const tx = db.transaction((): JdReviewOutcome => {
-    db.prepare("UPDATE jobs SET jd_text = ?, jd_status = 'reviewed', visa_flag = ? WHERE id = ?").run(text, flag, input.jobId);
+    setJdText(db, input.jobId, text);
+    db.prepare("UPDATE jobs SET jd_status = 'reviewed', visa_flag = ? WHERE id = ?").run(flag, input.jobId);
     if (flag) {
       archiveCluster(db, input.jobId, "visa (jd review)");
       return { jdStatus: "reviewed", archived: true, skipReason: "visa (jd review)", requeued: false };
