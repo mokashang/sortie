@@ -5,7 +5,8 @@ import { openDb, logEvent } from "../src/lib/db";
 import { dataDir } from "../src/lib/paths";
 
 // Compacts data/jobseeker.db. Run by hand with the server stopped, never by the server itself:
-//   pm2 stop sortie; npm run vacuum-db; pm2 start sortie
+//   pm2 stop sortie; npm run vacuum-db; pm2 restart sortie
+// (restart, not start: it brings the stopped app back with the environment pm2 stored for it.)
 // VACUUM rewrites the whole file — it builds a compact copy in the temp folder, copies it back
 // through the WAL and holds the write lock throughout — so it needs about the db's size free on
 // both drives, and a running server's writes would fail for the duration. The v19 move
