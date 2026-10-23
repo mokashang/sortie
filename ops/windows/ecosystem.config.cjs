@@ -26,8 +26,9 @@ module.exports = {
       // and since the DB is read through mmap (2214241) the resident pages of jobseeker.db count
       // in it: heap ~500 MB + a ~1 GB database peaked at 1.58 GB on 2026-10-16, past the old
       // 1500M limit, so a healthy server would have been restarted mid-run as the table grew.
-      // Changing this needs `pm2 delete sortie; pm2 start ops\windows\ecosystem.config.cjs --only sortie; pm2 save`
-      // (a plain `pm2 restart` keeps the options the app was started with).
+      // Changing this needs `pm2 delete sortie; Start-ScheduledTask "Sortie Server"; pm2 save` (a plain
+      // `pm2 restart` keeps the options the app was started with). Start it through the logon task,
+      // not `pm2 start` from a Claude Code shell: pm2 copies the caller's environment into the app.
       max_memory_restart: "3500M",
       out_file: path.join(root, "data", "pm2-out.log"),
       error_file: path.join(root, "data", "pm2-err.log"),
