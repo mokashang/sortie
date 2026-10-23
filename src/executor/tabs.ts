@@ -39,13 +39,14 @@ function ts(at: string): number {
   return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(at) ? at : at.replace(" ", "T") + "Z");
 }
 
-// needs_info keeps the tab only for questions answered in place (text / file / action); a login
-// or manual item parks the job and the session closes its tab at once.
+// needs_info keeps the tab only for what is done in place: questions (text / file / action) and a
+// refused Submit left for the user to click (submit, src/apply/submit-blocked.ts); a login or
+// manual item parks the job and the session closes its tab at once.
 function keepsTab(status: string, pendingQuestions: string | null): boolean {
   if (status !== "needs_info") return true;
   try {
     const items = JSON.parse(pendingQuestions || "[]") as { kind?: string }[];
-    return items.some((q) => !q.kind || q.kind === "text" || q.kind === "file" || q.kind === "action");
+    return items.some((q) => !q.kind || q.kind === "text" || q.kind === "file" || q.kind === "action" || q.kind === "submit");
   } catch {
     return true;
   }
