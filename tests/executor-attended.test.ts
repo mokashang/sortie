@@ -27,6 +27,7 @@ import type { WindowsSpawnOptions } from "@/executor/attended-win";
 import { clearNotices } from "@/executor/attended-session";
 import { startExecutor, finishRun, claimNextRun } from "@/executor/runner";
 import { seedOwner } from "./helpers";
+import { SECRET_FILE_DENY } from "@/ai/runtime";
 
 // Rows seeded without a user land in the schema's default bucket; these tests act as its owner.
 const U = "legacy";
@@ -596,7 +597,9 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
 
   it("buildAttendedArgs is the single argv both launchers hand to claude", () => {
     const args = buildAttendedArgs({ runId: 3, prompt: "P" });
-    expect(args).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools", ...ATTENDED_ALLOWED_TOOLS, "-n", "sortie-run-3", "P"]);
+    expect(args).toEqual(["--chrome", "--permission-mode", "dontAsk", "--allowedTools", ...ATTENDED_ALLOWED_TOOLS, "--disallowedTools", ...SECRET_FILE_DENY, "-n", "sortie-run-3", "P"]);
+    // The server's secrets stay unreadable to the session (its run token is in its prompt).
+    expect(SECRET_FILE_DENY).toEqual(expect.arrayContaining(["Read(./.env)", "Read(./data/internal-token)", "Bash(cat data/internal-token:*)"]));
     expect(buildAttendedArgs({ runId: 3, prompt: "P", sessionName: "custom" })).toContain("custom");
     const script = buildExpectScript({ claudeBin: "/c", cwd: "/w", runId: 3, prompt: "P" });
     for (const tool of ATTENDED_ALLOWED_TOOLS) expect(script).toContain(tool);
@@ -652,7 +655,7 @@ describe("attended dispatcher — heartbeat + dispatch against a db", () => {
   });
 });
 
-import { failUnservableMemberRuns, MEMBER_QUEUED_GIVE_UP_MS, recordHeartbeat } from "@/executor/attended";
+import { failUnservableMemberRuns, MEMBER_QUEUED_GIVE_UP_MS } from "@/executor/attended";
 import { seedUser } from "./helpers";
 describe("another account's Chrome task with no session of its own", () => {
   it("is failed after the give-up window instead of sitting queued forever; the owner's and a connected member's stay", () => {

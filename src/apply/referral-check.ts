@@ -2,6 +2,7 @@ import { DB } from "@/lib/db";
 import { referralChecklist } from "@/network/harvest";
 import { startExecutor, StartOptions } from "@/executor/runner";
 import { listUsers } from "@/lib/users";
+import { heartbeatAgeMs, HEARTBEAT_STALE_MS } from "@/executor/attended";
 
 // Enqueue a 'referral_check' attended run (kind handled by CLAUDE.md §3.10 i) for one account
 // when there is something to check and no such run is already queued/running for them. Returns
@@ -21,6 +22,12 @@ export function enqueueReferralCheck(db: DB, userId: string, deps: { startExecut
 export function enqueueReferralChecksForAll(db: DB, deps: { startExecutor?: typeof startExecutor } = {}): number[] {
   const ids: number[] = [];
   for (const u of listUsers(db)) {
+    // Another account's check runs in its own Chrome, taken only by a session of that account:
+    // without one connected, the run would only wait and be failed (failUnservableMemberRuns).
+    if (u.role !== "owner") {
+      const hb = heartbeatAgeMs(db, u.id);
+      if (hb == null || hb > HEARTBEAT_STALE_MS) continue;
+    }
     const id = enqueueReferralCheck(db, u.id, deps);
     if (id != null) ids.push(id);
   }

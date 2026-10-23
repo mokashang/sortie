@@ -30,7 +30,8 @@ const REPORT_STATUSES = new Set<string>(["awaiting_confirm", "needs_info", "need
 // submit_blocked (2026-10-22): the session's own permission check refused the Submit click on an
 // approved fill. The row becomes a 「点提交」 card (queue.ts parkBlockedSubmit) and the user gets a
 // push — at most one per half hour (src/apply/submit-blocked.ts); the session moves on.
-export const POST = withUser(async (req, { userId }) => {
+export const POST = withUser(async (req, actor) => {
+  const { userId } = actor;
   const body = await readJsonBody(req);
   try {
     const db = getDb();
@@ -70,7 +71,9 @@ export const POST = withUser(async (req, { userId }) => {
       return NextResponse.json({ error: "jobId must be a positive integer", code: "bad_request" }, { status: 400 });
     }
     const flag = (v: unknown) => v === true || v === "true" || v === 1;
-    reportFill(db, userId, { ...body, jobId: Number(body.jobId), archive: flag(body.archive), boardGone: flag(body.boardGone) } as ReportFillInput);
+    reportFill(db, userId, { ...body, jobId: Number(body.jobId), archive: flag(body.archive), boardGone: flag(body.boardGone) } as ReportFillInput, {
+      shared: actor.user?.role === "owner",
+    });
     const jobId = Number(body.jobId);
     const autoSubmit = getAutoSubmit(db, userId);
 

@@ -295,6 +295,12 @@ export function startExecutor(
   if (channel === "headless" && kind === "scan") {
     throw new ExecutorStartError("scan_needs_attended", "scan runs need the attended session (user_chrome): LinkedIn/Handshake/Tesla need the user's logged-in Chrome");
   }
+  // A background run is an agent process on this machine, with the owner's AI provider, a shell
+  // and the repo as its working directory: the owner's alone (security review 2026-10-22).
+  const owner = ownerId(db);
+  if (channel === "headless" && owner && userId !== owner) {
+    throw new ExecutorStartError("headless_owner_only", "the background browser runs only for this machine's owner account");
+  }
   const existing =
     channel === "user_chrome" && deps.queueBehind
       ? []
@@ -651,7 +657,7 @@ export function executorStatus(db: DB, userId: string): RunStatusRow[] {
 // A start refused because the channel cannot do what was asked (referrals or scanning on the
 // headless channel). The code lets the API route pick a message in the UI language
 // (src/i18n/messages/errors.ts); the English text is for logs and tests.
-export type ExecutorStartErrorCode = "referral_needs_attended" | "scan_needs_attended" | "attended_needs_session";
+export type ExecutorStartErrorCode = "referral_needs_attended" | "scan_needs_attended" | "attended_needs_session" | "headless_owner_only";
 export class ExecutorStartError extends Error {
   code: ExecutorStartErrorCode;
   constructor(code: ExecutorStartErrorCode, message: string) {

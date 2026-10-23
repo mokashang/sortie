@@ -26,3 +26,32 @@ describe("withoutParentSession", () => {
     expect(env.CLAUDECODE).toBe("1"); // the input is not modified
   });
 });
+
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { withoutServerSecrets, envFileKeys } from "@/lib/agent-env";
+describe("withoutServerSecrets", () => {
+  it("drops everything the server's .env defines and anything named like a credential, keeps CLI auth", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sortie-envkeys-"));
+    fs.writeFileSync(path.join(dir, ".env"), "NTFY_TOPIC=x\r\nCF_API_TOKEN=y\n# comment=no\nexport CHROME_BIN=z\nTECTONIC_BIN=t\n");
+    const keys = envFileKeys(dir);
+    expect([...keys].sort()).toEqual(["CF_API_TOKEN", "CHROME_BIN", "NTFY_TOPIC", "TECTONIC_BIN"]);
+    const out = withoutServerSecrets(
+      {
+        PATH: "p",
+        USERPROFILE: "u",
+        NTFY_TOPIC: "x",
+        CF_API_TOKEN: "y",
+        TECTONIC_BIN: "t",
+        GOOGLE_CLIENT_SECRET: "s",
+        GITHUB_TOKEN: "g",
+        SMTP_URL: "smtp://u:p@h",
+        ANTHROPIC_API_KEY: "a",
+        CLAUDE_CODE_OAUTH_TOKEN: "o",
+      },
+      keys
+    );
+    expect(out).toEqual({ PATH: "p", USERPROFILE: "u", ANTHROPIC_API_KEY: "a", CLAUDE_CODE_OAUTH_TOKEN: "o" });
+  });
+});

@@ -466,7 +466,11 @@ function coerceFieldValue(value: unknown): string {
 
 // Executor -> App status report. Only 'prepared' may transition; 'awaiting_confirm' is also
 // accepted as a from-state so a retried/duplicate report is idempotent rather than a hard error.
-export function reportFill(db: DB, userId: string, input: ReportFillInput): void {
+// `shared`: the report may change what every account sees about the posting itself (its
+// eligibility, its page being gone, its board). Only the owner's reports may (the owner's runs are
+// the ones this machine runs); another account's report only moves that account's own row.
+export function reportFill(db: DB, userId: string, input: ReportFillInput, opts: { shared?: boolean } = {}): void {
+  const shared = opts.shared ?? true;
   const row = db.prepare("SELECT status FROM applications WHERE user_id = ? AND job_id = ?").get(userId, input.jobId) as
     | { status: string }
     | undefined;
@@ -497,7 +501,7 @@ export function reportFill(db: DB, userId: string, input: ReportFillInput): void
   // board vanish, mute the board so the scanner stops polling it (user decision 2026-09-13:
   // dead links never surface as a to-do).
   if (input.status === "closed") {
-    closeApplication(db, userId, input.jobId, input.reason ?? "closed", !!input.boardGone);
+    closeApplication(db, userId, input.jobId, input.reason ?? "closed", !!input.boardGone, shared);
     return;
   }
 
@@ -540,6 +544,10 @@ export function reportFill(db: DB, userId: string, input: ReportFillInput): void
   // IN list includes 'prepared'). respectPinned:false because live-page text is stronger evidence
   // than a user's earlier pin. When it archives, clear needs_manual_reason/confirm_decision so
   // the now-archived row doesn't linger on the needs-manual list.
+  if (input.status === "needs_manual" && input.eligibility && !shared) {
+    archiveWithDuplicates(db, userId, input.jobId, input.reason ?? input.eligibility.evidence ?? "");
+    return;
+  }
   if (input.status === "needs_manual" && input.eligibility) {
     const e = input.eligibility;
     const out = applyEligibility(
@@ -595,15 +603,17 @@ export function reportFill(db: DB, userId: string, input: ReportFillInput): void
 // The executor found the posting gone. Archive this account's application with the reason, mark
 // the job's page closed so the queue and jd_review leave it alone (jobs are shared, so that part
 // is global), and optionally mute its board.
-export function closeApplication(db: DB, userId: string, jobId: number, reason: string, boardGone = false): void {
+export function closeApplication(db: DB, userId: string, jobId: number, reason: string, boardGone = false, shared = true): void {
   const job = db.prepare("SELECT board_key FROM jobs WHERE id = ?").get(jobId) as { board_key: string | null } | undefined;
   if (!job) throw new Error(`closeApplication: no job ${jobId}`);
   db.transaction(() => {
     db.prepare(
       "UPDATE applications SET status = 'archived', needs_manual_reason = ?, pending_questions = NULL, confirm_decision = NULL WHERE user_id = ? AND job_id = ?"
     ).run(`closed: ${reason}`, userId, jobId);
-    db.prepare("UPDATE jobs SET jd_status = 'closed' WHERE id = ?").run(jobId);
-    if (boardGone && job.board_key) muteBoard(db, job.board_key, `executor: board gone (${reason.slice(0, 120)})`);
+    if (shared) {
+      db.prepare("UPDATE jobs SET jd_status = 'closed' WHERE id = ?").run(jobId);
+      if (boardGone && job.board_key) muteBoard(db, job.board_key, `executor: board gone (${reason.slice(0, 120)})`);
+    }
   })();
   logEvent(db, "application_closed", {
     userId,
