@@ -74,7 +74,9 @@ export async function sendMail(mail: Mail): Promise<SendResult> {
   const file = path.join(dir, `${stamp}-${slug}.txt`);
   fs.writeFileSync(file, `From: ${from}\nTo: ${mail.to}\nSubject: ${mail.subject}\nDate: ${new Date().toISOString()}\n\n${mail.text}\n`);
   const link = firstUrl(mail.text);
-  console.log(`[mail] SMTP_URL not set — wrote "${mail.subject}" for ${mail.to} to ${file}${link ? `\n[mail] action link: ${link}` : ""}`);
+  // Only where it is: the action link (a password reset, a sign-in) stays in the file, out of the
+  // server log that anyone reading pm2's output sees.
+  console.log(`[mail] SMTP_URL not set — wrote "${mail.subject}" for ${mail.to} to ${file}${link ? " (the action link is in the file)" : ""}`);
   return { delivered: false, via: "outbox", file };
 }
 

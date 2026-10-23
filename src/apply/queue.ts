@@ -301,7 +301,9 @@ export function normalizeQuestions(input: unknown): InfoQuestion[] {
     }
     if (raw.optional === true) q.optional = true;
     if (raw.multiple === true && q.options) q.multiple = true;
-    if (typeof raw.url === "string" && raw.url) q.url = raw.url;
+    // Shown as a link on the card: only an http(s) address leaves the App (a "//host" or "/\host"
+    // from the session would open another site in the same tab).
+    if (typeof raw.url === "string" && /^https?:\/\//i.test(raw.url)) q.url = raw.url;
     if (typeof raw.accept === "string" && raw.accept) q.accept = raw.accept;
     if (kind === "action" && typeof raw.sender === "string" && raw.sender.trim()) q.sender = raw.sender.trim().slice(0, 120);
     if (kind === "login") {

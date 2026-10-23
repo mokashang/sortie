@@ -34,6 +34,7 @@ import { buildAttendedAgentLaunch } from "@/ai/runtime";
 import { notify } from "@/lib/notify";
 import { messages } from "@/i18n/messages";
 import { serverLang } from "@/lib/prefs";
+import { dataDir } from "@/lib/paths";
 
 export type { SpawnRecord } from "@/executor/sessions";
 
@@ -579,7 +580,7 @@ function defaultSpawnWindows(mode: AttendedSpawnMode, opts: WindowsSpawnOptions)
 // The new session joins the list; the others keep working.
 export function spawnAttendedSession(db: DB, runId: number, deps: AttendedDeps = {}): SpawnRecord {
   const now = (deps.now ?? (() => new Date()))();
-  const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
+  const logDir = deps.logDir ?? path.join(dataDir(), "executor-logs");
   fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.join(logDir, `attended-${runId}.log`);
   const cwd = deps.cwd ?? process.cwd();

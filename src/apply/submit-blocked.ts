@@ -90,7 +90,7 @@ export function notifySubmitBlocked(
     const n = submitBlockedCount(db, userId);
     const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;
     const title = n > 1 ? t.titleMany(n) : t.title(job?.company ?? "?");
-    const send = opts.push ?? ((a: string, b: string) => void notify(a, b, { priority: "high" }));
+    const send = opts.push ?? ((a: string, b: string) => void notify(a, b, { priority: "high", account: { db, userId } }));
     send(title, t.body(job?.title ?? ""));
     return true;
   } catch (e) {

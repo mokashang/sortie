@@ -10,6 +10,7 @@ import { SUBMIT_BLOCKED_PREFIX } from "@/apply/queue";
 import { notify } from "@/lib/notify";
 import { serverLang } from "@/lib/prefs";
 import { messages } from "@/i18n/messages";
+import { dataDir } from "@/lib/paths";
 
 export { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT };
 
@@ -265,7 +266,7 @@ export function resumePausedChainIfReady(db: DB, userId: string, deps: ContinueD
 
     const attended = parked.filter((p) => p.channel !== "headless");
     if (attended.length > 0) {
-      const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
+      const logDir = deps.logDir ?? path.join(dataDir(), "executor-logs");
       fs.mkdirSync(logDir, { recursive: true });
       let first: number | null = null;
       for (const paused of attended) {

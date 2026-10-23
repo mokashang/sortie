@@ -622,3 +622,10 @@ describe("generateResume stored paths", () => {
     expect(resolveResumePath(stored(inside.resumeId).pdf_path, { dataDir: dataRoot })).toBe(inside.pdfPath);
   });
 });
+
+describe("isSafeVersionName on Windows", () => {
+  it("keeps ordinary and non-Latin names, refuses what Windows reads specially", () => {
+    for (const ok of ["swe_general_v1", "嵌入式-第二版", "quant v2"]) expect(isSafeVersionName(ok)).toBe(true);
+    for (const bad of ["a:b", "CON", "nul.pdf", "x.", "x ", "a|b", "a?b", "", "x".repeat(81)]) expect(isSafeVersionName(bad)).toBe(false);
+  });
+});

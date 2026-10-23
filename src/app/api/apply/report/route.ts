@@ -53,7 +53,7 @@ export const POST = withUser(async (req, actor) => {
       if (getAutoSubmit(db, userId)) {
         const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;
         const t = messagesFor(lang).notify.autoSubmitted;
-        void notify(t.title(job?.company ?? "?"), t.body(job?.title ?? ""), { priority: "default" });
+        void notify(t.title(job?.company ?? "?"), t.body(job?.title ?? ""), { priority: "default", account: { db, userId } });
       }
       return NextResponse.json({ ok: true });
     }
@@ -123,7 +123,7 @@ export const POST = withUser(async (req, actor) => {
       }
       const job = db.prepare("SELECT company, title FROM jobs WHERE id = ?").get(jobId) as { company: string; title: string } | undefined;
       const n = needsInfoNotification(job?.company ?? "?", job?.title ?? "", questions, lang);
-      void notify(n.title, n.body, { priority: "high" });
+      void notify(n.title, n.body, { priority: "high", account: { db, userId } });
       return NextResponse.json({ ok: true, autoAnswered, remaining: questions.map((q) => q.key) });
     }
     return NextResponse.json({ ok: true });
