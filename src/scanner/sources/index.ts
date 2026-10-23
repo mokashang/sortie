@@ -30,6 +30,6 @@ export const LIVE_REGISTRY: Registry = {
   // 一个板块一次 GET(widget 接口),同一主机限流 → 两个连接、间隔 1.5 秒,吃到 429 整个 family 歇着。
   workable: { fetch: fetchWorkable, concurrency: 2, minGapMs: 1500, gated: true, sharedHost: true },
   icims: { fetch: fetchIcims, concurrency: 2, minGapMs: 500, gated: true },
-  linkedin: { fetch: fetchLinkedinGuest, concurrency: 1, minGapMs: 3000, gated: true },
+  linkedin: { fetch: fetchLinkedinGuest, concurrency: 1, minGapMs: 3000, gated: true, ownPace: true },
   github_list: { fetch: fetchListBoard, concurrency: 3, minGapMs: 0, gated: false },
 };

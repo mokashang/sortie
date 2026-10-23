@@ -28,5 +28,8 @@ export interface FamilyConfig {
   // 整个 family 共用一个接口主机、一份限流(Workable 的 apply.workable.com):一个板块吃到 429,
   // 这一跳里同 family 的其余板块不再问,并且整个 family 歇到 Retry-After(没给就 1 小时)。
   sharedHost?: boolean;
+  // 一次轮询本来就要好几分钟、刻意慢慢问的板块(LinkedIn 游客接口):跳不等它,在后台按自己的节奏跑完,
+  // 不受跳的截止时刻约束(见 scheduler.ts 的 ownPaceRuns)。
+  ownPace?: boolean;
 }
 export type Registry = Partial<Record<Family, FamilyConfig>>;

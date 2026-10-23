@@ -19,6 +19,13 @@ describe("bytedance source", () => {
     for (const j of jobs) { expect(j.source).toBe("bytedance"); expect(j.company).toBe("TikTok"); expect(US_CITIES.has(j.location!)).toBe(true); expect(j.applyUrl).toMatch(/^https:\/\/lifeattiktok\.com\/search\/\d+$/); }
     expect(jobs[0].jdText).toMatch(/Requirements:/); expect(jobs[0].postedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+  it("stops at the deadline after the first request and reports it", async () => {
+    let n = 0, cut = 0;
+    const fetcher = async () => { n++; return new Response(list, { status: 200 }); };
+    const jobs = await fetchBytedance(board, { fetcher, depth: "core", isKnownUrl: () => false, now: new Date(), deadline: Date.now() - 1, truncated: () => { cut++; } });
+    expect(n).toBe(1); expect(cut).toBe(1);
+    expect(jobs.length).toBeGreaterThan(0);   // 列表自带正文,第一页拿到的照样返回
+  });
   it("throws when the API returns a non-zero code", async () => {
     const fetcher = async () => new Response(JSON.stringify({ code: -9000003, message: "bad" }), { status: 200 });
     await expect(fetchBytedance(board, { fetcher, depth: "core", isKnownUrl: () => false, now: new Date() })).rejects.toThrow(/code -9000003/);
