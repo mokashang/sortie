@@ -146,7 +146,7 @@ export function answerInfo(
   const remembered: Record<string, string> = {};
   for (const q of questions) {
     const kind = infoKind(q);
-    if (kind === "login" || kind === "manual") continue;
+    if (kind === "login" || kind === "manual" || kind === "submit") continue;
     const a = answers[q.key];
     let value = typeof a?.value === "string" ? a.value.trim() : "";
     if (!value) {

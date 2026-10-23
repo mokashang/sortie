@@ -14,6 +14,7 @@ import {
 import { createRunToken, revokeRunTokens, pruneExpiredTokens } from "@/lib/api-tokens";
 import { ownerId } from "@/lib/users";
 import { listSpawns, ownerOf, runsOfSession, type RunOwnerFields, type SpawnRecord } from "@/executor/sessions";
+import { dataDir } from "@/lib/paths";
 
 // The process manager for headless AI agent sessions launched from the App's UI.
 // See docs on the API routes (src/app/api/executor/*) and README's 投递执行/人脉 sections for the
@@ -295,6 +296,12 @@ export function startExecutor(
   if (channel === "headless" && kind === "scan") {
     throw new ExecutorStartError("scan_needs_attended", "scan runs need the attended session (user_chrome): LinkedIn/Handshake/Tesla need the user's logged-in Chrome");
   }
+  // A background run is an agent process on this machine, with the owner's AI provider, a shell
+  // and the repo as its working directory: the owner's alone (security review 2026-10-22).
+  const owner = ownerId(db);
+  if (channel === "headless" && owner && userId !== owner) {
+    throw new ExecutorStartError("headless_owner_only", "the background browser runs only for this machine's owner account");
+  }
   const existing =
     channel === "user_chrome" && deps.queueBehind
       ? []
@@ -316,7 +323,7 @@ export function startExecutor(
     settleRunOutcome(db, row.id);
   }
 
-  const logDir = deps.logDir ?? path.join(process.cwd(), "data/executor-logs");
+  const logDir = deps.logDir ?? path.join(dataDir(), "executor-logs");
   fs.mkdirSync(logDir, { recursive: true });
 
   if (channel === "user_chrome") {
@@ -505,11 +512,18 @@ function ownedRun<T>(db: DB, userId: string, runId: number, cols: string, what: 
 // headless run's stdout-redirected log. Throws for an unknown run or one with no log_path yet
 // (should never happen: startExecutor always creates the file before returning) rather than
 // silently dropping the line.
+// A bearer token never goes into a run log or back out of one: logs are shown in the App, read by
+// 问助手 and sent to the chat model, and codex exec echoes the curl commands it ran, header and all.
+const TOKEN_IN_TEXT = /sortie_[A-Za-z0-9_-]{20,}/g;
+export function redactTokens(text: string): string {
+  return text.replace(TOKEN_IN_TEXT, "sortie_[redacted]");
+}
+
 export function appendRunLog(db: DB, userId: string, runId: number, line: string): void {
   const row = ownedRun<{ log_path: string | null }>(db, userId, runId, "log_path", "appendRunLog");
   if (!row.log_path) throw new Error(`appendRunLog: run #${runId} has no log_path`);
   const ts = new Date().toTimeString().slice(0, 8); // HH:MM:SS
-  fs.appendFileSync(row.log_path, `[${ts}] ${line}\n`);
+  fs.appendFileSync(row.log_path, `[${ts}] ${redactTokens(line)}\n`);
 }
 
 // The attended session calls this (POST /api/executor/finish) when it's done driving the browser
@@ -623,7 +637,7 @@ function tailLines(filePath: string, n: number): string[] {
     const content = fs.readFileSync(filePath, "utf8");
     const lines = content.split("\n");
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-    return lines.slice(-n);
+    return lines.slice(-n).map(redactTokens);
   } catch {
     return [];
   }
@@ -651,7 +665,7 @@ export function executorStatus(db: DB, userId: string): RunStatusRow[] {
 // A start refused because the channel cannot do what was asked (referrals or scanning on the
 // headless channel). The code lets the API route pick a message in the UI language
 // (src/i18n/messages/errors.ts); the English text is for logs and tests.
-export type ExecutorStartErrorCode = "referral_needs_attended" | "scan_needs_attended";
+export type ExecutorStartErrorCode = "referral_needs_attended" | "scan_needs_attended" | "attended_needs_session" | "headless_owner_only";
 export class ExecutorStartError extends Error {
   code: ExecutorStartErrorCode;
   constructor(code: ExecutorStartErrorCode, message: string) {

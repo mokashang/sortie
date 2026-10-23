@@ -3,6 +3,7 @@ import { BoardRow } from "@/scanner/boards";
 import { FetchCtx } from "@/scanner/sources/types";
 import { htmlToText } from "@/scanner/html";
 import { isEntryLevelTitle } from "@/scanner/entry-level";
+import { wanted } from "@/scanner/sources/util";
 
 // Oracle HCM(Oracle Cloud Recruiting)的公开 REST:每个 <host>/<site> 一个板块,按关键词取最新,详情拿 JD。
 const KEYWORDS = ["engineer", "software", "graduate", "intern"];
@@ -28,7 +29,7 @@ export async function fetchOracle(board: BoardRow, ctx: FetchCtx): Promise<RawJo
   }
   const out: RawJob[] = [];
   for (const r of seen.values()) {
-    if (!isEntryLevelTitle(r.Title)) continue;
+    if (!isEntryLevelTitle(r.Title) || !wanted(ctx, r.Title)) continue;   // 标题门外的岗不拉详情
     const applyUrl = `https://${host}/hcmUI/CandidateExperience/en/sites/${site}/job/${r.Id}`;
     if (ctx.isKnownUrl(applyUrl)) continue;
     let jdText = "";

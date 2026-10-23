@@ -72,7 +72,7 @@ export function resolveReferrals(db: DB, userId: string, deps: ResolveDeps = {})
 
   const lang = serverLang();
   const t = messages[lang].notify.referral;
-  const push = deps.notify ?? ((title: string, body: string) => void notify(title, body, { priority: "default" }));
+  const push = deps.notify ?? ((title: string, body: string) => void notify(title, body, { priority: "default", account: { db, userId } }));
   const start = deps.startApply ?? ((d: DB, u: string, jobIds: number[]) => maybeAutoStartApply(d, u, { jobIds, mode: "direct" }, deps.autoStart));
   const out: ResolveOutcome[] = [];
   for (const { company, jobs } of byCompany.values()) {

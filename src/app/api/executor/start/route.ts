@@ -5,6 +5,7 @@ import { APPLY_CHUNK_SIZE } from "@/apply/continue";
 import { withUser, failResponse, requireOwner } from "@/lib/actor";
 import { langFromRequest, messagesFor } from "@/i18n/server";
 import { readJsonBody } from "@/lib/request-body";
+import { heartbeatAgeMs, HEARTBEAT_STALE_MS } from "@/executor/attended";
 
 const VALID_KINDS: ExecutorKind[] = ["apply", "network_send", "network_find", "jd_review", "scan", "referral_check"];
 const VALID_CHANNELS: ExecutorChannel[] = ["headless", "user_chrome"];
@@ -51,6 +52,14 @@ export const POST = withUser(async (req, actor) => {
       );
     }
     const db = getDb();
+    // Nothing would ever take it: the dispatcher launches assistants only for the owner (this
+    // machine's Chrome is the owner's), so another account's run in its own Chrome needs a session
+    // of its own heartbeating first (a desktop session with a personal token). Without one the
+    // task sat at "queued" forever (#609, 2026-10-22).
+    if (channel === "user_chrome" && actor.user?.role !== "owner") {
+      const age = heartbeatAgeMs(db, userId);
+      if (age == null || age > HEARTBEAT_STALE_MS) throw new ExecutorStartError("attended_needs_session", "no attended session for this account");
+    }
     const options: StartOptions = body.options ?? {};
     if (kind === "apply" && Array.isArray(options.plan) && options.plan.length > 0) {
       if (typeof options.chunk !== "number" || options.chunk <= 0) options.chunk = APPLY_CHUNK_SIZE;

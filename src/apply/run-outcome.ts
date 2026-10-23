@@ -63,10 +63,12 @@ export function rowResult(r: ClaimedRow): { mode: "direct" | "referral"; achieve
   }
   if (r.status === "archived") return { mode: "direct", achieved: false, bucket: "archived" };
   // A 待处理 card is waiting on the user (spec 2026-09-13-todo-list-design): a missing answer or
-  // file, a login wall, something to finish by hand, an executor error, or a rejected fill. The
-  // rejected fill still counts as achieved — the form was filled — the rest were never filled.
+  // file, a login wall, something to finish by hand, an executor error, a rejected fill, or a
+  // Submit click the assistant was not allowed to make. The rejected fill and the approved one
+  // whose Submit was refused still count as achieved — the form was filled — the rest were never
+  // filled. (Without the second, every segment of 2026-10-22 looked like zero progress.)
   if (r.status === "needs_info" || r.pending_questions || r.needs_manual_reason) {
-    return { mode: "direct", achieved: r.confirm_decision === "rejected", bucket: "info" };
+    return { mode: "direct", achieved: r.confirm_decision === "rejected" || r.confirm_decision === "approved", bucket: "info" };
   }
   return { mode: "direct", achieved: false, bucket: "none" };
 }

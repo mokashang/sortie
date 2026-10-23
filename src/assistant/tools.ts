@@ -9,6 +9,8 @@ import { queueTargetedRun, type FollowupDeps } from "@/apply/followup";
 import { unarchive } from "@/apply/queue";
 import { upsertJobs } from "@/scanner/upsert";
 import { fetchJdText } from "@/scanner/jd-fetch";
+import { publicUrlProblem } from "@/lib/public-url";
+import { ownerId } from "@/lib/users";
 import { directionName } from "@/app/lib/labels";
 import { localFull } from "@/app/lib/time";
 
@@ -526,13 +528,26 @@ export async function runTool(db: DB, userId: string, call: ToolCall, lang: Lang
       return { observation: results.map((r) => r.observation).join("\n"), events: results.map((r) => r.event) };
     }
     case "add_job": {
+      // A posting added here goes into the shared library, onto every account's list and into the
+      // scanner's boards: the owner's call (security review 2026-10-22).
+      if (ownerId(db) !== userId) {
+        return {
+          observation: "add_job: adding postings to the library is only available to this machine's owner account; tell the user, and use search_jobs for postings already there.",
+          events: [{ tool: "add_job", ok: false, blocked: "owner_only" }],
+        };
+      }
       const results: ToolResult[] = [];
       for (const j of call.jobs?.length ? call.jobs : [call]) results.push(await addJob(db, j, deps));
       return { observation: results.map((r) => r.observation).join("\n"), events: results.map((r) => r.event) };
     }
     case "find_online":
       return single(await findOnline(db, userId, call.query, deps));
-    case "read_posting":
-      return single(await readPostings(db, userId, call.urls, deps));
+    case "read_posting": {
+      // The page is fetched here or opened by the model's WebFetch; neither may reach a local or
+      // private address (src/lib/public-url.ts).
+      const urls = call.urls.filter((u) => publicUrlProblem(u) === null);
+      if (urls.length === 0) return single({ observation: "read_posting: only public http(s) job pages can be read.", event: { tool: "read_posting", ok: false, blocked: "not_public" } });
+      return single(await readPostings(db, userId, urls, deps));
+    }
   }
 }

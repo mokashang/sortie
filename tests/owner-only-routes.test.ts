@@ -18,6 +18,13 @@ import { GET as jdBatch } from "@/app/api/jd-review/batch/route";
 import { POST as scanIngest } from "@/app/api/scan/ingest/route";
 import { POST as loginOpen } from "@/app/api/apply/login-open/route";
 import { POST as executorStart } from "@/app/api/executor/start/route";
+import { POST as applyDecide } from "@/app/api/apply/decide/route";
+import { POST as networkDecide } from "@/app/api/network/decide/route";
+import { POST as referralDecide } from "@/app/api/referral/decide/route";
+import { POST as followupRoute } from "@/app/api/referral/followup/route";
+import { POST as autoSubmit } from "@/app/api/settings/auto-submit/route";
+import { POST as answerInfo } from "@/app/api/apply/answer-info/route";
+import { POST as selfSubmitted } from "@/app/api/apply/self-submitted/route";
 
 // Routes that rewrite shared postings or act on this machine's own Chrome: a second account on
 // the same server must not reach them (security review 2026-10-16).
@@ -45,5 +52,40 @@ describe("owner-only routes refuse another account", () => {
     ["jd_review start", () => executorStart(req("/api/executor/start", { kind: "jd_review" }), CTX)],
   ])("%s → 403", async (_name, call) => {
     expect((await call()).status).toBe(403);
+  });
+});
+
+describe("another account starting a task in its own Chrome", () => {
+  it("is told no session could take it, instead of queueing a task nobody will run", async () => {
+    const res = await executorStart(req("/api/executor/start", { kind: "apply", channel: "user_chrome", options: { plan: [{ direction: "embedded", count: 12, mode: "direct" }] } }), CTX);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/owner|主账号/);
+    expect((db.prepare("SELECT COUNT(*) n FROM executor_runs WHERE user_id = 'm1'").get() as { n: number }).n).toBe(0);
+  });
+});
+
+describe("the user's own decisions never come from a token", () => {
+  const asOwnerToken = (url: string, body: unknown) =>
+    new Request(`http://127.0.0.1:3000${url}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.SORTIE_INTERNAL_TOKEN}` },
+      body: JSON.stringify(body),
+    });
+  it.each([
+    ["approve a fill", () => applyDecide(asOwnerToken("/api/apply/decide", { jobId: 1, decision: "approve" }), CTX)],
+    ["approve a networking message", () => networkDecide(asOwnerToken("/api/network/decide", { outreachId: 1, decision: "approve" }), CTX)],
+    ["decide a referral card", () => referralDecide(asOwnerToken("/api/referral/decide", { jobIds: [1], action: "direct" }), CTX)],
+    ["approve a follow-up", () => followupRoute(asOwnerToken("/api/referral/followup", { followupId: 1, action: "approve" }), CTX)],
+    ["switch on auto-apply", () => autoSubmit(asOwnerToken("/api/settings/auto-submit", { enabled: true }), CTX)],
+    ["answer a card", () => answerInfo(asOwnerToken("/api/apply/answer-info", { jobId: 1, answers: {} }), CTX)],
+    ["say it was submitted", () => selfSubmitted(asOwnerToken("/api/apply/self-submitted", { jobId: 1 }), CTX)],
+  ])("%s → 403 browser_only, even with the owner's machine token", async (_name, call) => {
+    const res = await call();
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: string }).code).toBe("browser_only");
+  });
+  it("a session may still report a follow-up it sent", async () => {
+    const res = await followupRoute(asOwnerToken("/api/referral/followup", { followupId: 999, action: "sent", text: "hi" }), CTX);
+    expect(res.status).not.toBe(403);
   });
 });

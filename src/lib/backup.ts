@@ -55,3 +55,23 @@ export async function backupDatabase(opts: BackupOptions): Promise<BackupResult>
   for (const n of pruned) fs.unlinkSync(path.join(opts.outDir, n));
   return { dest, bytes: fs.statSync(dest).size, pruned };
 }
+
+// A copy of the newest backup on another physical disk (BACKUP_MIRROR_DIR). The database and all
+// fourteen daily backups live on E: (one NVMe drive, 2026-10-22); if that drive dies, so does every
+// copy. The mirror keeps the newest few, pruned by the same date rule, and never fails the
+// backup itself: a missing or full mirror disk is only reported.
+export function mirrorBackup(file: string, mirrorDir: string, opts: { today?: Date; keepDays?: number } = {}): { dest: string | null; pruned: string[]; error?: string } {
+  try {
+    fs.mkdirSync(mirrorDir, { recursive: true });
+    const dest = path.join(mirrorDir, path.basename(file));
+    const tmp = `${dest}.partial`;
+    fs.copyFileSync(file, tmp);
+    fs.renameSync(tmp, dest);
+    const pruned = selectBackupsToPrune(fs.readdirSync(mirrorDir), opts.today ?? new Date(), opts.keepDays ?? 3);
+    for (const n of pruned) fs.unlinkSync(path.join(mirrorDir, n));
+    return { dest, pruned };
+  } catch (e) {
+    return { dest: null, pruned: [], error: e instanceof Error ? e.message : String(e) };
+  }
+}
+

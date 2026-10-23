@@ -200,7 +200,7 @@ describe("接力 maybeContinueApplyRun / resumePausedChainIfReady", () => {
     expect(r).toMatchObject({ action: "paused", unconfirmed: 10 });
     const p = (r as { runId: number }).runId;
     expect(runRow(db, p)).toMatchObject({ status: "paused", channel: "user_chrome" });
-    expect(runRow(db, p).summary).toContain("等待确认");
+    expect(runRow(db, p).summary).toContain("等你处理");
     expect(optionsOf(db, p)).toMatchObject({
       resume: true,
       plan: [{ direction: "swe_general", count: 2, mode: "direct" }],

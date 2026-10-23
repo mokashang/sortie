@@ -16,7 +16,7 @@ export const labels = defineMessages({
     channel: { user_chrome: "在我的 Chrome 里", headless: "后台浏览器" },
     experienceKind: { education: "教育", work: "工作", project: "项目", skill: "技能", award: "奖项", publication: "论文" },
     // 待处理 card item kinds (src/apply/queue.ts InfoKind).
-    infoKind: { text: "补信息", file: "传文件", login: "登录一次", action: "现场完成", manual: "亲自完成" },
+    infoKind: { text: "补信息", file: "传文件", login: "登录一次", action: "现场完成", manual: "亲自完成", submit: "点提交" },
     // Standing documents in data/documents (src/lib/documents.ts); other keys show as-is.
     documents: {
       transcript: "成绩单(研究生)",
@@ -80,7 +80,7 @@ export const labels = defineMessages({
     },
     channel: { user_chrome: "In my Chrome", headless: "Background browser" },
     experienceKind: { education: "Education", work: "Work", project: "Project", skill: "Skill", award: "Award", publication: "Publication" },
-    infoKind: { text: "Answer a question", file: "Upload a file", login: "Sign in once", action: "Finish in the tab", manual: "Do it yourself" },
+    infoKind: { text: "Answer a question", file: "Upload a file", login: "Sign in once", action: "Finish in the tab", manual: "Do it yourself", submit: "Click Submit" },
     documents: {
       transcript: "Transcript (graduate)",
       transcript_undergrad: "Transcript (undergraduate)",
