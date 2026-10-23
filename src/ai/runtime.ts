@@ -3,6 +3,9 @@ import { assertProviderConfigured } from "@/ai/config";
 import { resolveClaudeBin } from "@/lib/claude-bin";
 import { resolveCodexBin } from "@/lib/codex-bin";
 import type { McpServerSpec } from "@/executor/mcp-config";
+import { dataDir } from "@/lib/paths";
+import fs from "fs";
+import path from "path";
 
 export interface AgentLaunch {
   bin: string;
@@ -111,16 +114,31 @@ export interface AttendedLaunchOptions {
   cwd: string;
   sessionName?: string;
   env?: EnvMap;
+  // Tests: the --settings file to pass (null = none); omitted = attendedSettingsPath().
+  settingsPath?: string | null;
+}
+
+// Settings only the spawned attended Claude sessions load (`--settings`), so whatever the user
+// authorizes there reaches Sortie's sessions and none of their other Claude sessions. 2026-10-22:
+// Claude Code's auto-mode check refused every final Submit click in those sessions
+// ("denied by auto mode · [Real-World Transactions]") although the App had approved each fill; the
+// documented way to authorize that category is an `autoMode.allow` entry, which is the user's to
+// write — the App never creates or edits this file, it only passes it on when it exists.
+export function attendedSettingsPath(env: EnvMap = process.env, exists: (p: string) => boolean = fs.existsSync): string | null {
+  const p = env.ATTENDED_CLAUDE_SETTINGS || path.join(dataDir(), "attended-settings.json");
+  return exists(p) ? p : null;
 }
 
 export function buildAttendedAgentLaunch(opts: AttendedLaunchOptions): AgentLaunch {
   const env = opts.env ?? process.env;
   assertProviderConfigured(opts.provider, env);
   if (opts.provider === "claude") {
+    const settings = opts.settingsPath !== undefined ? opts.settingsPath : attendedSettingsPath(env);
     return {
       bin: env.ATTENDED_CLAUDE_BIN || resolveClaudeBin({ env }),
       args: [
         "--chrome",
+        ...(settings ? ["--settings", settings] : []),
         "--permission-mode",
         "dontAsk",
         "--allowedTools",

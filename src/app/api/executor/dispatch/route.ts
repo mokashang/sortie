@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { dispatchAttended, attendedStatus } from "@/executor/attended";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared } from "@/apply/followup";
+import { sweepTabs } from "@/executor/tabs";
 import { ownerId } from "@/lib/users";
 import { withInternal } from "@/lib/actor";
 
@@ -29,10 +30,16 @@ export const POST = withInternal(async () => {
     const reclaimed = owner ? reclaimStrandedPrepared(db, owner) : undefined;
     if (reclaimed && reclaimed.reclaimed.length > 0)
       console.log(`[attended] reclaimed ${reclaimed.reclaimed.length} stranded prepared row(s); requeued ${reclaimed.requeued.join(",") || "none"}`);
+    // Tabs stuck past an hour, and the oldest ones whenever more than 30 are open: the owning
+    // session closes them and their jobs are detached (src/executor/tabs.ts). Before the stranded
+    // check, so an approval whose tab was just closed gets its refill queued this same tick.
+    const tabs = owner ? sweepTabs(db, owner) : undefined;
+    if (tabs && tabs.released.length > 0)
+      console.log(`[attended] closing ${tabs.released.length} tab(s) (${tabs.open} open): ${tabs.released.map((t) => `${t.jobId}/${t.why}`).join(", ")}`);
     const stranded = owner ? requeueStrandedApprovals(db, owner) : undefined;
     if (stranded?.autoStarted) console.log(`[attended] queued resume run #${stranded.runId}: approved applications nobody was acting on`);
     const r = dispatchAttended(db);
-    return NextResponse.json({ ok: true, ...r, stranded, reclaimed });
+    return NextResponse.json({ ok: true, ...r, stranded, reclaimed, tabs });
   } catch (e) {
     const msg = String(e);
     const now = Date.now();

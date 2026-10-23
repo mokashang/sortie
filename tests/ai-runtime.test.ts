@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAttendedAgentLaunch, buildHeadlessAgentLaunch } from "@/ai/runtime";
+import { attendedSettingsPath, buildAttendedAgentLaunch, buildHeadlessAgentLaunch } from "@/ai/runtime";
 
 const playwright = { command: "cmd", args: ["/c", "npx", "@playwright/mcp", "--headless"] };
 
@@ -33,6 +33,19 @@ describe("AI agent runtime", () => {
     expect(launch.env.OPENAI_API_KEY).toBeUndefined();
     expect(launch.args.join(" ")).toContain("shell_environment_policy.filters.OPENAI_API_KEY");
     expect(env).not.toHaveProperty("CODEX_API_KEY");
+  });
+
+  it("an attended Claude session loads the user's own attended-settings file only when it exists", () => {
+    const env = { CLAUDE_BIN: "/claude", ATTENDED_CLAUDE_BIN: "/claude" };
+    const withFile = buildAttendedAgentLaunch({ provider: "claude", prompt: "P", runId: 7, cwd: "/sortie", env, settingsPath: "/data/attended-settings.json" });
+    const i = withFile.args.indexOf("--settings");
+    expect(withFile.args[i + 1]).toBe("/data/attended-settings.json");
+    expect(i).toBeLessThan(withFile.args.indexOf("--allowedTools"));
+    expect(withFile.args).toContain("dontAsk");
+    const without = buildAttendedAgentLaunch({ provider: "claude", prompt: "P", runId: 7, cwd: "/sortie", env, settingsPath: null });
+    expect(without.args).not.toContain("--settings");
+    expect(attendedSettingsPath({ ATTENDED_CLAUDE_SETTINGS: "/x.json" }, () => false)).toBeNull();
+    expect(attendedSettingsPath({ ATTENDED_CLAUDE_SETTINGS: "/x.json" }, () => true)).toBe("/x.json");
   });
 
   it("retains the old Claude launcher as a compatibility path", () => {

@@ -80,13 +80,19 @@ const ascii = (s: string) => s.replace(/[^\x20-\x7e]/g, "").replace(/\s+/g, " ")
 export const CARRY_ON =
   "Then, if a run of yours is still running and its segment is not full, carry on with it (take the next job as usual); only stop and wait for the next line once the segment is full or you have no run.";
 
+// Tabs (2026-10-22, src/executor/tabs.ts): a session keeps one blank anchor tab so its group never
+// empties (closing a group's last tab drops the group, and every filled form in it), and closes
+// every other tab once its job is done.
+export const CLOSE_TAB =
+  "Then close that tab with tabs_close_mcp - unless it is the last tab left in your group, which you navigate to about:blank instead.";
+
 export function approvedNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, then POST /api/apply/report {jobId, status:'submitted'}. Do NOT close the tab (closing one tab destroys the whole tab group and every other filled form with it) - leave the confirmation page open or navigate that tab to about:blank. ${CARRY_ON}`;
+  return `${NOTICE_PREFIX} approved job ${jobId}${who ? ` (${who})` : ""}: go to the tab you filled for it, check the form still matches what you reported, click Submit, wait for the confirmation page, then POST /api/apply/report {jobId, status:'submitted'}. ${CLOSE_TAB} ${CARRY_ON}`;
 }
 export function rejectedNotice(jobId: number, company: string): string {
   const who = ascii(company);
-  return `${NOTICE_PREFIX} rejected job ${jobId}${who ? ` (${who})` : ""}: do not submit it. Do NOT close its tab (that destroys the whole tab group) - navigate that tab to about:blank instead. The App keeps the reason for the next fill. ${CARRY_ON}`;
+  return `${NOTICE_PREFIX} rejected job ${jobId}${who ? ` (${who})` : ""}: do not submit it. The App keeps the reason for the next fill. ${CLOSE_TAB} ${CARRY_ON}`;
 }
 // The dispatcher's backstop for a session that stopped at its prompt while its run is still
 // running (see CARRY_ON): typed every STALL_NUDGE_MS of silence until the run ends.
