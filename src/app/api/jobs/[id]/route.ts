@@ -34,12 +34,13 @@ export const GET = withUser(async (_req, { userId }, { params }) => {
 
   const row = getDb()
     .prepare(
-      `SELECT j.title, j.company, j.location, j.apply_url, j.jd_text,
+      `SELECT j.title, j.company, j.location, j.apply_url, t.jd_text,
               m.direction, m.score, m.tier, m.reason,
               r.version_name as resume_version,
               j.jd_status, j.duplicate_of, j.sponsorship, j.degree_req, j.role_kind, m.skip_reason,
               (SELECT group_concat(d.location, ' | ') FROM jobs d WHERE d.duplicate_of = j.id) AS sibling_locations
        FROM jobs j
+       LEFT JOIN job_texts t ON t.job_id = j.id
        LEFT JOIN matches m ON m.job_id = j.id AND m.user_id = ?
        LEFT JOIN resumes r ON r.id = m.resume_id
        WHERE j.id = ?`

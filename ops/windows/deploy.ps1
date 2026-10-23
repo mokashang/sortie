@@ -173,13 +173,15 @@ function Test-ServerUp($url) {
   try { Invoke-RestMethod -Uri $url -TimeoutSec 5 -Headers (Get-AuthHeaders) | Out-Null; return $true }
   catch { if ($_.Exception.Response) { return $true } else { return $false } }
 }
-$deadline = (Get-Date).AddSeconds(60)
+# The first request opens the db and runs any pending schema migration before answering; the v19
+# move of the job descriptions (2026-10-22) took 15-55 s on a copy of the 1 GB production db.
+$deadline = (Get-Date).AddSeconds(180)
 $ok = $false
 do {
   Start-Sleep -Seconds 2
   $ok = Test-ServerUp "$Base/api/executor/status"
 } until ($ok -or (Get-Date) -gt $deadline)
-if (-not $ok) { throw "server did not answer on $Base within 60s - check: pm2 logs sortie" }
+if (-not $ok) { throw "server did not answer on $Base within 180s - check: pm2 logs sortie" }
 
 $sha = git rev-parse --short HEAD
 $subject = git log -1 --pretty=%s

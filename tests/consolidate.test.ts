@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
+import { setJdText } from "@/lib/job-texts";
 import { LlmBackend } from "@/llm/types";
 import { runConsolidate, pendingGroupKeys, pickCanonical } from "@/scanner/consolidate";
 import { buildConsolidatePrompt, parseConsolidateResults, rankLocation } from "@/scanner/consolidate-prompt";
@@ -7,9 +8,10 @@ import { buildConsolidatePrompt, parseConsolidateResults, rankLocation } from "@
 function seed(db: DB, fp: string, o: { company?: string; title?: string; location?: string | null; jd?: string; source?: string; status?: string; locFlag?: string | null } = {}) {
   const company = o.company ?? "Acme", title = o.title ?? "SWE Intern";
   const info = db.prepare(
-    "INSERT INTO jobs (fingerprint, company, title, location, jd_text, source, dedup_key, loc_flag) VALUES (?,?,?,?,?,?,?,?)"
-  ).run(fp, company, title, o.location ?? "Austin, TX", o.jd ?? "", o.source ?? "github_list", `${company.toLowerCase()}|${title.toLowerCase()}`, o.locFlag ?? null);
+    "INSERT INTO jobs (fingerprint, company, title, location, source, dedup_key, loc_flag) VALUES (?,?,?,?,?,?,?)"
+  ).run(fp, company, title, o.location ?? "Austin, TX", o.source ?? "github_list", `${company.toLowerCase()}|${title.toLowerCase()}`, o.locFlag ?? null);
   const id = Number(info.lastInsertRowid);
+  setJdText(db, id, o.jd ?? "");
   db.prepare("INSERT INTO applications (job_id, status) VALUES (?,?)").run(id, o.status ?? "matched");
   return id;
 }

@@ -105,7 +105,7 @@ export function registerUrlBoards(db: DB, found: Map<string, string | null>, opt
 }
 
 // 补登:jobs.board_key 里出现过、boards 里还没有的 key。只走 idx_jobs_board_key(生产库 19 万行 ~10 ms),
-// 公司名逐个按索引取一行;不要改回对 jobs 全表 GROUP BY(~300 ms,还会把 jd_text 溢出页读一遍)。
+// 公司名逐个按索引取一行;不要改回对 jobs 全表 GROUP BY(~300 ms;v19 以前还会把 jd_text 溢出页读一遍)。
 // 平时由 upsertJobs 随到随登,这里是迁移和每个进程第一跳的兜底。
 export function discoverBoardsFromJobs(db: DB, opts: DiscoverOpts = {}): number {
   const orphans = db.prepare(

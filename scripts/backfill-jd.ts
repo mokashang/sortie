@@ -1,8 +1,9 @@
 import { getDb, logEvent } from "../src/lib/db";
+import { SET_JD_TEXT_SQL } from "../src/lib/job-texts";
 import { fetchJdText } from "../src/scanner/jd-fetch";
 import { visaFlag } from "../src/scanner/visa-filter";
 
-// One-time (re-runnable) JD backfill: a lot of jobs.jd_text is either empty or just the thin
+// One-time (re-runnable) JD backfill: a lot of job_texts.jd_text is either empty or just the thin
 // "[listing metadata] ..." marker github_lists leaves behind when it never got a rich ATS
 // record for that fingerprint. This walks the queue (status='matched' applications whose job
 // still has thin/empty jd_text), fetches the live apply_url, and stores whatever real posting
@@ -44,12 +45,13 @@ async function main() {
       `SELECT j.id, j.apply_url
        FROM jobs j
        JOIN applications a ON a.job_id = j.id
-       WHERE a.status = 'matched' AND (j.jd_text = '' OR j.jd_text LIKE '[listing metadata]%')
+       JOIN job_texts t ON t.job_id = j.id
+       WHERE a.status = 'matched' AND (t.jd_text = '' OR t.jd_text LIKE '[listing metadata]%')
        ORDER BY j.id`
     )
     .all() as { id: number; apply_url: string | null }[];
 
-  const setJdText = db.prepare("UPDATE jobs SET jd_text = ? WHERE id = ?");
+  const setJdText = db.prepare(SET_JD_TEXT_SQL);
   const setVisaFlag = db.prepare("UPDATE jobs SET visa_flag = ? WHERE id = ?");
   const archiveApp = db.prepare(
     "UPDATE applications SET status = 'archived' WHERE job_id = ? AND status IN ('discovered','matched')"
@@ -101,7 +103,7 @@ async function main() {
     } else {
       fetchedOk++;
       if (host) consecutiveFailsByHost.set(host, 0);
-      setJdText.run(text, job.id);
+      setJdText.run(job.id, text);
 
       const flag = visaFlag(text);
       if (flag) {
