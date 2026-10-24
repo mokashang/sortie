@@ -55,6 +55,10 @@ const MAX_ITERATIONS = 60;
 async function main() {
   const { limit, rescoreArchived, concurrency, rescoreMatched, user } = parseMatchArgs(process.argv.slice(2));
   const db = getDb();
+  // Wait up to a minute for the running server to release a write lock (better-sqlite3 gives up
+  // after 5 s: a 7k-job rescore died on SQLITE_BUSY 40 minutes in). Fine here, a separate process;
+  // the server itself keeps the short wait so its event loop never blocks that long.
+  db.pragma("busy_timeout = 60000");
   const account = resolveScriptUser(db, user);
   const profile = loadProfile(db, account.id);
   console.log(`matching as ${account.email}`);

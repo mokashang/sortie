@@ -66,6 +66,18 @@ describe("match prompt", () => {
     expect(p.prompt).toMatch(/F-1, needs visa sponsorship/i);
   });
 
+  it("checks posting dates against the candidate's graduation (new grad needs the degree done, an internship needs enrollment)", () => {
+    const p = buildMatchPrompt(
+      { directions: { embedded: 3 }, work_auth: { status: "F-1", needs_sponsorship: true }, grad_date: "2028-12", targets: { primary: "intern" } },
+      jobs
+    );
+    expect(p.prompt).toMatch(/Timing rule — the candidate graduates December 2028/);
+    expect(p.prompt).toMatch(/"New Grad 2027"/);
+    expect(p.prompt).toMatch(/still enrolled/);
+    // no graduation date → no timing rule
+    expect(buildMatchPrompt({ directions: { embedded: 3 }, work_auth: { status: "F-1", needs_sponsorship: true } }, jobs).prompt).not.toMatch(/Timing rule/);
+  });
+
   it("describes the account being matched, not the owner", () => {
     const p = buildMatchPrompt(
       { directions: { embedded: 3 }, work_auth: { status: "citizen", needs_sponsorship: false }, degree: "B.S. CS", grad_date: "2028-12", targets: { primary: "intern" } },

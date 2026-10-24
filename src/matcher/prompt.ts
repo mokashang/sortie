@@ -45,6 +45,23 @@ function targetsLine(p: MatchProfile): string {
   return `Candidate is looking for ${name(p.targets.primary)} first${second}: score a posting of the wanted kind higher than an otherwise equal one.${other}\n\n`;
 }
 
+// The graduation date has to be checked against each posting's own dates (2026-10-24: for a
+// December 2028 graduate the model wrote "2027 start aligns with December 2028 graduation" and
+// ranked Amazon's Early Career 2027 at 85 — the date alone in the candidate line was not enough).
+export function timingLine(p: MatchProfile): string {
+  const [y, m] = (p.grad_date ?? "").split("-").map(Number);
+  if (!(y > 0 && m >= 1 && m <= 12)) return "";
+  const when = `${MONTHS[m - 1]} ${y}`;
+  return (
+    `Timing rule — the candidate graduates ${when}; check every posting's dates against it. ` +
+    `A new-grad / full-time / early-career role needs the degree finished by its start date: one aimed at an earlier graduating class or starting before ${when} ` +
+    `(e.g. "New Grad ${y - 1}", "${y - 1} start", or a graduation window that ends before ${when}) does not fit — skip=true, score < 30, and say so in the reason. ` +
+    `An internship needs the candidate still enrolled while it runs: one that runs before ${when} fits (when it names a graduation window, ${when} must fall inside it); ` +
+    `one that starts after ${when}, or that requires having graduated, does not fit — skip=true, score < 30. ` +
+    `A posting that names no dates or class year is judged on everything else.\n\n`
+  );
+}
+
 export interface MatchJobInput {
   id: number;
   company: string;
@@ -87,6 +104,7 @@ export function buildMatchPrompt(profile: MatchProfile, jobs: MatchJobInput[]): 
   const prompt =
     `${candidateLine(profile)}\n\n` +
     targetsLine(profile) +
+    timingLine(profile) +
     `Candidate target directions (slug, tier 1=top priority; assign the single best-fitting slug per job):\n${dirLines}\n\n` +
     `Candidate needs visa sponsorship: ${profile.work_auth.needs_sponsorship}.\n\n` +
     `The candidate only wants US-based roles. If the location is clearly outside the US, set skip=true and give it a low score.\n\n` +
