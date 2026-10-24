@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb } from "@/lib/db";
-import { runTick, runSweep, BOARD_MIN_MS, clearFamilyPauses, familyPausedUntil } from "@/scanner/scheduler";
+import { runTick, runSweep, BOARD_MIN_MS, clearFamilyPauses, familyPausedUntil, ownPaceRunning, waitForOwnPaceRuns } from "@/scanner/scheduler";
 import { upsertBoards, getBoard, iso } from "@/scanner/boards";
 import type { FetchCtx, Registry } from "@/scanner/sources/types";
 import { isEngineeringTitle } from "@/scanner/entry-level";
@@ -102,6 +102,41 @@ describe("runTick: rate limits and per-board time", () => {
     const ev = db.prepare("SELECT payload FROM events WHERE kind='board_retier'").all() as { payload: string }[];
     expect(ev.map((e) => JSON.parse(e.payload).reason)).toEqual(["moved to workday:netflix.wd108/Netflix"]);
     expect((await runTick(db, { now: NOW, registry, seed: null, localHour: 12 })).boards).toBe(0);
+  });
+
+  it("runs an own-pace board in the background: the tick does not wait, it never runs twice at once, a sweep runs it inline", async () => {
+    const db = openDb(":memory:");
+    upsertBoards(db, [{ key: "linkedin:guest", origin: "builtin" }, { key: "greenhouse:a", origin: "url" }]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let calls = 0;
+    const registry: Registry = {
+      linkedin: { concurrency: 1, minGapMs: 0, gated: false, ownPace: true, fetch: async (_b, ctx) => {
+        calls++;
+        expect(ctx.deadline).toBeUndefined();                  // 不受跳的截止时刻约束
+        await gate;
+        return [job({ company: "Acme", title: "Software Engineer New Grad", applyUrl: "https://www.linkedin.com/jobs/view/1/", source: "linkedin", ats: null })];
+      } },
+      greenhouse: { concurrency: 1, minGapMs: 0, gated: false, fetch: async () => [] },
+    };
+    const s = await runTick(db, { now: NOW, registry, seed: null, rand: () => 0.5, localHour: 12 });   // 不等 LinkedIn 就返回
+    expect(s.ownPaceStarted).toEqual(["linkedin:guest"]);
+    expect(s.byFamily.greenhouse.boards).toBe(1);
+    expect(s.byFamily.linkedin).toBeUndefined();
+    expect(ownPaceRunning()).toEqual(["linkedin:guest"]);
+    await runTick(db, { now: NOW, registry, seed: null, localHour: 12 });                              // 还在跑:不再开
+    await runSweep(db, { now: NOW, registry, seed: null, keys: ["linkedin:guest"], localHour: 12 });   // 「问一次」也不重叠
+    expect(calls).toBe(1);
+    release();
+    await waitForOwnPaceRuns();
+    expect(ownPaceRunning()).toEqual([]);
+    expect(getBoard(db, "linkedin:guest")!.next_due_at).toBe(iso(new Date(NOW.getTime() + 2 * 3600_000)));
+    const ev = db.prepare("SELECT payload FROM events WHERE kind='scan_board'").all() as { payload: string }[];
+    expect(ev.map((e) => JSON.parse(e.payload))).toMatchObject([{ key: "linkedin:guest", boards: 1, inserted: 1 }]);
+    // 「问一次」当场跑完,结果在返回值里
+    const sweep = await runSweep(db, { now: NOW, registry, seed: null, keys: ["linkedin:guest"], localHour: 12 });
+    expect(sweep.byFamily.linkedin).toMatchObject({ boards: 1 });
+    expect(calls).toBe(2);
   });
 
   it("hands adapters a deadline, the title gate (non-seed only) and a truncation hook", async () => {

@@ -3,8 +3,10 @@ import { BoardRow } from "@/scanner/boards";
 import { FetchCtx } from "@/scanner/sources/types";
 import { htmlToText } from "@/scanner/html";
 import { isEntryLevelTitle } from "@/scanner/entry-level";
+import { pastDeadline, rotate } from "@/scanner/sources/util";
 
 // 字节 / TikTok 共用一个搜索接口,靠 website-path 头 + portal_type 切门户。列表自带正文与要求。
+// 4 个词 × 最多 8 页,受调度器的截止时刻约束(ctx.deadline);关键词顺序按分钟轮换,被截断时下次先搜别的词。
 const PORTALS: Record<string, { path: string; portal: number; company: string; origin: string; url: (id: string) => string }> = {
   tiktok: { path: "tiktok", portal: 4, company: "TikTok", origin: "https://lifeattiktok.com", url: (id) => `https://lifeattiktok.com/search/${id}` },
   bytedance: { path: "bytedance", portal: 6, company: "ByteDance", origin: "https://jobs.bytedance.com", url: (id) => `https://jobs.bytedance.com/en/position/${id}/detail` },
@@ -19,8 +21,10 @@ export async function fetchBytedance(board: BoardRow, ctx: FetchCtx): Promise<Ra
   const portal = PORTALS[board.ident];
   if (!portal) throw new Error(`bytedance ${board.ident}: unknown portal`);
   const seen = new Map<string, Post>();
-  for (const keyword of KEYWORDS) {
+  let cut = false, requests = 0;
+  search: for (const keyword of rotate(KEYWORDS, ctx.now)) {
     for (let offset = 0; offset < MAX_OFFSET; offset += PAGE) {
+      if (requests++ > 0 && pastDeadline(ctx)) { cut = true; break search; }
       const res = await ctx.fetcher("https://jobs.bytedance.com/api/v1/search/job/posts", {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json", "website-path": portal.path, origin: portal.origin, referer: portal.origin + "/" },
@@ -44,5 +48,6 @@ export async function fetchBytedance(board: BoardRow, ctx: FetchCtx): Promise<Ra
     const jdText = [htmlToText(p.description ?? ""), p.requirement ? "Requirements:\n" + htmlToText(p.requirement) : ""].filter(Boolean).join("\n\n");
     out.push({ company: board.company ?? portal.company, title: p.title, location: city, jdText, applyUrl, source: "bytedance", ats: "bytedance", postedAt: p.publish_time ? new Date(p.publish_time).toISOString() : null, jobKind: /intern/i.test(p.title) ? "intern" : "newgrad" });
   }
+  if (cut) ctx.truncated?.();
   return out;
 }
