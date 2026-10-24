@@ -176,7 +176,11 @@ export async function runMatching(db: DB, opts: MatchOptions): Promise<MatchSumm
         else if (changes > 0) summary.matched++;
       }
     });
-    tx();
+    // IMMEDIATE: the batch reads (eligibility, current status) before it writes. A deferred
+    // transaction that has read and then wants to write is refused outright (SQLITE_BUSY, no
+    // waiting) when another connection committed in between — `npm run match` died that way twice
+    // next to the live server (2026-10-24). Taking the write lock first makes it wait instead.
+    tx.immediate();
   }
 
   const concurrency = Math.max(1, opts.concurrency ?? 1);
