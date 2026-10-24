@@ -1,3 +1,4 @@
+import { pathToFileURL } from "url";
 import { getDb } from "../src/lib/db";
 import { loadProfile } from "../src/lib/profile";
 import { resolveScriptUser } from "./script-user";
@@ -103,7 +104,9 @@ async function main() {
   );
 }
 
-const isMain = import.meta.url === `file://${process.argv[1]}`;
+// pathToFileURL, not `file://${argv[1]}`: on Windows the argv path has a drive letter and
+// backslashes, so the hand-built URL never matched and the script exited without doing anything.
+const isMain = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   main().catch((e) => {
     console.error(e);
