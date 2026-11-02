@@ -40,7 +40,7 @@ function Resolve-Cmd($name) {
 
 $pm2 = Resolve-Cmd "pm2.cmd"
 $npm = Resolve-Cmd "npm.cmd"
-$ecosystem = Join-Path $Root "ops\windows\ecosystem.config.cjs"
+$startServer = Join-Path $Root "ops\windows\start-server.ps1"
 $chromeCmd = Join-Path $Root "ops\windows\start-chrome.cmd"
 $caddyfile = Join-Path $Root "ops\windows\Caddyfile"
 $envFile = Join-Path $Root ".env"
@@ -67,10 +67,21 @@ function New-LogonTrigger($delaySeconds) {
   return $t
 }
 
-# 1. Server: pm2 brings up `sortie` from the ecosystem file (an already-running app is left alone).
+# 1. Server: ops\windows\start-server.ps1 starts the pm2 app `sortie` when it is missing (fresh boot: no
+#    pm2 daemon) or errored, and leaves a running or deliberately stopped one alone. At logon and then
+#    every 10 minutes, so a server that dies later comes back too. Hidden through run-hidden.js like Caddy:
+#    the old action, pm2.cmd itself, put a console window on the desktop, and closing it during a boot
+#    (0xC000013A) kept the server down 2026-10-25 .. 11-02. The old action could not repeat either:
+#    `pm2 start <ecosystem>` restarts an app that is already up.
+$runHidden = Join-Path $Root "ops\windows\run-hidden.js"
+$wscript = Resolve-Cmd "wscript.exe"
+$serverTrigger = New-LogonTrigger 20
+$serverTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 10)).Repetition
+$serverSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 Register-SortieTask "Sortie Server" `
-  (New-ScheduledTaskAction -Execute $pm2 -Argument "start `"$ecosystem`" --only sortie" -WorkingDirectory $Root) `
-  (New-LogonTrigger 20) $longRunning
+  (New-ScheduledTaskAction -Execute $wscript -Argument "//B //Nologo `"$runHidden`" -Retries 2 -RetryDelaySec 60 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$startServer`" -Pm2 `"$pm2`"" -WorkingDirectory $Root) `
+  $serverTrigger $serverSettings
 
 # 2. Chrome with the job-hunting profile, so the Claude in Chrome extension is connected.
 Register-SortieTask "Sortie Chrome" `
@@ -105,8 +116,6 @@ if ($WithCaddy) {
   # "caddy.exe" window on the desktop, and closing it killed the proxy (2026-09-14). The launcher hides the
   # console, ends Caddy when the task is stopped, and retries a failed start (Tailscale adapter not up yet
   # after a reboot) 3 times a minute apart - the task's own RestartCount never fires for an exit code.
-  $runHidden = Join-Path $Root "ops\windows\run-hidden.js"
-  $wscript = Resolve-Cmd "wscript.exe"
   Register-SortieTask "Sortie Caddy" `
     (New-ScheduledTaskAction -Execute $wscript -Argument "//B //Nologo `"$runHidden`" -Retries 3 -RetryDelaySec 60 `"$CaddyExe`" run --config `"$caddyfile`" --envfile `"$envFile`"" -WorkingDirectory $Root) `
     (New-LogonTrigger 25) $longRunning
@@ -141,6 +150,6 @@ if (-not $SkipPower) {
 Write-Host ""
 Write-Host "Done. Remaining manual steps (details in ops\windows\README.md):" -ForegroundColor Green
 Write-Host "  1. Autologon (Sysinternals) so the desktop session exists after every reboot."
-Write-Host "  2. First start now:  pm2 start `"$ecosystem`" --only sortie ; pm2 save"
+Write-Host "  2. First start now:  Start-ScheduledTask `"Sortie Server`"   (not pm2 start from a Claude Code shell: pm2 copies the caller's environment)"
 Write-Host "  3. tailscale serve --bg 3000   (phase 1 URL: https://<machine>.<tailnet>.ts.net)"
 Write-Host "  4. Set PROFILE= in ops\windows\start-chrome.cmd to the job-hunting Chrome profile folder."

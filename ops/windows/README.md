@@ -52,7 +52,7 @@ copy profile\profile.example.yaml profile\profile.yaml
 ## 4. 一次性设置、pm2 首启、Tailscale Serve
 ```powershell
 powershell -ExecutionPolicy Bypass -File C:\sortie\ops\windows\setup.ps1     # 管理员
-pm2 start C:\sortie\ops\windows\ecosystem.config.cjs --only sortie
+Start-ScheduledTask "Sortie Server"   # 不要在 Claude 会话的终端里 pm2 start:pm2 会把调用者的环境变量抄进服务器
 pm2 save
 pm2 logs sortie --lines 50          # 应看到 "[jobseeker] scheduler registered"
 tailscale up
@@ -131,6 +131,7 @@ Windows 上:`pm2 stop sortie` → 用 `final-*.db` 覆盖 `C:\sortie\data\jobsee
 - 备份:自动每天 04:00;手动 `npm run backup`;每周把最新一份 Taildrop 到 Mac 一次。
 - Claude 登录失效(值守会话日志 "extension not connected" / 403):终端 `claude` → `/login`;扩展掉线:`/chrome` → Reconnect extension。
 - Windows 更新重启后:看 `pm2 status` 与网址;`tzutil /g` 仍是 Pacific Standard Time。
+- **服务器自启与看门狗(2026-11-02 起)**:「Sortie Server」任务在登录 20 秒后、之后每 10 分钟跑一次 `ops\windows\start-server.ps1`(经 `run-hidden.js`,和 Caddy 一样没有窗口):pm2 里没有 `sortie`(刚开机 pm2 后台还没起来、或被 `pm2 kill` / `pm2 delete`)就从 `ecosystem.config.cjs` 启动它,状态是 errored 就重启,然后等到它应答;在跑的不动(`pm2 start <ecosystem>` 会把在跑的应用重启,所以旧任务没法重复跑),**`pm2 stop sortie` 停掉的也不动**——想让服务器停着就用 `pm2 stop`(deploy.ps1 / vacuum-db 也是这么停的)。只记有动作和失败的,写在 `data\server-start.log`;拉起后 3 分钟还不应答就推一条 ntfy(`.env` 的 NTFY_TOPIC,6 小时最多一条),失败时一分钟后重试、最多 2 次。旧任务直接启动 `pm2.cmd`,桌面上留一个黑窗口,开机时关掉它(结果码 0xC000013A)服务器就起不来——2026-10-25 机器崩溃重启、10-30 再开机,两次都这样,停了 8 天没人发现。改任务要管理员:`setup.ps1 -SkipPower`(只重登记任务和 Defender 排除项,不动电源设置)。
 - 值守会话起不来且日志提到 node-pty:`.env` 设 `ATTENDED_SPAWN_MODE=console`,`pm2 restart sortie`。
 
 ## 10. 回滚(切换后两周内)

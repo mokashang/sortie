@@ -163,7 +163,7 @@ Write-Host "==> pm2 restart sortie"
 # launched. The app's environment comes from the "Sortie Server" logon task (ecosystem.config.cjs);
 # .env is read by Next itself at boot, so a plain restart already picks up .env changes.
 pm2 restart sortie
-if ($LASTEXITCODE -ne 0) { throw "pm2 restart failed (is the app registered? pm2 start ops\windows\ecosystem.config.cjs --only sortie)" }
+if ($LASTEXITCODE -ne 0) { throw "pm2 restart failed (is the app registered? Start-ScheduledTask `"Sortie Server`")" }
 
 # Readiness = the server answers at all. Any HTTP status counts, 401 included: since accounts
 # (2026-09-13) every API route wants a principal, and the internal token only resolves to the

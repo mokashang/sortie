@@ -1,6 +1,7 @@
 // pm2 definition for the Sortie server on Windows (spec §2).
-// First start (once):  pm2 start ops\windows\ecosystem.config.cjs --only sortie && pm2 save
-// Every logon after:   the `Sortie Server` scheduled task runs the same `pm2 start` (idempotent).
+// Started by the `Sortie Server` scheduled task (ops\windows\start-server.ps1, at logon and every 10 minutes):
+// it runs `pm2 start` on this file only when the app is missing from pm2, because `pm2 start <ecosystem>`
+// restarts an app that is already running. First start: Start-ScheduledTask "Sortie Server".
 // Runs Next's bin directly instead of `npm start`: pm2 + npm.cmd shims leave orphaned node
 // processes behind on restart on Windows. TZ is pinned here (not in .env) because Node reads TZ
 // at process start, before Next loads .env.
