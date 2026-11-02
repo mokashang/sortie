@@ -75,13 +75,17 @@ function New-LogonTrigger($delaySeconds) {
 #    `pm2 start <ecosystem>` restarts an app that is already up.
 $runHidden = Join-Path $Root "ops\windows\run-hidden.js"
 $wscript = Resolve-Cmd "wscript.exe"
-$serverTrigger = New-LogonTrigger 20
-$serverTrigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 10)).Repetition
+# Two triggers: a repetition on the logon trigger would only start at the next logon, while the time
+# trigger repeats from the moment the task is registered (and on, across reboots).
+$serverTriggers = @(
+  (New-LogonTrigger 20),
+  (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 10))
+)
 $serverSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 Register-SortieTask "Sortie Server" `
   (New-ScheduledTaskAction -Execute $wscript -Argument "//B //Nologo `"$runHidden`" -Retries 2 -RetryDelaySec 60 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$startServer`" -Pm2 `"$pm2`"" -WorkingDirectory $Root) `
-  $serverTrigger $serverSettings
+  $serverTriggers $serverSettings
 
 # 2. Chrome with the job-hunting profile, so the Claude in Chrome extension is connected.
 Register-SortieTask "Sortie Chrome" `
