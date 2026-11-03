@@ -133,6 +133,10 @@ export function takeNextApplication(
       : `a.status = 'matched' AND a.needs_manual_reason IS NULL AND ${QUEUE_ELIGIBLE_SQL}
          AND ${EFFECTIVE_MODE_SQL} = 'direct'${opts.direction ? " AND m.direction = ?" : ""}${skipDirectionsSql(noResume)}`;
     const params: unknown[] = targeted ? [...opts.jobIds!] : [...(opts.direction ? [opts.direction] : []), ...noResume.filter((d) => d != null)];
+    // A targeted run takes its jobs in the order it was given (2026-11-02: a ranked list worked
+    // from the biggest company down, src/apply/continue.ts); the queue order only breaks ties.
+    const given = targeted ? "instr(?, ',' || a.job_id || ','), " : "";
+    if (targeted) params.push(`,${opts.jobIds!.join(",")},`);
     const row = db
       .prepare(
         `SELECT j.id as job_id, j.company, j.title, j.apply_url, j.ats, m.direction, a.referral_info, p.name as referral_person_name
@@ -141,7 +145,7 @@ export function takeNextApplication(
          JOIN matches m ON m.job_id = j.id AND m.user_id = a.user_id
          LEFT JOIN people p ON p.id = a.referral_person_id
          WHERE a.user_id = ? AND ${where}
-         ORDER BY a.pinned DESC, ${QUEUE_ORDER_SQL}
+         ORDER BY a.pinned DESC, ${given}${QUEUE_ORDER_SQL}
          LIMIT 1`
       )
       .get(userId, ...params) as CandidateRow | undefined;

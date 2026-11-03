@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { DB } from "@/lib/db";
-import type { ChainInfo, ModeCounts } from "@/app/lib/run-outcome";
+import type { CampaignInfo, ChainInfo, ModeCounts } from "@/app/lib/run-outcome";
 import { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT } from "@/app/lib/run-outcome";
 import { rowResult, plannedCounts, recordChainEnd, ClaimedRow, ChainEnd } from "@/apply/run-outcome";
 import { startExecutor, hasLiveOrQueuedRun, ExecutorChannel, StartOptions } from "@/executor/runner";
@@ -27,6 +27,49 @@ export { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT };
 // LinkedIn 邀请额度(src/apply/invite-budget.ts)用完后各段跳过内推条目去做海投;只剩内推条目时下一段
 // 以 paused 挂到明天 0 点(options.notBefore)。链没跑完就停了(零进展 / 段数到顶)出一张待处理卡
 // (src/apply/plan-alerts.ts);任何结束都推一条 ntfy。
+
+// 按排名投(2026-11-02,用户:「找到互联网公司的天梯排名,从最大厂往最下一个个帮我投」):计划不按方向
+// 配额,而是一张排好序的岗位清单(options.campaign.ids)。每段的 jobIds 取清单最前面的 2×chunk 个(定向
+// 取件按给定顺序,src/apply/queue.ts),做满 chunk 份照常 finish;收工时把清单里已经有去向的(填好、
+// 提交、归档、死链、出了待处理卡)去掉,剩下的接着排下一段——积压、暂停、只有用户能断链,全跟方向计划
+// 一样。零进展 = 本段一份没填好、清单也一个没少(连死链都没碰到,多半是会话根本没在干活)。
+
+// How many of the list's next jobs a segment is handed: twice what it should fill, so a few dead
+// links at the top of the list do not end the segment early.
+export const CAMPAIGN_WINDOW_FACTOR = 2;
+
+// The first segment's options for a ranked list (later ones are made in maybeContinueApplyRun).
+export function campaignOptions(ids: number[], chunk: number = APPLY_CHUNK_SIZE, total: number = ids.length): StartOptions {
+  return { jobIds: ids.slice(0, chunk * CAMPAIGN_WINDOW_FACTOR), mode: "direct", chunk, campaign: { ids, total } };
+}
+
+function campaignOf(options: StartOptions): CampaignInfo | null {
+  const c = options.campaign;
+  if (!c || !Array.isArray(c.ids)) return null;
+  const ids = c.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  return { ids, total: Math.max(ids.length, Math.floor(Number(c.total) || 0)) };
+}
+
+// The list's jobs that still have nowhere to go, in list order: what a targeted run would take
+// (src/apply/queue.ts takeNextApplication), plus a row a session took and left half-filled when
+// its run ended — the picker hands those out again once they are reclaimed. A row with the user's
+// answers on it is the follow-up's business (src/apply/followup.ts), not the list's.
+export function campaignLeft(db: DB, userId: string, ids: number[]): number[] {
+  if (ids.length === 0) return [];
+  const open = new Set(
+    (
+      db
+        .prepare(
+          `SELECT a.job_id FROM applications a JOIN jobs j ON j.id = a.job_id
+           WHERE a.user_id = ? AND a.job_id IN (SELECT value FROM json_each(?)) AND j.loc_flag IS NULL AND a.needs_manual_reason IS NULL
+             AND (a.status IN ('matched','referral_ready') OR (a.status = 'prepared' AND a.info_answers IS NULL
+               AND NOT EXISTS (SELECT 1 FROM executor_runs r WHERE r.id = a.run_id AND r.status IN ('running','queued','paused'))))`
+        )
+        .all(userId, JSON.stringify(ids)) as { job_id: number }[]
+    ).map((r) => r.job_id)
+  );
+  return ids.filter((id) => open.has(id));
+}
 
 // Safety valve on chain length, scaled to the plan: #449 planned 1530 jobs at 10 a segment, and a
 // flat 30-segment cap would have ended it at 300. Twice the segments the plan needs, plus slack.
@@ -167,15 +210,18 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
       options = {};
     }
     const plan = Array.isArray(options.plan) ? (options.plan as PlanEntryLike[]) : [];
-    if (plan.length === 0) return { action: "none", reason: "no plan to continue" };
+    const campaign = plan.length === 0 ? campaignOf(options) : null;
+    if (plan.length === 0 && !campaign) return { action: "none", reason: "no plan to continue" };
 
     const chain = chainOf(options, runId);
     const { remaining, dropped, own } = remainingPlan(db, runId, plan);
+    const left = campaign ? campaignLeft(db, userId, campaign.ids) : [];
     // Only referral entries left and no invites left today: nothing for a segment to do until
     // midnight. Not a zero-progress strike — the App is pacing, nothing is broken.
     const budget = remaining.length > 0 && remaining.every((e) => e.mode === "referral") ? inviteBudget(db, userId) : null;
     const waitForInvites = !!budget?.exhausted;
-    const zeroRuns = waitForInvites ? chain.zeroRuns : own.direct + own.referral === 0 ? chain.zeroRuns + 1 : 0;
+    const progressed = own.direct + own.referral > 0 || (campaign != null && left.length < campaign.ids.length);
+    const zeroRuns = waitForInvites ? chain.zeroRuns : progressed ? 0 : chain.zeroRuns + 1;
     // The chain ends here: say why on the run's outcome (the board shows it next to 未完成) and
     // in the server log — task #133 ended with nothing but "未完成 · 海投 63/90" to go on.
     const endChain = (end: ChainEnd, reason: string): ContinueResult => {
@@ -186,10 +232,10 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
     };
     const givenUp = (entries: PlanEntryLike[]): NonNullable<ChainEnd["dropped"]> =>
       entries.map((e) => ({ direction: e.direction, count: Math.max(0, Math.floor(Number(e.count) || 0)), mode: e.mode === "referral" ? "referral" : "direct" }));
-    if (remaining.length === 0) {
+    if (campaign ? left.length === 0 : remaining.length === 0) {
       return dropped.length > 0
         ? endChain({ reason: "exhausted", dropped: givenUp(dropped) }, `nothing left worth retrying: ${dropped.map((d) => `${d.direction}/${d.mode} ${d.count}`).join(", ")}`)
-        : endChain({ reason: "done" }, "plan finished");
+        : endChain({ reason: "done" }, campaign ? "ranked list finished" : "plan finished");
     }
     if (zeroRuns >= MAX_ZERO_PROGRESS_RUNS) {
       return endChain({ reason: "no_progress", dropped: givenUp([...dropped, ...remaining]) }, `no progress in ${zeroRuns} consecutive segments`);
@@ -200,8 +246,9 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
 
     const next: StartOptions = {
       resume: true, // submit whatever the user approved meanwhile before filling new ones
-      plan: remaining.map((e) => ({ direction: e.direction, count: e.count, mode: e.mode === "referral" ? "referral" : "direct" })),
-      chunk,
+      ...(campaign
+        ? campaignOptions(left, chunk, campaign.total)
+        : { plan: remaining.map((e) => ({ direction: e.direction, count: e.count, mode: e.mode === "referral" ? "referral" : "direct" })), chunk }),
       chain: {
         root: chain.root,
         step: chain.step + 1,
@@ -209,7 +256,7 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
         before: { direct: chain.before.direct + own.direct, referral: chain.before.referral + own.referral },
         zeroRuns,
       },
-    };
+    } as StartOptions;
     const channel = (run.channel === "headless" ? "headless" : "user_chrome") as ExecutorChannel;
     const unconfirmed = unconfirmedCount(db, userId);
     if (waitForInvites && budget) {

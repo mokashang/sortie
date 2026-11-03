@@ -18,11 +18,12 @@ export function currentApplyRunId(db: DB, userId: string): number | null {
   return row?.id ?? null;
 }
 
-// Planned counts from a run's options: per-direction quotas (options.plan) or a targeted jobIds
-// run. Runs with neither — resume-only, referral_check, ... — have nothing to measure against.
+// Planned counts from a run's options: per-direction quotas (options.plan), a ranked list (the
+// whole list, not the segment's window), or a targeted jobIds run. Runs with none of these —
+// resume-only, referral_check, ... — have nothing to measure against.
 export function plannedCounts(options: unknown): ModeCounts | null {
   if (!options || typeof options !== "object") return null;
-  const o = options as { plan?: { count?: number; mode?: string }[]; jobIds?: unknown[]; mode?: string };
+  const o = options as { plan?: { count?: number; mode?: string }[]; jobIds?: unknown[]; mode?: string; campaign?: { total?: number } };
   const planned = { direct: 0, referral: 0 };
   if (Array.isArray(o.plan) && o.plan.length > 0) {
     for (const p of o.plan) {
@@ -30,6 +31,8 @@ export function plannedCounts(options: unknown): ModeCounts | null {
       if (p?.mode === "referral") planned.referral += n;
       else planned.direct += n;
     }
+  } else if (o.campaign && Number(o.campaign.total) > 0) {
+    planned.direct = Math.floor(Number(o.campaign.total));
   } else if (Array.isArray(o.jobIds) && o.jobIds.length > 0) {
     if (o.mode === "referral") planned.referral = o.jobIds.length;
     else planned.direct = o.jobIds.length;

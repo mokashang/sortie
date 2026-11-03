@@ -29,6 +29,12 @@ export interface ChainInfo {
   zeroRuns: number; // consecutive segments so far that achieved nothing
 }
 
+// A ranked list of jobs worked top-down, a segment at a time (src/apply/continue.ts).
+export interface CampaignInfo {
+  ids: number[]; // still to go, in order
+  total: number; // the list's size when it started
+}
+
 export interface RunOutcome {
   // What the plan asked for, per mode: the whole chain's quotas for a chained run, else this
   // run's options.plan quotas (or a targeted jobIds run's size).

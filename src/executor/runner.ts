@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { DB } from "@/lib/db";
 import { settleRunOutcome } from "@/apply/run-outcome";
-import type { RunOutcome, ChainInfo } from "@/app/lib/run-outcome";
+import type { RunOutcome, ChainInfo, CampaignInfo } from "@/app/lib/run-outcome";
 import {
   buildApplyPrompt,
   buildNetworkSendPrompt,
@@ -58,6 +58,10 @@ export interface StartOptions {
   // 寻找,合计),做满就正常 finish,App 再排下一段;chain = 这段属于哪条接力链(root / 第几段 / 累计)。
   chunk?: number;
   chain?: ChainInfo;
+  // apply kind only — a ranked list worked top-down (src/apply/continue.ts, 2026-11-02): `ids` are
+  // the jobs still to go, in order; each segment's jobIds is the head of it. `total` is the list's
+  // size when it started, what the board measures progress against.
+  campaign?: CampaignInfo;
   // A paused segment that waits for a time, not for the confirmation backlog: today's LinkedIn
   // invite budget is spent and only referral entries are left (ISO, the next local midnight).
   notBefore?: string;
@@ -509,6 +513,10 @@ export function claimNextRun(
   } catch {
     options = {};
   }
+  // A ranked list's ids are the App's bookkeeping: the session works this segment's jobIds, and
+  // seeing hundreds of other ids would only invite it to go after them.
+  const campaign = (options as StartOptions).campaign;
+  if (campaign && Array.isArray(campaign.ids)) options = { ...(options as StartOptions), campaign: { left: campaign.ids.length, total: campaign.total } };
   return { id: row.id, kind: row.kind as ExecutorKind, options, logPath: row.log_path };
 }
 

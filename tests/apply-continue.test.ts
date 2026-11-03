@@ -13,8 +13,10 @@ import {
   resumePausedChainIfReady,
   remainingPlan,
   unconfirmedCount,
+  campaignOptions,
   BACKLOG_PAUSE_AT,
 } from "@/apply/continue";
+import { planAlerts, resolvePlanAlert } from "@/apply/plan-alerts";
 import { decideAndMaybeAutoStart } from "@/apply/decide-auto-start";
 import { runProgressText, runStatusDisplay } from "@/app/lib/run-outcome";
 
@@ -364,5 +366,118 @@ describe("接力 chain end reason (task #133, 2026-09-18)", () => {
     const outcome = JSON.parse(runRow(db, id).outcome!);
     expect(outcome.end).toEqual({ reason: "done" });
     expect(runProgressText(outcome, "zh")).toBe("海投 1/1");
+  });
+});
+
+// 按排名投(2026-11-02):一张排好序的岗位清单,每段取清单最前面的 2×chunk 个,按给定顺序做。
+describe("按排名投 ranked list (campaign)", () => {
+  let db: DB;
+  let logDir: string;
+  beforeEach(() => {
+    db = openTestDb();
+    seedResumes(db);
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), "apply-continue-campaign-"));
+  });
+  afterEach(() => {
+    db.close();
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  function startList(ids: number[], chunk: number): number {
+    const { id } = startExecutor(db, U, "apply", campaignOptions(ids, chunk), { logDir, queueBehind: true }, "user_chrome");
+    return id;
+  }
+  // What the session does with a segment: take the run's jobIds one by one.
+  function take(runId: number): { jobId: number } | { done: true } {
+    return takeNextApplication(db, U, profile, { jobIds: optionsOf(db, runId).jobIds });
+  }
+
+  it("a targeted run takes its jobs in the order given, not by score", () => {
+    const low = seedJob(db, { score: 60 });
+    const high = seedJob(db, { score: 95 });
+    const mid = seedJob(db, { score: 80 });
+    const order: number[] = [];
+    for (;;) {
+      const t = takeNextApplication(db, U, profile, { jobIds: [low, high, mid] });
+      if ("done" in t) break;
+      order.push(t.jobId);
+    }
+    expect(order).toEqual([low, high, mid]);
+  });
+
+  it("hands each segment the head of the list, drops what found a place, and measures progress against the whole list", () => {
+    const ids = Array.from({ length: 7 }, (_, i) => seedJob(db, { score: 70 + i }));
+    const a = startList(ids, 2);
+    expect(optionsOf(db, a)).toEqual({ jobIds: ids.slice(0, 4), mode: "direct", chunk: 2, campaign: { ids, total: 7 } });
+    // The session sees the segment, not the list.
+    const claimed = claimNextRun(db, U, "user_chrome")!;
+    expect(claimed.id).toBe(a);
+    expect(claimed.options).toMatchObject({ jobIds: ids.slice(0, 4), campaign: { left: 7, total: 7 } });
+
+    const first = take(a) as { jobId: number };
+    expect(first.jobId).toBe(ids[0]);
+    reportFill(db, U, { jobId: first.jobId, status: "closed", reason: "posting gone" });
+    for (const want of [ids[1], ids[2]]) {
+      const t = take(a) as { jobId: number };
+      expect(t.jobId).toBe(want);
+      reportFill(db, U, { jobId: t.jobId, status: "awaiting_confirm", filledFields: { Name: "Mengjia Shang" } });
+    }
+    finishRun(db, U, a, "done", "segment 1");
+    expect(JSON.parse(runRow(db, a).outcome!)).toMatchObject({ planned: { direct: 7, referral: 0 }, achieved: { direct: 2, referral: 0 } });
+
+    const r = maybeContinueApplyRun(db, a, { logDir, notify: () => {} }) as { action: string; runId: number };
+    expect(r.action).toBe("queued");
+    const left = ids.slice(3);
+    expect(optionsOf(db, r.runId)).toEqual({
+      resume: true,
+      jobIds: left,
+      mode: "direct",
+      chunk: 2,
+      campaign: { ids: left, total: 7 },
+      chain: { root: a, step: 2, planned: { direct: 7, referral: 0 }, before: { direct: 2, referral: 0 }, zeroRuns: 0 },
+    });
+  });
+
+  it("pauses behind the backlog like a plan, and ends once the list is used up", () => {
+    const ids = Array.from({ length: BACKLOG_PAUSE_AT + 1 }, (_, i) => seedJob(db, { score: 90 - i }));
+    const a = startList(ids, BACKLOG_PAUSE_AT);
+    claimNextRun(db, U, "user_chrome");
+    for (let i = 0; i < BACKLOG_PAUSE_AT; i++) {
+      const t = take(a) as { jobId: number };
+      reportFill(db, U, { jobId: t.jobId, status: "awaiting_confirm", filledFields: {} });
+    }
+    finishRun(db, U, a, "done");
+    const p = maybeContinueApplyRun(db, a, { logDir, notify: () => {} }) as { action: string; runId: number };
+    expect(p.action).toBe("paused");
+    expect(optionsOf(db, p.runId).jobIds).toEqual([ids[BACKLOG_PAUSE_AT]]);
+
+    for (const id of ids.slice(0, 6)) decide(db, U, id, "reject", "not now");
+    expect(resumePausedChainIfReady(db, U, { logDir })).toMatchObject({ action: "queued", runId: p.runId });
+    claimNextRun(db, U, "user_chrome");
+    const last = take(p.runId) as { jobId: number };
+    expect(last.jobId).toBe(ids[BACKLOG_PAUSE_AT]);
+    reportFill(db, U, { jobId: last.jobId, status: "awaiting_confirm", filledFields: {} });
+    finishRun(db, U, p.runId, "done");
+    expect(maybeContinueApplyRun(db, p.runId, { logDir, notify: () => {} })).toMatchObject({ action: "none", reason: "ranked list finished" });
+  });
+
+  it("a segment that touched nothing is a strike; two end the list with a card that restarts it from where it is", () => {
+    const ids = [seedJob(db, { score: 90 }), seedJob(db, { score: 80 })];
+    const a = startList(ids, 1);
+    claimNextRun(db, U, "user_chrome");
+    finishRun(db, U, a, "failed", "extension disconnected");
+    // A failed segment of a list is no 「让助手再试一次」 card: the list goes on.
+    expect(planAlerts(db, U)).toEqual([]);
+    const b = (maybeContinueApplyRun(db, a, { logDir, notify: () => {} }) as { runId: number }).runId;
+    expect(optionsOf(db, b)).toMatchObject({ jobIds: ids, campaign: { ids, total: 2 }, chain: { zeroRuns: 1 } });
+
+    claimNextRun(db, U, "user_chrome");
+    finishRun(db, U, b, "done", "did nothing");
+    expect(maybeContinueApplyRun(db, b, { logDir, notify: () => {} })).toMatchObject({ action: "none", reason: expect.stringContaining("no progress") });
+    const [alert] = planAlerts(db, U);
+    expect(alert).toMatchObject({ runId: b, kind: "chain", reason: "no_progress", planned: { direct: 2, referral: 0 } });
+
+    const { runId } = resolvePlanAlert(db, U, b, "continue");
+    expect(optionsOf(db, runId!)).toEqual({ jobIds: ids, mode: "direct", chunk: 1, campaign: { ids, total: 2 } });
   });
 });

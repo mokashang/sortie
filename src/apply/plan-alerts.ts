@@ -2,6 +2,7 @@ import { DB, logEvent } from "@/lib/db";
 import type { ChainEnd, ModeCounts, RunOutcome } from "@/app/lib/run-outcome";
 import { APPLY_CHUNK_SIZE } from "@/app/lib/run-outcome";
 import { startExecutor, ExecutorChannel, StartOptions } from "@/executor/runner";
+import { campaignLeft, campaignOptions } from "@/apply/continue";
 import { notify } from "@/lib/notify";
 import { serverLang } from "@/lib/prefs";
 import { messages } from "@/i18n/messages";
@@ -98,7 +99,9 @@ function alertFor(db: DB, userId: string, r: RunRow): PlanAlert | null {
     };
   }
   const jobIds = Array.isArray(options.jobIds) ? options.jobIds.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
-  if (r.status === "failed" && jobIds.length > 0) {
+  // A segment of a ranked list that failed is no card of its own: its jobs are still on the list
+  // and the next segment takes them (only a stalled list gets the card above).
+  if (r.status === "failed" && jobIds.length > 0 && !options.campaign) {
     const untouched = untouchedJobs(db, userId, r.id, jobIds);
     if (untouched.length === 0) return null;
     return {
@@ -165,11 +168,15 @@ export function resolvePlanAlert(
     const run = db.prepare("SELECT channel, options FROM executor_runs WHERE id = ?").get(runId) as { channel: string; options: string };
     const channel: ExecutorChannel = run.channel === "headless" ? "headless" : "user_chrome";
     const prev = parse<StartOptions>(run.options, {});
-    const options: StartOptions =
-      alert.kind === "chain"
-        ? { plan: alert.remaining.map((e) => ({ ...e })), chunk: typeof prev.chunk === "number" && prev.chunk > 0 ? prev.chunk : APPLY_CHUNK_SIZE }
+    const chunk = typeof prev.chunk === "number" && prev.chunk > 0 ? prev.chunk : APPLY_CHUNK_SIZE;
+    // A stalled ranked list goes on from where it is, as a new list of what is left of it.
+    const left = alert.kind === "chain" && prev.campaign ? campaignLeft(db, userId, prev.campaign.ids ?? []) : null;
+    const options: StartOptions = left
+      ? campaignOptions(left, chunk)
+      : alert.kind === "chain"
+        ? { plan: alert.remaining.map((e) => ({ ...e })), chunk }
         : { jobIds: alert.untouched, mode: alert.mode };
-    if (alert.kind === "chain" && alert.remaining.length === 0) throw new Error(`plan alert: task #${runId} has nothing left to run`);
+    if (alert.kind === "chain" && (left ? left.length === 0 : alert.remaining.length === 0)) throw new Error(`plan alert: task #${runId} has nothing left to run`);
     started = (deps.startExecutor ?? startExecutor)(db, userId, "apply", options, channel === "user_chrome" ? { queueBehind: true } : {}, channel).id;
   }
   logEvent(db, "plan_alert_resolved", { userId, entity: "run", entityId: runId, payload: { action, runId: started } });
