@@ -43,7 +43,7 @@ export const POST = withUser(async (req, { userId }) => {
       person,
       channel: body.channel,
     });
-    const autoApproved = autoApproveOutreachIfEnabled(db, userId, result.outreachId);
+    const autoApproved = !result.held && autoApproveOutreachIfEnabled(db, userId, result.outreachId);
     return NextResponse.json({ ...result, autoApproved, status: autoApproved ? "pending_send" : "draft" }, { status: 201 });
   } catch (e) {
     return failResponse(e);

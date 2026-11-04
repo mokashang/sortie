@@ -244,6 +244,35 @@ describe("give-first wording", () => {
 });
 
 describe("generateDraft", () => {
+  it("a first message can't claim an application: one redraft, then it waits for the user", async () => {
+    const seed = (d: ReturnType<typeof db>) => {
+      const personId = upsertPerson(d, U, { name: "Jane Doe", company: "Acme", relation: "engineer" });
+      const jobId = d.prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, source) VALUES (?,?,?,?,?)").run(`fp-${Math.random()}`, "Acme", "Platform Engineer", "https://a/1", "manual").lastInsertRowid as number;
+      d.prepare("INSERT INTO applications (job_id, status) VALUES (?,?)").run(jobId, "referral_seeking");
+      return { personId, jobIds: [jobId] };
+    };
+    const script = (answers: object[], seen: LlmRequest[]) => ({
+      name: "fake",
+      complete: async (req: LlmRequest) => {
+        seen.push(req);
+        return { text: JSON.stringify(answers.shift()), backend: "fake" };
+      },
+    });
+    const bad = { message: "Hi Jane, I just applied to the Platform Engineer role.", note: "Hi Jane! Applied to the Platform Engineer role." };
+    const good = { message: "Hi Jane, I'm applying to the Platform Engineer role.", note: "Hi Jane! Applying to the Platform Engineer role." };
+
+    const d1 = db();
+    const seen1: LlmRequest[] = [];
+    const fixed = await generateDraft(d1, { userId: U, backend: script([bad, good], seen1), profile: testProfile(), playbook: "referral", ...seed(d1) });
+    expect(fixed).toMatchObject({ draft: good.message, held: false });
+    expect(seen1[0].prompt).toContain("Submitted: none");
+    expect(seen1[1].prompt).toContain("Hi Jane, I just applied to the Platform Engineer role.");
+
+    const d2 = db();
+    const held = await generateDraft(d2, { userId: U, backend: script([bad, bad], []), profile: testProfile(), playbook: "referral", ...seed(d2) });
+    expect(held.held).toBe(true);
+  });
+
   it("creates an outreach row from a fake backend's fixed JSON, with draft = message for linkedin", async () => {
     const d = db();
     const personId = upsertPerson(d, U, { name: "Jane Doe", relation: "engineer" });

@@ -78,6 +78,7 @@ export const notify = defineMessages({
       nudge: (person: string, company: string) => `Sortie · 该跟进 ${person}(${company})了`,
       sending: "助手已起草好下一条消息并直接发出(自动投递已开启)。",
       approve: "助手起草好了下一条消息,打开投递页「内推进行中」看一眼、批准后助手发出。",
+      heldClaim: "这条草稿里有和投递记录对不上的说法,所以没有自动发出。看一眼,改好再批准。",
       question: (q: string) => `需要你来定:${q} — 打开投递页「内推进行中」回答,助手按你的回答起草回复。`,
       body: (summary: string | null, next: string) => [summary, next].filter(Boolean).join(" — "),
       // src/apply/referral-auto.ts: the App settled a company's referral hunt on its own.
@@ -174,6 +175,7 @@ export const notify = defineMessages({
       accepted: (person: string, company: string) => `Sortie · ${person} (${company}) accepted your invite`,
       nudge: (person: string, company: string) => `Sortie · time to follow up with ${person} (${company})`,
       sending: "The assistant drafted the next message and is sending it now (auto-apply is on).",
+      heldClaim: "This draft says something your application records don't back up, so it wasn't sent automatically. Check it, fix it, then approve.",
       approve: "The assistant drafted the next message — approve it under Referrals in progress on the Apply page and it goes out.",
       question: (q: string) => `Your call: ${q} — answer it under Referrals in progress on the Apply page and the assistant drafts the reply from it.`,
       body: (summary: string | null, next: string) => [summary, next].filter(Boolean).join(" — "),

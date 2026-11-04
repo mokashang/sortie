@@ -180,7 +180,7 @@ export async function createReferralOutreach(
   db: DB,
   userId: string,
   opts: { backend: LlmBackend; profile: Profile; jobIds: number[]; person: PersonInput; channel?: Channel }
-): Promise<{ outreachId: number; draft: string }> {
+): Promise<{ outreachId: number; draft: string; held: boolean }> {
   if (opts.jobIds.length === 0 || opts.jobIds.length > MAX_SIBLINGS + 1) {
     throw new Error(`createReferralOutreach: jobIds must have 1..${MAX_SIBLINGS + 1} entries`);
   }

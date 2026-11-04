@@ -225,6 +225,81 @@ describe("buildFollowupPrompt", () => {
     const r = req({ userAnswer: { question: "对方约你通话,你什么时候有空?", answer: "Tue/Thu after 2pm PT" } });
     expect(r.prompt).toContain("Tue/Thu after 2pm PT");
   });
+
+  it("a nudge can't be told to claim an application it can't see: the records travel with every kind", () => {
+    const records = { submitted: [], notSubmitted: [{ company: "Google", title: "SWE New Grad" }] };
+    for (const kind of ["intro", "reply", "nudge"] as const) {
+      const r = req({ kind, records });
+      expect(r.system).toMatch(/Application records below are the only evidence/);
+      expect(r.system).not.toMatch(/you've now applied/);
+      expect(r.prompt).toContain("Submitted: none");
+      expect(r.prompt).toContain("- Google: SWE New Grad");
+    }
+    expect(req({ kind: "nudge" }).system).toMatch(/not something new since you last wrote/);
+    expect(req({ records, badClaims: ["I went ahead and applied."] }).prompt).toContain('"I went ahead and applied."');
+  });
+});
+
+describe("what a follow-up may say about applications", () => {
+  const CLAIM = { message: "Small update: I went ahead and applied to the role.", reason: "轻提醒" };
+  const CLEAN = { message: "Hi Jane, one thing I didn't mention: I built a Playwright agent. A pointer is plenty.", reason: "轻提醒" };
+  const nudgeDue = async (db: DB, b: ReturnType<typeof backend>) => {
+    const { outreachId, jobId } = noteSent(db);
+    db.prepare("UPDATE outreach SET status = 'accepted', draft = NULL WHERE id = ?").run(outreachId);
+    return { outreachId, jobId, run: () => followUpAfterHarvest(db, { userId: U, backend: b, profile, outreachId, now: Date.now() + 6 * DAY }) };
+  };
+
+  it("a false claim gets one redraft, and the clean redraft goes out as usual", async () => {
+    const db = openDb(":memory:");
+    setAutoSubmit(db, U, true);
+    const answers = [CLAIM, CLEAN];
+    const b = backend({ followup: () => answers.shift()! });
+    const r = await (await nudgeDue(db, b)).run();
+    expect(r).toMatchObject({ autoApproved: true, followup: { kind: "nudge", status: "pending_send", text: CLEAN.message } });
+    expect(b.followupCalls).toHaveLength(2);
+    expect(b.followupCalls[0].prompt).toContain("Submitted: none");
+    expect(b.followupCalls[1].prompt).toContain("Small update: I went ahead and applied to the role.");
+  });
+
+  it("two false drafts in a row wait for the user, even with 自动投递 on", async () => {
+    const db = openDb(":memory:");
+    setAutoSubmit(db, U, true);
+    const b = backend({ followup: CLAIM });
+    const { outreachId, run } = await nudgeDue(db, b);
+    const r = await run();
+    expect(r).toMatchObject({ autoApproved: false, followup: { status: "draft", text: CLAIM.message, reason: expect.stringMatching(/对不上/) } });
+    expect(followupSendables(db, U)).toHaveLength(0);
+    expect(followupNotification({ person: "Jane", company: "Google", newReceived: 0, summary: null, after: r }, "zh")).not.toBeNull();
+    expect(db.prepare("SELECT COUNT(*) n FROM events WHERE kind = 'referral_followup_held' AND entity_id = ?").get(outreachId)).toEqual({ n: 1 });
+  });
+
+  it("a real submission may be mentioned by title", async () => {
+    const db = openDb(":memory:");
+    setAutoSubmit(db, U, true);
+    const b = backend({ followup: { message: "Quick update: I applied to the SWE New Grad role.", reason: "轻提醒" } });
+    const { jobId, run } = await nudgeDue(db, b);
+    // Another posting of the role is still being sought, which is what keeps the nudge due.
+    const twin = seedJob(db);
+    db.prepare("INSERT INTO outreach_jobs (outreach_id, job_id) SELECT outreach_id, ? FROM outreach_jobs WHERE job_id = ?").run(twin, jobId);
+    db.prepare("UPDATE applications SET status = 'submitted', submitted_at = datetime('now') WHERE job_id = ?").run(jobId);
+    const r = await run();
+    expect(r).toMatchObject({ autoApproved: true, followup: { status: "pending_send" } });
+    expect(b.followupCalls).toHaveLength(1);
+    expect(b.followupCalls[0].prompt).toMatch(/Submitted:\n- Google: SWE New Grad \(status: submitted\)/);
+  });
+
+  it("the candidate's own answer outranks the records (an application made by hand)", async () => {
+    const db = openDb(":memory:");
+    setAutoSubmit(db, U, true);
+    const { outreachId } = noteSent(db);
+    const answers: object[] = [{ message: null, needs_user: "你投了吗?" }, { message: "Yes, I applied to it last week by hand.", reason: "回答" }];
+    const b = backend({ stage: { stage: "replied", summary: "问投了没", action: null, link: null }, followup: () => answers.shift()! });
+    await harvestOutreach(db, { userId: U, backend: b, outreachId, accepted: true, messages: [{ dir: "received", text: "Have you applied yet?", at: later(1000) }] });
+    const asked = await followUpAfterHarvest(db, { userId: U, backend: b, profile, outreachId });
+    expect(asked.followup?.status).toBe("needs_user");
+    const r = await answerFollowup(db, { userId: U, backend: b, profile, id: asked.followup!.id, answer: "投了,我自己手动投的" });
+    expect(r).toMatchObject({ autoApproved: true, followup: { status: "pending_send" } });
+  });
 });
 
 describe("followUpAfterHarvest + the gate", () => {
