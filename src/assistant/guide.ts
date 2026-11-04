@@ -134,6 +134,11 @@ for 10 minutes is nudged.
 
 **Why a task is idle or Failed**: no session online yet (queued), the user stopped it, the
 session's process ended (a deploy restart, a crash) — a failed segment still queues the next one.
+**Claude signed out on the always-on machine**: with Claude as the AI provider, nothing runs until
+the user signs in again, and only the user can: run "claude auth login" in a terminal on that
+computer. Chrome tasks stay Queued, a phone notification goes out (again every 6 hours while it
+lasts), and they carry on by themselves after the sign-in; background-browser tasks fail with a
+summary saying it is signed out, so those are started again by hand.
 
 ## Applying (direct)
 

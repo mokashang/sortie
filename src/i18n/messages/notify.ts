@@ -38,6 +38,12 @@ export const notify = defineMessages({
       title: (runId: number) => `Sortie · 助手启动不起来(任务 #${runId})`,
       body: (n: number) => `助手连续 ${n} 次刚启动就退出,还没接单。这个任务已标为失败;请在这台电脑上检查 AI 提供方是否需要重新登录,再到投递页重新开始。`,
     },
+    // The Claude CLI on the server has no login (src/executor/cli-login.ts): only the user can sign
+    // in, and nothing runs until they do.
+    cliSignedOut: {
+      title: "Sortie · Claude 登录失效了,任务都停着",
+      body: "这台电脑上的 Claude 已退出登录,助手和打分都停了。在这台电脑的终端里运行 claude auth login 登录;登好后排着的任务会自己继续,不用再点。",
+    },
     // 自动投递 on: the assistant submitted without a confirmation — a heads-up, not a to-do.
     autoSubmitted: {
       title: (company: string) => `Sortie · 已自动投出 ${company}`,
@@ -135,6 +141,10 @@ export const notify = defineMessages({
     assistantWontStart: {
       title: (runId: number) => `Sortie · the assistant won't start (task #${runId})`,
       body: (n: number) => `The assistant quit right after starting ${n} times in a row, before taking the task. The task is marked failed; check on this computer whether the AI provider needs signing in again, then start it again from the Apply page.`,
+    },
+    cliSignedOut: {
+      title: "Sortie · Claude is signed out, tasks are on hold",
+      body: "Claude on this computer has signed out, so the assistant and job scoring have stopped. Run claude auth login in a terminal on this computer; queued tasks carry on by themselves once you are signed in.",
     },
     autoSubmitted: {
       title: (company: string) => `Sortie · auto-submitted to ${company}`,

@@ -14,6 +14,7 @@ import {
 import { createRunToken, revokeRunTokens, pruneExpiredTokens } from "@/lib/api-tokens";
 import { ownerId } from "@/lib/users";
 import { listSpawns, ownerOf, runsOfSession, type RunOwnerFields, type SpawnRecord } from "@/executor/sessions";
+import { requestCliLoginCheck, signedOutSummary } from "@/executor/cli-login";
 import { dataDir } from "@/lib/paths";
 
 // The process manager for headless AI agent sessions launched from the App's UI.
@@ -408,9 +409,11 @@ export function startExecutor(
   // is the normal case (a long-running launchd-managed Next.js server).
   child.on("exit", (code) => {
     const status = code === 0 ? "done" : "failed";
+    const signedOut = code === 0 ? null : signedOutSummary(tailLines(logPath, 1)[0]);
+    if (signedOut) requestCliLoginCheck();
     const ended = db.prepare(
-      "UPDATE executor_runs SET status=?, ended_at=datetime('now') WHERE id=? AND status='running'"
-    ).run(status, runId);
+      "UPDATE executor_runs SET status=?, summary=COALESCE(?, summary), ended_at=datetime('now') WHERE id=? AND status='running'"
+    ).run(status, signedOut, runId);
     revokeRunTokens(db, runId);
     // 0 changes = the session already reported finish through the App; its outcome is settled.
     if (ended.changes > 0) {
@@ -496,6 +499,9 @@ export function claimNextRun(
   claimer?: SpawnRecord | null
 ): ClaimedRun | null {
   if (claimer && runsOfSession(db, userId, claimer).some((r) => r.status === "running")) return null;
+  // It came up signed out and has no Chrome tools; the dispatcher replaces it (attended.ts). #670
+  // and #671 went to such a session on 2026-11-03 and failed on the spot.
+  if (claimer?.signedOutAt) return null;
   const kindFilter = kinds && kinds.length > 0 ? ` AND kind IN (${kinds.map(() => "?").join(",")})` : "";
   const row = db
     .prepare(`SELECT id, kind, options, log_path FROM executor_runs WHERE user_id=? AND channel=? AND status='queued'${kindFilter} ORDER BY id ASC LIMIT 1`)

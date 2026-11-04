@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import { openDb, DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
+import { refreshCliLogin, resetCliLogin } from "@/executor/cli-login";
 import {
   startExecutor,
   stopExecutor,
@@ -172,6 +173,39 @@ describe("executor/runner", () => {
       child.emitExit(1);
       const row = db.prepare("SELECT status FROM executor_runs WHERE id=?").get(result.id) as { status: string };
       expect(row.status).toBe("failed");
+    });
+
+    it("says so when a headless run failed because the CLI is signed out (#672-681: empty summaries)", () => {
+      const { spawnFn, child } = makeFakeSpawn(process.pid);
+      const result = startExecutor(db, U, "jd_review", { limit: 40 }, { spawn: spawnFn, logDir: tmpLogDir }, "headless");
+      fs.appendFileSync(result.logPath, "Failed to authenticate: OAuth session expired and could not be refreshed\n");
+      let checks = 0;
+      const check = () => refreshCliLogin(db, { now: () => 0, bin: "claude", run: (_bin, done) => { checks += 1; done("{}"); } });
+      resetCliLogin();
+      check();
+
+      child.emitExit(1);
+      const row = db.prepare("SELECT status, summary FROM executor_runs WHERE id=?").get(result.id) as { status: string; summary: string };
+      expect(row.status).toBe("failed");
+      expect(row.summary).toMatch(/signed out/);
+      expect(row.summary).toContain("OAuth session expired");
+      // ...and the dispatcher finds out on its next tick, not at the next regular check.
+      check();
+      expect(checks).toBe(2);
+    });
+
+    it("leaves the summary alone when the sign-in text is not what ended the run", () => {
+      const midway = makeFakeSpawn(process.pid);
+      const failed = startExecutor(db, U, "jd_review", { limit: 40 }, { spawn: midway.spawnFn, logDir: tmpLogDir }, "headless");
+      fs.appendFileSync(failed.logPath, "page said: Not logged in · Please run /login\n[18:30:21] browser tool crashed\n");
+      midway.child.emitExit(1);
+      expect((db.prepare("SELECT summary FROM executor_runs WHERE id=?").get(failed.id) as { summary: string | null }).summary).toBeNull();
+
+      const clean = makeFakeSpawn(process.pid);
+      const done = startExecutor(db, U, "jd_review", { limit: 40 }, { spawn: clean.spawnFn, logDir: tmpLogDir }, "headless");
+      fs.appendFileSync(done.logPath, "Not logged in · Please run /login\n");
+      clean.child.emitExit(0);
+      expect((db.prepare("SELECT summary FROM executor_runs WHERE id=?").get(done.id) as { summary: string | null }).summary).toBeNull();
     });
 
     it("starts a headless jd_review run and pipes the jd_review prompt to stdin", () => {

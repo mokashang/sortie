@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { dispatchAttended, attendedStatus, heartbeatAgeMs, HEARTBEAT_STALE_MS } from "@/executor/attended";
+import { refreshCliLogin } from "@/executor/cli-login";
 import { maybeRefreshChrome } from "@/executor/chrome-refresh";
 import { requeueStrandedApprovals } from "@/apply/decide-auto-start";
 import { reclaimStrandedPrepared, retryDueErrors } from "@/apply/followup";
@@ -94,6 +95,9 @@ export const POST = withInternal(async () => {
       if (st.autoStarted) console.log(`[attended] queued resume run #${st.runId}: approved applications nobody was acting on`);
       if (userId === owner) stranded = st;
     }
+    // Is the Claude CLI still signed in? Checked in the background every few minutes; the dispatcher
+    // reads the last answer (src/executor/cli-login.ts).
+    refreshCliLogin(db);
     const r = dispatchAttended(db);
     // Everything idle and Chrome heavy with tab groups no session can reach any more: restart the
     // job-search Chrome, at most every 6 hours (src/executor/chrome-refresh.ts).
