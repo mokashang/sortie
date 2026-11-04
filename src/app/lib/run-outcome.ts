@@ -33,6 +33,7 @@ export interface ChainInfo {
 export interface CampaignInfo {
   ids: number[]; // still to go, in order
   total: number; // the list's size when it started
+  all?: number[]; // the whole list, done or not: its cards are the backlog that can pause it
 }
 
 export interface RunOutcome {

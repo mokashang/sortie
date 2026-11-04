@@ -31,23 +31,35 @@ export { APPLY_CHUNK_SIZE, BACKLOG_PAUSE_AT, BACKLOG_RESUME_AT };
 // 按排名投(2026-11-02,用户:「找到互联网公司的天梯排名,从最大厂往最下一个个帮我投」):计划不按方向
 // 配额,而是一张排好序的岗位清单(options.campaign.ids)。每段的 jobIds 取清单最前面的 2×chunk 个(定向
 // 取件按给定顺序,src/apply/queue.ts),做满 chunk 份照常 finish;收工时把清单里已经有去向的(填好、
-// 提交、归档、死链、出了待处理卡)去掉,剩下的接着排下一段——积压、暂停、只有用户能断链,全跟方向计划
-// 一样。零进展 = 本段一份没填好、清单也一个没少(连死链都没碰到,多半是会话根本没在干活)。
+// 提交、归档、死链、出了待处理卡)去掉,剩下的接着排下一段——暂停、只有用户能断链,全跟方向计划一样。
+// 零进展 = 本段一份没填好、清单也一个没少(连死链都没碰到,多半是会话根本没在干活)。
+// 积压只算清单自己的卡(campaign.all,2026-11-03,用户选的):40 张旧的「点提交」卡让清单一份没填就暂停,
+// 那些卡的标签页多半早没了;清单自己的 10 张卡标签页还开着,点完就接着投。
 
 // How many of the list's next jobs a segment is handed: twice what it should fill, so a few dead
 // links at the top of the list do not end the segment early.
 export const CAMPAIGN_WINDOW_FACTOR = 2;
 
 // The first segment's options for a ranked list (later ones are made in maybeContinueApplyRun).
-export function campaignOptions(ids: number[], chunk: number = APPLY_CHUNK_SIZE, total: number = ids.length): StartOptions {
-  return { jobIds: ids.slice(0, chunk * CAMPAIGN_WINDOW_FACTOR), mode: "direct", chunk, campaign: { ids, total } };
+export function campaignOptions(ids: number[], chunk: number = APPLY_CHUNK_SIZE, total: number = ids.length, all: number[] = ids): StartOptions {
+  return { jobIds: ids.slice(0, chunk * CAMPAIGN_WINDOW_FACTOR), mode: "direct", chunk, campaign: { ids, total, all } };
 }
 
 function campaignOf(options: StartOptions): CampaignInfo | null {
   const c = options.campaign;
   if (!c || !Array.isArray(c.ids)) return null;
-  const ids = c.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
-  return { ids, total: Math.max(ids.length, Math.floor(Number(c.total) || 0)) };
+  const clean = (list: number[]) => list.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const ids = clean(c.ids);
+  return { ids, total: Math.max(ids.length, Math.floor(Number(c.total) || 0)), all: Array.isArray(c.all) ? clean(c.all) : ids };
+}
+
+// The jobs a paused row's backlog is counted over: a ranked list's own, or (undefined) the account's.
+function backlogJobs(rawOptions: string): number[] | undefined {
+  try {
+    return campaignOf(JSON.parse(rawOptions))?.all;
+  } catch {
+    return undefined;
+  }
 }
 
 // The list's jobs that still have nowhere to go, in list order: what a targeted run would take
@@ -109,16 +121,16 @@ export type ContinueResult =
 // Filled applications waiting on the user — each one is an open Chrome tab: the ones not decided
 // on yet (a click on /apply), and the approved ones whose Submit the assistant was not allowed to
 // click (a 「点提交」 card, 2026-10-22: the user clicks Submit in that tab). Approving, rejecting,
-// 「我提交了」, a retry or a skip shrinks it.
-export function unconfirmedCount(db: DB, userId: string): number {
+// 「我提交了」, a retry or a skip shrinks it. With jobIds, only those jobs' (a ranked list's).
+export function unconfirmedCount(db: DB, userId: string, jobIds?: number[]): number {
   return (
     db
       .prepare(
-        `SELECT COUNT(*) n FROM applications WHERE user_id = ?
+        `SELECT COUNT(*) n FROM applications WHERE user_id = ? ${jobIds ? "AND job_id IN (SELECT value FROM json_each(?))" : ""}
            AND ((status = 'awaiting_confirm' AND confirm_decision IS NULL)
              OR (status = 'matched' AND needs_manual_reason LIKE '${SUBMIT_BLOCKED_PREFIX}%'))`
       )
-      .get(userId) as { n: number }
+      .get(userId, ...(jobIds ? [JSON.stringify(jobIds)] : [])) as { n: number }
   ).n;
 }
 
@@ -247,7 +259,7 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
     const next: StartOptions = {
       resume: true, // submit whatever the user approved meanwhile before filling new ones
       ...(campaign
-        ? campaignOptions(left, chunk, campaign.total)
+        ? campaignOptions(left, chunk, campaign.total, campaign.all)
         : { plan: remaining.map((e) => ({ direction: e.direction, count: e.count, mode: e.mode === "referral" ? "referral" : "direct" })), chunk }),
       chain: {
         root: chain.root,
@@ -258,7 +270,7 @@ export function maybeContinueApplyRun(db: DB, runId: number, deps: ContinueDeps 
       },
     } as StartOptions;
     const channel = (run.channel === "headless" ? "headless" : "user_chrome") as ExecutorChannel;
-    const unconfirmed = unconfirmedCount(db, userId);
+    const unconfirmed = unconfirmedCount(db, userId, campaign?.all);
     if (waitForInvites && budget) {
       const until = budget.resetsAt;
       const why = budget.cooldownUntil
@@ -308,10 +320,11 @@ export function resumePausedChainIfReady(db: DB, userId: string, deps: ContinueD
       }
     });
     if (parked.length === 0) return { action: "none", reason: "paused chain waits for tomorrow" };
-    const unconfirmed = unconfirmedCount(db, userId);
-    if (unconfirmed > BACKLOG_RESUME_AT) return { action: "none", reason: `backlog still ${unconfirmed} unconfirmed` };
+    const backlog = (p: { options: string }): number => unconfirmedCount(db, userId, backlogJobs(p.options));
+    const ready = parked.filter((p) => backlog(p) <= BACKLOG_RESUME_AT);
+    if (ready.length === 0) return { action: "none", reason: `backlog still ${backlog(parked[0])} unconfirmed` };
 
-    const attended = parked.filter((p) => p.channel !== "headless");
+    const attended = ready.filter((p) => p.channel !== "headless");
     if (attended.length > 0) {
       const logDir = deps.logDir ?? path.join(dataDir(), "executor-logs");
       fs.mkdirSync(logDir, { recursive: true });
@@ -328,7 +341,7 @@ export function resumePausedChainIfReady(db: DB, userId: string, deps: ContinueD
       return { action: "queued", runId: first, channel: "user_chrome" };
     }
     if ((deps.hasLiveOrQueuedRun ?? hasLiveOrQueuedRun)(db, userId, "apply")) return { action: "none", reason: "another apply run is live or queued" };
-    const paused = parked[0];
+    const paused = ready[0];
     let options: StartOptions = {};
     try {
       options = JSON.parse(paused.options);

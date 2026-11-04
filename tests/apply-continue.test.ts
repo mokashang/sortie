@@ -5,7 +5,7 @@ import path from "path";
 import { openDb, DB } from "@/lib/db";
 import { seedOwner } from "./helpers";
 import { parseProfile, Profile } from "@/lib/profile";
-import { takeNextApplication, reportFill, decide } from "@/apply/queue";
+import { takeNextApplication, reportFill, decide, SUBMIT_BLOCKED_PREFIX } from "@/apply/queue";
 import { takeNextReferral, reportNoContact } from "@/apply/referral";
 import { startExecutor, claimNextRun, finishRun, stopExecutor, StartOptions } from "@/executor/runner";
 import {
@@ -408,7 +408,7 @@ describe("按排名投 ranked list (campaign)", () => {
   it("hands each segment the head of the list, drops what found a place, and measures progress against the whole list", () => {
     const ids = Array.from({ length: 7 }, (_, i) => seedJob(db, { score: 70 + i }));
     const a = startList(ids, 2);
-    expect(optionsOf(db, a)).toEqual({ jobIds: ids.slice(0, 4), mode: "direct", chunk: 2, campaign: { ids, total: 7 } });
+    expect(optionsOf(db, a)).toEqual({ jobIds: ids.slice(0, 4), mode: "direct", chunk: 2, campaign: { ids, total: 7, all: ids } });
     // The session sees the segment, not the list.
     const claimed = claimNextRun(db, U, "user_chrome")!;
     expect(claimed.id).toBe(a);
@@ -433,7 +433,7 @@ describe("按排名投 ranked list (campaign)", () => {
       jobIds: left,
       mode: "direct",
       chunk: 2,
-      campaign: { ids: left, total: 7 },
+      campaign: { ids: left, total: 7, all: ids },
       chain: { root: a, step: 2, planned: { direct: 7, referral: 0 }, before: { direct: 2, referral: 0 }, zeroRuns: 0 },
     });
   });
@@ -478,6 +478,63 @@ describe("按排名投 ranked list (campaign)", () => {
     expect(alert).toMatchObject({ runId: b, kind: "chain", reason: "no_progress", planned: { direct: 2, referral: 0 } });
 
     const { runId } = resolvePlanAlert(db, U, b, "continue");
-    expect(optionsOf(db, runId!)).toEqual({ jobIds: ids, mode: "direct", chunk: 1, campaign: { ids, total: 2 } });
+    expect(optionsOf(db, runId!)).toEqual({ jobIds: ids, mode: "direct", chunk: 1, campaign: { ids, total: 2, all: ids } });
+  });
+
+  // Fills from before the list, still waiting on the user: 点提交 cards and undecided ones.
+  function seedOldCards(n: number): void {
+    for (let i = 0; i < n; i++) {
+      const id = seedJob(db, { score: 60 });
+      if (i % 2) db.prepare("UPDATE applications SET status = 'awaiting_confirm' WHERE job_id = ?").run(id);
+      else db.prepare("UPDATE applications SET needs_manual_reason = ? WHERE job_id = ?").run(`${SUBMIT_BLOCKED_PREFIX}refused`, id);
+    }
+  }
+  function insertPaused(options: StartOptions): number {
+    return Number(
+      db
+        .prepare("INSERT INTO executor_runs (user_id, kind, status, channel, pid, options, summary) VALUES (?, 'apply', 'paused', 'user_chrome', NULL, ?, 'parked')")
+        .run(U, JSON.stringify(options)).lastInsertRowid
+    );
+  }
+
+  it("cards from before the list do not pause it", () => {
+    seedOldCards(BACKLOG_PAUSE_AT + 2);
+    const ids = [seedJob(db, { score: 90 }), seedJob(db, { score: 80 })];
+    const a = startList(ids, 1);
+    claimNextRun(db, U, "user_chrome");
+    reportFill(db, U, { jobId: (take(a) as { jobId: number }).jobId, status: "awaiting_confirm", filledFields: {} });
+    finishRun(db, U, a, "done");
+    expect(maybeContinueApplyRun(db, a, { logDir, notify: () => {} })).toMatchObject({ action: "queued" });
+  });
+
+  it("the list's own cards pause it, 点提交 ones included, and bringing those down resumes it whatever else is waiting", () => {
+    seedOldCards(BACKLOG_PAUSE_AT + 2);
+    const ids = Array.from({ length: BACKLOG_PAUSE_AT + 1 }, (_, i) => seedJob(db, { score: 90 - i }));
+    const a = startList(ids, BACKLOG_PAUSE_AT);
+    claimNextRun(db, U, "user_chrome");
+    for (let i = 0; i < BACKLOG_PAUSE_AT; i++) reportFill(db, U, { jobId: (take(a) as { jobId: number }).jobId, status: "awaiting_confirm", filledFields: {} });
+    decide(db, U, ids[0], "approve");
+    reportFill(db, U, { jobId: ids[0], status: "submit_blocked", reason: "refused" });
+    finishRun(db, U, a, "done");
+    // The filled jobs have left campaign.ids; their cards still count.
+    const p = maybeContinueApplyRun(db, a, { logDir, notify: () => {} }) as { action: string; runId: number; unconfirmed: number };
+    expect(p).toMatchObject({ action: "paused", unconfirmed: BACKLOG_PAUSE_AT });
+    expect(optionsOf(db, p.runId).campaign).toEqual({ ids: [ids[BACKLOG_PAUSE_AT]], total: ids.length, all: ids });
+
+    for (const id of ids.slice(1, 5)) decide(db, U, id, "reject", "not now");
+    expect(resumePausedChainIfReady(db, U, { logDir })).toMatchObject({ action: "none", reason: "backlog still 6 unconfirmed" });
+    decide(db, U, ids[5], "reject", "not now");
+    expect(unconfirmedCount(db, U)).toBeGreaterThan(BACKLOG_PAUSE_AT);
+    expect(resumePausedChainIfReady(db, U, { logDir })).toMatchObject({ action: "queued", runId: p.runId });
+  });
+
+  it("a list parked before it kept the whole list resumes on its own count, while a plan beside it waits on the account's", () => {
+    seedOldCards(BACKLOG_PAUSE_AT + 2);
+    const ids = [seedJob(db, { score: 90 }), seedJob(db, { score: 80 })];
+    const plan = insertPaused({ plan: [{ direction: "swe_general", count: 5, mode: "direct" }], chunk: 5 });
+    const list = insertPaused({ jobIds: ids, mode: "direct", chunk: 10, campaign: { ids, total: 2 } });
+    expect(resumePausedChainIfReady(db, U, { logDir })).toMatchObject({ action: "queued", runId: list });
+    expect(runRow(db, list).status).toBe("queued");
+    expect(runRow(db, plan).status).toBe("paused");
   });
 });

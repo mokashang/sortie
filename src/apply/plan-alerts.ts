@@ -172,7 +172,7 @@ export function resolvePlanAlert(
     // A stalled ranked list goes on from where it is, as a new list of what is left of it.
     const left = alert.kind === "chain" && prev.campaign ? campaignLeft(db, userId, prev.campaign.ids ?? []) : null;
     const options: StartOptions = left
-      ? campaignOptions(left, chunk)
+      ? campaignOptions(left, chunk, left.length, prev.campaign?.all ?? prev.campaign?.ids)
       : alert.kind === "chain"
         ? { plan: alert.remaining.map((e) => ({ ...e })), chunk }
         : { jobIds: alert.untouched, mode: alert.mode };
