@@ -46,6 +46,10 @@ export interface SpawnRecord {
   // ISO time it was told to close its tabs before an idle reap (cleared when it gets work again);
   // the reap waits SHUTDOWN_GRACE_MS after this (attended.ts).
   closingAt?: string | null;
+  // ISO time it was found signed out with nothing claimed yet. `--chrome` connects at startup, so
+  // such a session has no Chrome tools even once the user signs in: it takes no work and is
+  // replaced (attended.ts).
+  signedOutAt?: string | null;
 }
 
 function readJson<T>(db: DB, key: string): T | null {

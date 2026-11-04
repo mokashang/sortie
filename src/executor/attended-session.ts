@@ -17,10 +17,10 @@ export interface AttendedHandle {
   write(data: string): void;
 }
 
-type Registry = { handles: Map<number, AttendedHandle>; notices: Map<string, number> };
+type Registry = { handles: Map<number, AttendedHandle>; notices: Map<string, number>; signedOut: Map<number, number> };
 const g = globalThis as unknown as { __sortieAttended?: Registry };
 function reg(): Registry {
-  if (!g.__sortieAttended) g.__sortieAttended = { handles: new Map(), notices: new Map() };
+  if (!g.__sortieAttended) g.__sortieAttended = { handles: new Map(), notices: new Map(), signedOut: new Map() };
   return g.__sortieAttended;
 }
 
@@ -29,13 +29,22 @@ export function registerAttendedHandle(h: AttendedHandle): void {
 }
 export function unregisterAttendedHandle(pid: number): void {
   reg().handles.delete(pid);
+  reg().signedOut.delete(pid);
 }
 export function isAttendedReachable(pid: number): boolean {
   return reg().handles.has(pid);
 }
 // Tests only: forget every handle and notice.
 export function resetAttendedRegistry(): void {
-  g.__sortieAttended = { handles: new Map(), notices: new Map() };
+  g.__sortieAttended = { handles: new Map(), notices: new Map(), signedOut: new Map() };
+}
+
+// That session's terminal showed the CLI saying it has no login (attended-win.ts).
+export function markSignedOutBanner(pid: number, at: number): void {
+  reg().signedOut.set(pid, at);
+}
+export function signedOutBannerAt(pid: number): number | null {
+  return reg().signedOut.get(pid) ?? null;
 }
 
 // The TUI reads the text and the Enter key as separate key events; sending both in one chunk

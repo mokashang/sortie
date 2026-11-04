@@ -1,7 +1,8 @@
 import { spawn as nodeSpawn } from "child_process";
 import fs from "fs";
 import path from "path";
-import { registerAttendedHandle, unregisterAttendedHandle } from "@/executor/attended-session";
+import { markSignedOutBanner, registerAttendedHandle, unregisterAttendedHandle } from "@/executor/attended-session";
+import { requestCliLoginCheck, showsSignedOut } from "@/executor/cli-login";
 
 // Windows launchers for the attended `claude --chrome` session (spec: docs/superpowers/specs/
 // 2026-09-06-windows-server-migration-design.md §3). macOS keeps the expect path in attended.ts;
@@ -36,6 +37,18 @@ export class PromptAnswerer {
     this.lastAnswerAt = now;
     this.tail = "";
     return true;
+  }
+}
+
+// Spots the CLI saying it has no login in the child's raw terminal output. The TUI draws many spaces
+// as a cursor move (ESC[1C), so those become spaces again before the other escapes are stripped.
+export class SignedOutWatcher {
+  private tail = "";
+  constructor(private readonly keep = 4096) {}
+
+  feed(chunk: string): boolean {
+    this.tail = (this.tail + chunk.replace(/\x1b\[\d*C/g, " ").replace(ANSI, "")).slice(-this.keep);
+    return showsSignedOut(this.tail);
   }
 }
 
@@ -107,6 +120,8 @@ export function spawnAttendedPty(
   registerAttendedHandle({ pid: proc.pid, write: (data) => proc.write(data) });
   const fd = fs.openSync(opts.logPath, "a");
   const answerer = new PromptAnswerer();
+  const watcher = new SignedOutWatcher();
+  let signedOutSeen = false;
   const now = deps.now ?? Date.now;
   proc.onData((data) => {
     try {
@@ -115,6 +130,12 @@ export function spawnAttendedPty(
       // transcript is best-effort; the run log in the App is the source of truth
     }
     if (answerer.feed(data, now())) proc.write("\r");
+    // Once is enough: the TUI repeats the message on every redraw (attended-670.log has thousands).
+    if (!signedOutSeen && watcher.feed(data)) {
+      signedOutSeen = true;
+      markSignedOutBanner(proc.pid, now());
+      requestCliLoginCheck();
+    }
   });
   proc.onExit(({ exitCode }) => {
     unregisterAttendedHandle(proc.pid);

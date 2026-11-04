@@ -14,7 +14,9 @@ import {
   noticeDue,
   markNotice,
   clearNoticesFor,
+  signedOutBannerAt,
 } from "@/executor/attended-session";
+import { currentCliLogin, type CliLogin } from "@/executor/cli-login";
 import {
   listSpawns,
   saveSpawns,
@@ -73,6 +75,13 @@ export type { SpawnRecord } from "@/executor/sessions";
 // The state lives in the `profile` key/value table so no schema migration is needed:
 //   attended_heartbeat:<userId> = {sessionId, kind, at}
 //   attended_spawns             = [{pid, runId, startedAt, logPath, idleSince?}, …]  (sessions.ts)
+//   claude_signed_out           = {since, alertedAt}, while the Claude CLI has no login
+//
+// Signed out (2026-11-03, src/executor/cli-login.ts): nothing a Claude session is told can happen,
+// and an interactive CLI with no login just sits there, so the queue is held — no spawn, nothing
+// typed — and the user is told, until the CLI is signed in again. The runs stay queued and carry on
+// by themselves then. A session that came up signed out is replaced at that point: `--chrome`
+// connects at startup, so it would pick the login up and take work with no Chrome tools.
 
 export const HEARTBEAT_KEY = "attended_heartbeat";
 export const HEARTBEAT_STALE_MS = 30_000;
@@ -126,6 +135,14 @@ function earlyExitsOf(db: DB): EarlyExits {
   let m = all.get(db);
   if (!m) all.set(db, (m = new Map()));
   return m;
+}
+// In the profile table so a restart mid-outage neither alerts again nor spawns before the first
+// sign-in check has answered. One alert per outage, and a reminder this often while it lasts.
+export const LOGIN_HOLD_KEY = "claude_signed_out";
+export const LOGIN_ALERT_EVERY_MS = 6 * 60 * 60 * 1000;
+export interface LoginHold {
+  since: string; // ISO
+  alertedAt: string; // ISO
 }
 
 export function heartbeatKey(userId: string): string {
@@ -206,6 +223,9 @@ export interface SessionInput {
   booting: boolean;
   // An approved application in one of its tabs (only matters when it is unreachable).
   approvalsWaiting: boolean;
+  // It came up signed out (SpawnRecord.signedOutAt): it takes no work, "wait" while that may still
+  // be so, "replace" once the CLI is known to be signed in.
+  signedOutStart?: "wait" | "replace";
 }
 
 export interface PlanInput {
@@ -216,6 +236,10 @@ export interface PlanInput {
   // How many spawned sessions may exist at once.
   maxSessions: number;
   sessions: SessionInput[];
+  // The CLI has no login: a line typed into a session only gets "Login expired" back and a fresh
+  // session would sit beside it, so no notice, no reminder and no spawn. Queued runs just wait, and
+  // a session gone quiet is not wedged and keeps its tabs for when the user signs in.
+  signedOut?: boolean;
 }
 
 export interface Plan {
@@ -234,12 +258,20 @@ export function planDispatch(input: PlanInput): Plan {
   const spawns: Plan["actions"] = [];
   const kept: SessionInput[] = [];
   const reasons: string[] = [];
+  // A session waiting on the sign-in check it asked for holds the queue too: if the check says
+  // signed out, anything spawned meanwhile would only be one more session to replace.
+  const held = input.signedOut || input.sessions.some((s) => s.signedOutStart === "wait");
   for (const s of input.sessions) {
     if (!s.alive) {
       reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} exited` });
       continue;
     }
+    if (s.signedOutStart === "replace") {
+      reaps.push({ action: "reap", pid: s.pid, reason: `child ${s.pid} came up signed out and has no Chrome tools` });
+      continue;
+    }
     if (
+      !held &&
       s.runningRunId != null &&
       s.runningQuietMs != null &&
       s.runningQuietMs >= STALL_NUDGE_MS &&
@@ -279,7 +311,7 @@ export function planDispatch(input: PlanInput): Plan {
     reasons.push(s.idleForMs == null ? `child ${s.pid} has work` : `child ${s.pid} idle, keeping it`);
   }
 
-  for (const s of kept) {
+  for (const s of held ? [] : kept) {
     if (s.reachable && s.runningRunId != null && s.runningQuietMs != null && s.runningQuietMs >= STALL_NUDGE_MS && s.stallNoticeDue)
       nudges.push({
         action: "nudge",
@@ -294,7 +326,8 @@ export function planDispatch(input: PlanInput): Plan {
   let free = kept.filter((s) => s.reachable && s.runningRunId == null && !s.booting);
   let booting = kept.filter((s) => s.booting).length;
   const uncovered: number[] = [];
-  for (const q of input.queued) {
+  if (held && input.queued.length > 0) reasons.push(`run #${input.queued[0].id} queued, the CLI is signed out`);
+  for (const q of held ? [] : input.queued) {
     if (booting > 0) {
       booting -= 1;
       reasons.push(`run #${q.id} queued, a session is starting up`);
@@ -350,6 +383,7 @@ export interface DecideInput {
   runningRunId?: number | null;
   runningQuietMs?: number | null;
   stallNoticeDue?: boolean;
+  signedOut?: boolean;
   spawn: {
     pid: number;
     runId: number;
@@ -358,6 +392,7 @@ export interface DecideInput {
     idleForMs: number | null;
     // The queued run has not been announced to the session recently.
     queuedNoticeDue: boolean;
+    signedOutStart?: "wait" | "replace";
   } | null;
 }
 export function decide(input: DecideInput): Decision {
@@ -366,6 +401,7 @@ export function decide(input: DecideInput): Decision {
     queued: input.queuedRunId != null ? [{ id: input.queuedRunId, toldTo: s && !s.queuedNoticeDue ? [s.pid] : [] }] : [],
     heartbeatAgeMs: input.heartbeatAgeMs,
     maxSessions: 1,
+    signedOut: input.signedOut,
     sessions: s
       ? [
           {
@@ -379,6 +415,7 @@ export function decide(input: DecideInput): Decision {
             stallNoticeDue: input.stallNoticeDue ?? false,
             booting: false,
             approvalsWaiting: input.approvalsWaiting,
+            signedOutStart: s.signedOutStart,
           },
         ]
       : [],
@@ -528,6 +565,9 @@ export interface AttendedDeps {
   mtime?: (filePath: string) => number | null;
   // How many sessions may run at once (default: 设置 → 同时进行的任务, attendedParallel()).
   maxSessions?: number;
+  // The last sign-in check (tests fake it) and how the user is told about a sign-out.
+  cliLogin?: () => CliLogin;
+  alert?: (title: string, body: string) => void;
 }
 
 function defaultIsAlive(pid: number): boolean {
@@ -735,6 +775,38 @@ function closeOutReapedSession(db: DB, rec: SpawnRecord, reason: string, spawns:
   revokeRunTokens(db, rec.runId);
 }
 
+// Works out from the last sign-in check whether the queue is held this tick, and tells the user.
+// login is null for a provider without this login. wasHeld: the hold was already on (so a session
+// replaced this tick is explained by the user signing back in).
+function tendLoginHold(db: DB, login: CliLogin | null, now: Date, deps: AttendedDeps): { signedOut: boolean; wasHeld: boolean } {
+  const hold = readKey<LoginHold>(db, LOGIN_HOLD_KEY);
+  const wasHeld = hold != null;
+  // No answer yet since this server started: the hold it left behind stands. An unreadable answer
+  // does not: a CLI update must not leave the queue held for good with no way to clear it.
+  const signedOut = login != null && (login.signedIn === false || (login.at == null && wasHeld));
+  if (!signedOut) {
+    if (wasHeld) {
+      writeKey(db, LOGIN_HOLD_KEY, null);
+      console.log(`[attended] the Claude CLI is signed in again (signed out since ${hold.since})`);
+    }
+    return { signedOut, wasHeld };
+  }
+  if (!hold || now.getTime() - Date.parse(hold.alertedAt) >= LOGIN_ALERT_EVERY_MS) {
+    writeKey(db, LOGIN_HOLD_KEY, { since: hold?.since ?? now.toISOString(), alertedAt: now.toISOString() } satisfies LoginHold);
+    const t = messages[serverLang()].notify.cliSignedOut;
+    (deps.alert ?? ((title, body) => void notify(title, body, { priority: "high" })))(t.title, t.body);
+    console.warn(`[attended] the Claude CLI is signed out (since ${hold?.since ?? now.toISOString()}): holding the queue, user alerted`);
+  }
+  return { signedOut, wasHeld };
+}
+
+// A session flagged signed out is replaced only on an answer newer than the flag: the answer in
+// hand may be from before the session showed the message.
+function signedOutStartOf(signedOutAt: string | null, signedOut: boolean, login: CliLogin | null): SessionInput["signedOutStart"] {
+  if (!signedOutAt) return undefined;
+  return !signedOut && (login == null || (login.at ?? 0) > Date.parse(signedOutAt)) ? "replace" : "wait";
+}
+
 export interface DispatchResult {
   // The first thing this tick did (or why it did nothing); `actions` has all of them.
   decision: Decision;
@@ -761,6 +833,8 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
         .prepare("SELECT id, kind FROM executor_runs WHERE user_id = ? AND channel = 'user_chrome' AND status = 'queued' ORDER BY id ASC")
         .all(owner) as { id: number; kind: string }[])
     : [];
+  const login = (deps.aiProvider ?? getAiProvider(db)) === "claude" ? (deps.cliLogin ?? currentCliLogin)() : null;
+  const { signedOut, wasHeld } = tendLoginHold(db, login, now, deps);
 
   const views: SessionInput[] = [];
   const quietBy = new Map<number, number | null>();
@@ -784,6 +858,10 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
     const mine = owner ? runsOfSession(db, owner, rec, spawns) : [];
     if (mine.length === 0) neverClaimed.add(rec.pid);
     else exitsByRun.delete(rec.runId); // it started fine: earlier exits no longer count
+    // One already on a run started with its tools and carries on after the user signs in; one with
+    // nothing claimed cannot be told from a session that never had them, and has nothing to lose.
+    const signedOutAt = rec.signedOutAt ?? (mine.length === 0 && (signedOut || signedOutBannerAt(rec.pid) != null) ? now.toISOString() : null);
+    if (signedOutAt !== (rec.signedOutAt ?? null)) changed = true;
     const running = mine.find((r) => r.status === "running") ?? null;
     const runMtime = running?.log_path ? mtime(running.log_path) : null;
     const quiet = runMtime != null ? Math.max(0, now.getTime() - runMtime) : null;
@@ -806,8 +884,9 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
       stallNudgesSent: running ? stalls.get(running.id)?.nudges ?? 0 : 0,
       booting: mine.length === 0 && now.getTime() - Date.parse(rec.startedAt) < BOOT_GRACE_MS,
       approvalsWaiting: owner ? approvalsIn(db, owner, rec, spawns) : false,
+      signedOutStart: signedOutStartOf(signedOutAt, signedOut, login),
     });
-    return { ...rec, idleSince, closingAt };
+    return { ...rec, idleSince, closingAt, signedOutAt };
   });
   if (changed) saveSpawns(db, updated);
 
@@ -816,6 +895,7 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
     heartbeatAgeMs: owner ? heartbeatAgeMs(db, owner, now) : null,
     maxSessions: deps.maxSessions ?? attendedParallel(db),
     sessions: views,
+    signedOut,
   });
 
   let remaining = updated;
@@ -825,10 +905,10 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
     if (d.action === "reap") {
       // An idle session this process can type to closes its own tabs first (shutdownNotice): told
       // on the first reap tick, reaped SHUTDOWN_GRACE_MS later. One that exited or can't be told
-      // anything goes at once.
+      // anything goes at once, and so does one that came up signed out: it has no tabs to close.
       const view = views.find((v) => v.pid === d.pid);
       const idx = remaining.findIndex((s) => s.pid === d.pid);
-      if (view?.alive && view.reachable && view.idleForMs != null && idx >= 0) {
+      if (view?.alive && view.reachable && view.idleForMs != null && !view.signedOutStart && idx >= 0) {
         const told = remaining[idx].closingAt;
         if (!told) {
           const ok = (deps.write ?? writeToAttended)(d.pid, shutdownNotice());
@@ -843,7 +923,10 @@ export function dispatchAttended(db: DB, deps: AttendedDeps = {}): DispatchResul
       (deps.kill ?? killTree)(d.pid);
       const rec = updated.find((s) => s.pid === d.pid);
       if (rec) closeOutReapedSession(db, rec, d.reason, updated);
-      if (rec && neverClaimed.has(d.pid) && !views.find((v) => v.pid === d.pid)?.alive) {
+      // Replaced with no outage to explain it — the CLI says it is signed in, yet sessions keep
+      // showing the message — counts as an exit, so it ends in a failed task and a notification
+      // instead of a respawn every other tick.
+      if (rec && neverClaimed.has(d.pid) && (!view?.alive || (view.signedOutStart === "replace" && !wasHeld))) {
         const prev = exitsByRun.get(rec.runId);
         exitsByRun.set(rec.runId, { count: (prev?.count ?? 0) + 1, at: now.getTime() });
       }
