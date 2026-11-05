@@ -33,6 +33,18 @@ export interface PendingInfoRow {
   questions: InfoQuestion[];
   askedAt: string; // local "MM-DD HH:MM"
   askedAtUtc: string; // the row's updated_at, SQLite UTC text
+  // Only on a card whose step happens in the assistant's tab (needsOpenTab): false = nobody holds
+  // that tab any more. The card's own text was written while it was open and still says so.
+  tabOpen?: boolean;
+}
+
+// An action step or a refused Submit can only be done in the tab the assistant kept open, and that
+// tab closes after an hour (src/executor/tabs.ts). Answers and uploads don't depend on it: they
+// are stored and filled in whichever way the form comes back. Login and manual items already
+// closed their tab.
+export function needsOpenTab(questions: InfoQuestion[]): boolean {
+  const kinds = questions.map(infoKind);
+  return kinds.some((k) => k === "action" || k === "submit") && !kinds.some((k) => k === "login" || k === "manual");
 }
 
 interface PendingInfoRaw {

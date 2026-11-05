@@ -124,6 +124,14 @@ export const apply = defineMessages({
         retriedTab: (company: string) => `已让助手回到 ${company} 的标签页再点一次提交`,
         retriedFresh: (company: string) => `${company} 已交回助手,会重新填好再提交`,
       },
+      // A step that has to happen in the assistant's tab, after that tab closed (src/executor/tabs.ts).
+      tabClosed: {
+        chip: "标签页已关",
+        instructions: "这一步要在助手打开的申请页里做,但那个标签页已经关了(标签页等满 1 小时会自动关)。点「重新打开」,助手会重新填好这一页,再给你一张新卡。新卡的标签页同样只留 1 小时。",
+        submitInstructions: "填好的表单在那个标签页里,标签页已经关了(标签页等满 1 小时会自动关)。点「重新打开」,助手会重新填好并再试一次提交。又被拦的话会再给你一张卡,标签页同样只留 1 小时。",
+        reopen: "重新打开",
+        reopened: (company: string) => `已让助手重新打开 ${company} 的申请页`,
+      },
       field: {
         optional: "(可选)",
         rememberTip: (key: string) => `答案会以「${key}」存进标准答案,下次自动填`,
@@ -431,6 +439,13 @@ export const apply = defineMessages({
         retry: "Have the assistant try again",
         retriedTab: (company: string) => `Asked the assistant to go back to the ${company} tab and click Submit again`,
         retriedFresh: (company: string) => `${company} is back with the assistant; it fills the form afresh and submits`,
+      },
+      tabClosed: {
+        chip: "Tab closed",
+        instructions: "This step happens on the application page the assistant opened, but that tab has closed; tabs close after waiting for an hour. Press Reopen and the assistant fills the page again and gives you a new card. The new tab also stays open for an hour.",
+        submitInstructions: "The filled form was in that tab, and the tab has closed; tabs close after waiting for an hour. Press Reopen and the assistant fills it again and tries Submit once more. If Submit is refused again you get a new card, and that tab also stays open for an hour.",
+        reopen: "Reopen",
+        reopened: (company: string) => `Asked the assistant to reopen the ${company} application`,
       },
       field: {
         optional: "(optional)",

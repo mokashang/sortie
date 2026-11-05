@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { pendingConfirmations, confirmStatus } from "@/apply/queue";
-import { pendingInfo } from "@/apply/info";
+import { needsOpenTab, pendingInfo } from "@/apply/info";
+import { askerCanContinue } from "@/apply/followup";
 import { planAlerts } from "@/apply/plan-alerts";
 import { withEmailCodes } from "@/apply/email-code";
 import { sessionOfCaller } from "@/executor/sessions";
@@ -45,7 +46,7 @@ export const GET = withUser(async (req, actor) => {
     // planAlerts: the task-level ones (a plan that stopped short, a task that gave up — plan-alerts.ts).
     // An emailed verification code the App found (src/apply/email-code.ts) rides along only for the
     // signed-in user's browser — never for an assistant's token: the code is for the user to type.
-    const needsInfo = pendingInfo(db, userId, langFromRequest(req));
+    const needsInfo = pendingInfo(db, userId, langFromRequest(req)).map((r) => (needsOpenTab(r.questions) ? { ...r, tabOpen: askerCanContinue(db, userId, r.jobId) } : r));
     return NextResponse.json({
       pending,
       needsInfo: actor.via === "session" ? withEmailCodes(needsInfo, userId) : needsInfo,

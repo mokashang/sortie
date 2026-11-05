@@ -35,6 +35,8 @@ export interface InfoRow {
   needsManualReason: string | null;
   questions: Question[];
   askedAt: string;
+  // Only on a card whose step happens in the assistant's tab: false = that tab is gone.
+  tabOpen?: boolean;
   // An emailed verification code the App found in the user's mailbox for this card's code step
   // (src/apply/email-code.ts) — shown for the user to type into the tab; never sent anywhere.
   emailCode?: {
@@ -68,8 +70,10 @@ const loginKey = (item: Question, jobId: number) => (item.host ? item.host.toLow
 
 // What the card turns into: a login wall groups every job on that site into one card; something
 // only the user can finish is a short "do it yourself" card; an approved fill whose Submit the
-// assistant was refused is a 「点提交」 card; everything else is a small form.
-function cardKind(row: InfoRow): "login" | "manual" | "submit" | "form" {
+// assistant was refused is a 「点提交」 card; a step in a tab that has since closed can't be done
+// until the form is back, so that card only offers to bring it back; everything else is a small form.
+function cardKind(row: InfoRow): "login" | "manual" | "submit" | "reopen" | "form" {
+  if (row.tabOpen === false) return "reopen";
   if (row.questions.some((q) => kindOf(q) === "submit")) return "submit";
   if (row.questions.some((q) => kindOf(q) === "login")) return "login";
   if (row.questions.some((q) => kindOf(q) === "manual")) return "manual";
@@ -320,6 +324,20 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     });
   }
 
+  // A card whose tab has closed: the assistant fills the form again and a new card comes back.
+  async function reopen(row: InfoRow, wasSubmit: boolean) {
+    await run(`reopen-${row.jobId}`, async () => {
+      try {
+        const note = noteOf(noteKey.job(row.jobId));
+        const j = await postJson<Continued>(wasSubmit ? "/api/apply/retry-submit" : "/api/apply/unpark", { jobId: row.jobId, note: note || undefined });
+        clearNote(noteKey.job(row.jobId));
+        toast({ title: m.apply.todo.tabClosed.reopened(row.company), description: continueText(j, m), tone: "good" });
+      } catch (e) {
+        toast({ title: m.apply.todo.retryFailed, description: errorMessage(e), tone: "danger" });
+      }
+    });
+  }
+
   async function selfSubmitted(row: InfoRow) {
     await run(`self-${row.jobId}`, async () => {
       try {
@@ -482,6 +500,35 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
                 {m.apply.todo.login.openHere}
               </LinkButton>
             ) : null}
+          </div>
+        </Card>,
+      ];
+    }
+
+    if (kind === "reopen") {
+      const t = m.apply.todo.tabClosed;
+      const wasSubmit = row.questions.some((q) => kindOf(q) === "submit");
+      return [
+        <Card key={row.jobId} tone="warn" className="todo-card">
+          <Head row={row} kindLabel={labelOf(m.labels.infoKind, wasSubmit ? "submit" : "action")} waiting={false} stateChip={<Chip tone="neutral">{t.chip}</Chip>} />
+          <p className="small mt-3">{wasSubmit ? t.submitInstructions : t.instructions}</p>
+          <div className="col gap-2 mt-3">
+            {row.questions.map((q) => (
+              <div key={q.key}>
+                <div className="muted small">{kindOf(q) === "submit" ? m.apply.todo.submit.title : q.label}</div>
+                {q.hint ? <p className="muted small todo-hint mt-1">{q.hint}</p> : null}
+              </div>
+            ))}
+          </div>
+          {noteField(noteKey.job(row.jobId), m.apply.todo.note.placeholderManual, m.apply.todo.note.retryHint)}
+          <div className="row mt-4">
+            <Button variant="primary" icon={<RotateCcw size={14} />} onClick={() => reopen(row, wasSubmit)} loading={busyKey === `reopen-${row.jobId}`} disabled={busyKey !== null && busyKey !== `reopen-${row.jobId}`}>
+              {t.reopen}
+            </Button>
+            <Button icon={<UserCheck size={14} />} onClick={() => selfSubmitted(row)} loading={busyKey === `self-${row.jobId}`} disabled={busyKey !== null && busyKey !== `self-${row.jobId}`}>
+              {m.apply.todo.manual.selfDone}
+            </Button>
+            {skipButton(row)}
           </div>
         </Card>,
       ];

@@ -190,6 +190,11 @@ the card automatically continues the work — there is no dead end:
   that session is gone the form is filled afresh); or skips. A push notification goes out, at most
   one per half hour. These cards count as filled for the plan, and 10 or more of them pause the
   relay like unconfirmed applications do, until they are down to 5.
+- **Tab closed** (2026-11-05) — a "Do it here" or "Click Submit" card whose tab is gone. Tabs close
+  after waiting for an hour, and the assistant can also have left. The card says so, even though
+  its own text may still mention "the open tab". "Reopen" has the assistant fill the form again and
+  give a new card, whose tab also stays open for an hour; "I applied myself" records it if the
+  user finished by hand; or skip.
 - **Assistant error** — a tool failure or a page that would not render. The app retries an error
   by itself (after an hour, then after six more hours) without showing a card; only a third
   failure becomes a card ("Let the assistant try again").
