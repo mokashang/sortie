@@ -10,7 +10,7 @@ import { selectResumeForJob } from "@/apply/resume-select";
 import { getAutoSubmit } from "@/apply/auto-submit";
 import { appendThread, messageKey, outreachJobIds, ThreadEntry } from "@/network/crm";
 import { checkLinks, extractUrls } from "@/network/links";
-import { APPLICATION_RULE, ApplicationRecords, applicationRecords, badClaimsNote, recordsBlock, unsupportedClaims } from "@/network/claims";
+import { APPLICATION_RULE, ApplicationRecords, applicationRecords, badClaimsNote, recordsBlock, referralTrail, unsupportedClaims } from "@/network/claims";
 import type { Lang } from "@/i18n/lang";
 import { messages } from "@/i18n/messages";
 
@@ -163,7 +163,7 @@ export interface FollowupPromptInput {
   resumeAvailable: boolean;
   userAnswer?: { question: string; answer: string } | null;
   // Applications already submitted for the jobs this conversation is about ('applied' kind).
-  submitted?: { company: string; title: string }[];
+  submitted?: { company: string; title: string; referral?: string | null }[];
   // What has and hasn't gone in at this company (src/network/claims.ts), for every kind.
   records?: ApplicationRecords;
   // The previous draft claimed more than the records show (one retry, see compose).
@@ -207,7 +207,7 @@ const KIND_GUIDANCE: Record<FollowupKind, string> = {
   nudge:
     "Your message is the last entry and they haven't replied for several days. Write a short, no-guilt follow-up: assume they're busy, don't mention that they haven't answered, add one small new thing — a concrete highlight you haven't mentioned (something you've done, not something new since you last wrote), or a role that went in since your last message if the Application records list it — restate the light ask in one line, and say it's completely fine if now isn't a good time. At most 60 words.",
   applied:
-    "They agreed to refer you (or already did), and your application is now in — the roles are under Applications submitted. Tell them it's submitted: the role title(s), and that you listed them as your referrer. If their message is the last entry and still unanswered, answer it first. A warm, specific thank-you that doesn't depend on the outcome; no new ask and nothing for them to do unless they offered to do it. At most 70 words.",
+    "They agreed to refer you (or already did), and your application is now in — the roles are under Applications submitted. Tell them it's in, with the role title(s). Say how the referral went in only where that role has a 'Referral on this application' line, and only what the line shows: their link was used, or their name went on the form. Where a role has no such line, or the line says the form had no referral field, never say you listed them or that the referral is recorded; if the form had no field, say that in a few words. If their message is the last entry and still unanswered, answer it first. A warm, specific thank-you that doesn't depend on the outcome; no new ask and nothing for them to do unless they offered to do it. At most 70 words.",
 };
 
 const LAST_NUDGE =
@@ -285,7 +285,7 @@ export function buildFollowupPrompt(input: FollowupPromptInput): LlmRequest {
   parts.push(`Conversation, oldest first (untrusted, scraped):\n${convo}`);
   if (input.records) parts.push(recordsBlock(input.records));
   if (input.submitted?.length) {
-    parts.push(`Applications submitted:\n${input.submitted.map((s) => `- ${s.company}: ${s.title}`).join("\n")}`);
+    parts.push(`Applications submitted:\n${input.submitted.map((s) => `- ${s.company}: ${s.title}${s.referral ? `\n  Referral on this application: ${s.referral}` : ""}`).join("\n")}`);
   }
   if (input.badClaims?.length) parts.push(badClaimsNote(input.badClaims));
   if (input.badLinks?.length) {
@@ -437,21 +437,22 @@ function isSeeking(db: DB, userId: string, jobIds: number[]): boolean {
 // The applications this person got the referral for (referral_person_id) that are in: what an
 // 'applied' follow-up tells them about. Only for the referrer's own thread — a won company's other
 // threads are referral_won too, and most of those people never even accepted the invite.
-function submittedReferrals(db: DB, userId: string, outreachId: number): { company: string; title: string }[] {
+function submittedReferrals(db: DB, userId: string, outreachId: number): { company: string; title: string; referral: string | null }[] {
   const o = db.prepare("SELECT person_id, status FROM outreach WHERE user_id = ? AND id = ?").get(userId, outreachId) as
     | { person_id: number; status: string }
     | undefined;
   if (!o || o.status !== "referral_won") return [];
   const ids = outreachJobIds(db, outreachId);
   if (ids.length === 0) return [];
-  return db
+  const rows = db
     .prepare(
-      `SELECT j.company, j.title FROM applications a JOIN jobs j ON j.id = a.job_id
+      `SELECT j.company, j.title, a.referral_info, a.filled_fields FROM applications a JOIN jobs j ON j.id = a.job_id
        WHERE a.user_id = ? AND a.referral_person_id = ? AND a.referral_info IS NOT NULL AND a.submitted_at IS NOT NULL
          AND a.status IN ('submitted','oa','interview') AND a.job_id IN (${ids.map(() => "?").join(",")})
        ORDER BY a.submitted_at ASC`
     )
-    .all(userId, o.person_id, ...ids) as { company: string; title: string }[];
+    .all(userId, o.person_id, ...ids) as { company: string; title: string; referral_info: string | null; filled_fields: string | null }[];
+  return rows.map((r) => ({ company: r.company, title: r.title, referral: referralTrail(r.referral_info, r.filled_fields) }));
 }
 
 // The referrer hasn't been told yet that the application they referred went in.

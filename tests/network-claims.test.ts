@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
-import { applicationRecords, recordsBlock, unsupportedClaims, ApplicationRecords } from "@/network/claims";
+import { applicationRecords, recordsBlock, referralTrail, unsupportedClaims, ApplicationRecords } from "@/network/claims";
 
 const U = "legacy";
 
@@ -112,5 +112,29 @@ describe("applicationRecords", () => {
     expect(recordsBlock(r)).toMatch(/Submitted: none/);
     expect(recordsBlock(otherRole)).toMatch(/Acme: Research Engineer, Retrieval \(status: submitted\)/);
     expect(recordsBlock(otherRole)).toMatch(/Not submitted yet:\n- Acme: Software Engineer, Agent Infrastructure/);
+  });
+});
+
+describe("referralTrail", () => {
+  // The shapes real fills reported (NewsBreak and Pinterest, 2026-10 and 2026-11).
+  it("a form with no referral field says so, and the link counts", () => {
+    const filled = { "First Name": "Mengjia", "Preferred First Name": "(left blank, optional)", "Referral note": "The form has no referred-by field" };
+    expect(referralTrail('{"link":"https://grnh.se/x"}', JSON.stringify(filled))).toBe(
+      "opened through the referral link they gave you; Referral note: The form has no referred-by field"
+    );
+    expect(referralTrail("{}", '{"Referral":"Form has no referral field; Feng Jiang referral not recorded"}')).toMatch(/no referral field/);
+  });
+
+  it("carries a referrer named on the form, under whatever the question was called", () => {
+    expect(referralTrail("{}", '{"How did you first hear":"Current Pinterest Employee (referral: Feng Jiang)"}')).toBe(
+      "How did you first hear: Current Pinterest Employee (referral: Feng Jiang)"
+    );
+    expect(referralTrail("{}", '{"Source":"Employee referral"}')).toBe("Source: Employee referral");
+  });
+
+  it("nothing on record, nothing to say; unreadable records don't throw", () => {
+    expect(referralTrail("{}", '{"Preferred office":"San Francisco","Email":"a@b.co"}')).toBeNull();
+    expect(referralTrail(null, null)).toBeNull();
+    expect(referralTrail("not json", "null")).toBeNull();
   });
 });

@@ -233,11 +233,18 @@ describe("telling the referrer it's in", () => {
     expect((await followUpAfterHarvest(db, { userId: U, backend: b, profile, outreachId: jane })).drafted).toBe(false);
     expect(referralChecklist(db, U, () => Date.now() + 30 * DAY).map((x) => x.outreachId)).not.toContain(jane);
 
-    db.prepare("UPDATE applications SET status = 'submitted', submitted_at = datetime('now') WHERE job_id = ?").run(job);
+    db.prepare("UPDATE applications SET status = 'submitted', submitted_at = datetime('now'), filled_fields = ? WHERE job_id = ?").run(
+      JSON.stringify({ Referral: "Form has no referral field; Jane referral not recorded" }),
+      job
+    );
     expect(referralChecklist(db, U, () => Date.now() + 30 * DAY).map((x) => x.outreachId)).toContain(jane);
     const r = await followUpAfterHarvest(db, { userId: U, backend: b, profile, outreachId: jane });
     expect(r.followup).toMatchObject({ kind: "applied", status: "draft" });
     expect(b.followupCalls.at(-1)!.prompt).toContain("Applications submitted:\n- Google: SWE New Grad");
+    // The message may only say how the referral went in as the application shows it.
+    expect(b.followupCalls.at(-1)!.prompt).toContain("Referral on this application: Referral: Form has no referral field");
+    expect(b.followupCalls.at(-1)!.system).toMatch(/never say you listed them/);
+    expect(b.followupCalls.at(-1)!.system).not.toMatch(/and that you listed them as your referrer/);
     // Ann never accepted: her thread is referral_won too, but she is not the referrer.
     expect((await followUpAfterHarvest(db, { userId: U, backend: b, profile, outreachId: ann })).drafted).toBe(false);
 

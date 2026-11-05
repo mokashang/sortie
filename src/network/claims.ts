@@ -144,3 +144,22 @@ export function unsupportedClaims(text: string, records: ApplicationRecords): st
     return submitted.length === 0 || !saysWhich || notSubmitted.some((j) => namesRole(s, j.title, true));
   });
 }
+
+// What an application's own record says about how the referral reached it: the link it was opened
+// through, and whatever was filled or noted about it (free text; the drafting model reads it).
+// Many forms have nowhere to name a referrer: NewsBreak's and two of Pinterest's three didn't, and
+// "I listed you as my referrer" was then untrue.
+export function referralTrail(referralInfo: string | null, filledFields: string | null): string | null {
+  const parse = (s: string | null): Record<string, unknown> => {
+    try {
+      return (s && JSON.parse(s)) || {};
+    } catch {
+      return {};
+    }
+  };
+  const notes = Object.entries(parse(filledFields))
+    .filter(([field, value]) => /\brefer|\bhear\b|applied via/i.test(field) || /\breferr(al|ed|er)\b/i.test(String(value)))
+    .map(([field, value]) => `${field}: ${String(value).slice(0, 200)}`);
+  const parts = [...(parse(referralInfo).link ? ["opened through the referral link they gave you"] : []), ...notes];
+  return parts.length > 0 ? parts.join("; ") : null;
+}
