@@ -190,6 +190,10 @@ the card automatically continues the work — there is no dead end:
   that session is gone the form is filled afresh); or skips. A push notification goes out, at most
   one per half hour. These cards count as filled for the plan, and 10 or more of them pause the
   relay like unconfirmed applications do, until they are down to 5.
+- **Consents** (2026-11-06) — with the standard answer `application_consents_policy` on an account's
+  profile, the assistant accepts what an application requires for that account, arbitration
+  agreements and a typed e-signature included, and lists each one in the filled fields instead of
+  raising a card. Optional boxes stay unticked. Deleting that answer brings the cards back.
 - **Tab closed** (2026-11-05) — a "Do it here" or "Click Submit" card whose tab is gone. Tabs close
   after waiting for an hour, and the assistant can also have left. The card says so, even though
   its own text may still mention "the open tab". "Reopen" has the assistant fill the form again and

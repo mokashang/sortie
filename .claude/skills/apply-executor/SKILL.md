@@ -518,6 +518,15 @@ wall most often — the card says only what the user has to do: no "is it worth 
 ranking against other cards, no "skip without guilt", and never a preference question hung on a
 `login` / `manual` card.
 
+**Consents and signatures are the user's standing answer** (2026-11-06). When
+`answerPack.custom.application_consents_policy` is present, follow it: accept what the application
+requires (privacy policies, terms, data-processing notices, truthful-information certifications,
+background-check authorizations, at-will statements, arbitration agreements) and type
+`contact.full_name` as the e-signature, with no card and no stop. List each one in `filledFields`.
+Leave optional boxes unticked (marketing, text messages, using the data to improve tools). It does
+not cover signing in, creating accounts, passwords, verification codes, payments or ID documents.
+With no such key in the pack, report an `action` card as before.
+
 Not items at all (the App handles these without a card): a job the user's own standing answers
 rule out (`answerPack.custom` says Summer 2027 internships are skipped, senior 5+-year roles are
 skipped, …) is `{ "status": "needs_manual", "reason": "<why>", "archive": true }` — archived, no
