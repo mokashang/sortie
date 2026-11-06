@@ -1,8 +1,9 @@
 import type { OverviewCounts } from "@/app/lib/overview-types";
 
 // The 投递 page's four inboxes sit side by side as tabs (?tab=…): 待处理 / 待确认 / 内推进行中 /
-// 今日已提交. Pure, so the server (which tab opens first) and the client (labels, counts) agree.
-export const APPLY_TABS = ["todo", "confirm", "referrals", "submitted"] as const;
+// 今日已提交, then the 天梯 list, which is a place to work from, not an inbox. Pure, so the server (which tab opens first) and the client (labels, counts) agree.
+export const APPLY_TABS = ["todo", "confirm", "referrals", "submitted", "ranking"] as const;
+const INBOX_TABS = ["todo", "confirm", "referrals", "submitted"] as const;
 export type ApplyTab = (typeof APPLY_TABS)[number];
 export type ApplyTabCounts = Record<ApplyTab, number>;
 
@@ -12,11 +13,11 @@ export function isApplyTab(v: unknown): v is ApplyTab {
 
 // The number on each tab: the same figures the shell badge and the 今日 ledger already show.
 export function applyTabCounts(c: OverviewCounts): ApplyTabCounts {
-  return { todo: c.needsInfo + c.planAlerts, confirm: c.awaitingConfirm, referrals: c.referralInFlight, submitted: c.submittedToday };
+  return { todo: c.needsInfo + c.planAlerts, confirm: c.awaitingConfirm, referrals: c.referralInFlight, submitted: c.submittedToday, ranking: c.rankingLeft };
 }
 
 // Where the page opens without ?tab=: the first inbox with something in it, in the order the
 // user works through them. An empty day lands on 待处理, whose empty state says what would appear.
 export function defaultApplyTab(n: ApplyTabCounts): ApplyTab {
-  return APPLY_TABS.find((t) => n[t] > 0) ?? "todo";
+  return INBOX_TABS.find((t) => n[t] > 0) ?? "todo";
 }

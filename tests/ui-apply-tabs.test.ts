@@ -15,10 +15,11 @@ const zero: OverviewCounts = {
   queueMatched: 0,
   submittedToday: 0,
   submittedThisWeek: 0,
+  rankingLeft: 0,
 };
 
 describe("apply page tabs", () => {
-  it("accepts only the four tab keys", () => {
+  it("accepts only the tab keys", () => {
     for (const t of APPLY_TABS) expect(isApplyTab(t)).toBe(true);
     expect(isApplyTab("plan")).toBe(false);
     expect(isApplyTab(undefined)).toBe(false);
@@ -31,6 +32,7 @@ describe("apply page tabs", () => {
       confirm: 5,
       referrals: 3,
       submitted: 1,
+      ranking: 0,
     });
   });
 
@@ -40,6 +42,11 @@ describe("apply page tabs", () => {
     expect(defaultApplyTab(applyTabCounts({ ...zero, referralInFlight: 4 }))).toBe("referrals");
     expect(defaultApplyTab(applyTabCounts({ ...zero, submittedToday: 2 }))).toBe("submitted");
     expect(defaultApplyTab(applyTabCounts({ ...zero, needsInfo: 1, awaitingConfirm: 9 }))).toBe("todo");
+  });
+
+  it("never opens on the ranked list: it is not an inbox", () => {
+    expect(defaultApplyTab(applyTabCounts({ ...zero, rankingLeft: 500 }))).toBe("todo");
+    expect(isApplyTab("ranking")).toBe(true);
   });
 
   it("counts a plan that stopped short as a to-do (src/apply/plan-alerts.ts)", () => {

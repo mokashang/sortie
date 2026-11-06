@@ -16,6 +16,8 @@ export interface OverviewCounts {
   queueMatched: number;
   submittedToday: number;
   submittedThisWeek: number;
+  // 天梯清单 (src/apply/ranking.ts): jobs nothing has happened to yet.
+  rankingLeft: number;
 }
 
 export interface Overview {

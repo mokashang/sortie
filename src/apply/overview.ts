@@ -1,4 +1,5 @@
 import type { DB } from "@/lib/db";
+import { rankedLeft } from "@/apply/ranking";
 import { executorStatus } from "@/executor/runner";
 import { pendingInfo } from "@/apply/info";
 import { planAlerts } from "@/apply/plan-alerts";
@@ -68,6 +69,7 @@ export function overview(db: DB, userId: string): Overview {
     queueMatched: queueMatchedCount(db, userId),
     submittedToday: todaySubmitted(db, userId).length,
     submittedThisWeek: weekly(db, userId).thisWeek.submittedApplications,
+    rankingLeft: rankedLeft(db, userId),
   };
 
   const d = new Date();

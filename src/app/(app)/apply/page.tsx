@@ -29,13 +29,14 @@ export default async function ApplyPage({ searchParams }: { searchParams: Promis
   const counts = applyTabCounts(overview(db, user.id).counts);
   const tab = isApplyTab(sp.tab) ? sp.tab : defaultApplyTab(counts);
   const submittedRows = todaySubmitted(db, user.id);
+  const hasRanking = !!db.prepare("SELECT 1 FROM ranked_jobs WHERE user_id = ? LIMIT 1").get(user.id);
 
   return (
     <>
       <PageHeader title={m.apply.title} subtitle={m.apply.subtitle} />
       <AssistantCard />
       <PlanCard />
-      <ApplyTabs tab={tab} counts={counts} submitted={<TodaySubmitted rows={submittedRows} />} />
+      <ApplyTabs tab={tab} counts={counts} hasRanking={hasRanking} submitted={<TodaySubmitted rows={submittedRows} />} />
     </>
   );
 }

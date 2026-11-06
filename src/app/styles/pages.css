@@ -1360,3 +1360,84 @@ td.company {
 .setup-step.is-done .strong {
   color: var(--sub);
 }
+
+/* 天梯 (apply/ranking-board.tsx) */
+.rank-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+
+.rank-tools .input {
+  max-width: 220px;
+}
+
+.rank-row {
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rank-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.rank-no {
+  min-width: 34px;
+  color: var(--ink-3);
+}
+
+.rank-jobs {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 42px;
+}
+
+.rank-job {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 3px 0;
+  min-width: 0;
+}
+
+.rank-job a {
+  color: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank-score {
+  min-width: 22px;
+  color: var(--ink-3);
+}
+
+.rank-bar {
+  position: sticky;
+  bottom: var(--s-3);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper, var(--bg));
+}
+
+@media (max-width: 880px) {
+  .rank-jobs {
+    padding-left: 0;
+  }
+
+  .rank-bar {
+    bottom: 76px;
+  }
+}
+

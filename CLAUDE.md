@@ -3,6 +3,8 @@
 Mengjia Shang(USC M.S. ECE 2027/05,F-1)的 2026 秋招求职作战系统。本文件是给新会话的**完整上下文**;更细的历史在 `docs/superpowers/specs/2026-08-30-jobseeker-os-design.md`(总设计)和 `docs/superpowers/plans/`(Plan 1–5 逐步实现记录)。自动记忆(`~/.claude/projects/-Users-moka-Documents-job-seeker/memory/`)也会自动加载,与本文件互补。
 
 ## 0. 一句话状态
+**2026-11-06 天梯清单进了 App**(用户:「把天梯清单直接放到 sortie 里,我在 sortie 里操作投递」;此前它只是一份 md 和任务 #670 的 options):表 `ranked_companies` / `ranked_jobs`(`CREATE TABLE IF NOT EXISTS`,无 schema 版本变化,只存顺序),`src/apply/ranking.ts`(`rankingBoard`、`rankedState` 按 applications 行算状态),投递页「天梯」标签 `(app)/apply/ranking-board.tsx`,`GET /api/ranking`,`POST /api/ranking/start`。操作:「从这里往下投」/「从第 N 名接着投」= `campaignOptions` 接力,同时只跑一条(409 `ranking_running`);「投选中的」= 定向任务,卡片先交回,登录墙留给待处理;暂停 = `/api/executor/stop`。标签数 = 还没轮到的份数,只有账号有清单才显示,不参与默认打开哪个标签。
+
 **2026-11-06 同意与签名由用户授权给助手**(用户以为规则里写了,其实提示词、SKILL、本文件都没有这一条,所以会话各判各的:OpenAI 仲裁协议勾过,Tesla / Apple 又出卡。用户被告知仲裁协议和签名的法律效力后,明确选了「全部包括」):主账号的标准答案 `application_consents_policy` 写着这个决定,经 `answerPack.custom` 只到这个账号的会话;`buildAttendedPrompt` 与 apply-executor SKILL 写明有这个键就照做(隐私政策、条款、数据处理、信息真实声明、背景调查、at-will、仲裁协议,电子签名填 `contact.full_name`,都写进 filledFields,可选项不勾);登录、建账号、密码、验证码、付款、证件不在其内。在档案「标准答案」里删掉这一项就回到出卡。这是账号级的决定,别写成对所有账号生效的规则。
 
 **2026-11-05 标签页关了的卡如实写明**(BNSF 签字卡、OpenAI 三张仲裁协议卡、Old Mission 点提交卡:等满 1 小时标签页就被 `src/executor/tabs.ts` 关了,卡上还写「在打开的申请页」,勾「完成了」也没有页面可操作):`needsOpenTab`(`src/apply/info.ts`,action / submit 项,且没有 login / manual)的卡,`GET /api/apply/pending` 带 `tabOpen`(`askerCanContinue`),为 false 时前端整张卡换成「标签页已关」:「重新打开」(action 走 `unpark`,submit 走 `retry-submit`,都是定向重填,再出新卡)/「我自己投完了」/「跳过」。text / file 卡不受影响:答案存下来,表单怎么回来都能填。新卡的标签页同样只留 1 小时。

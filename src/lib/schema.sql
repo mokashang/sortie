@@ -380,3 +380,23 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_experiences_updated AFTER UPDATE ON experiences
 BEGIN UPDATE experiences SET updated_at = datetime('now') WHERE id = NEW.id; END;
+
+-- 天梯清单 (2026-11-06, src/apply/ranking.ts): companies in rank order and the jobs picked at each.
+-- Only the order lives here; what became of a job is its applications row.
+CREATE TABLE IF NOT EXISTS ranked_companies (
+  user_id     TEXT NOT NULL,
+  rank        INTEGER NOT NULL,
+  company     TEXT NOT NULL,
+  value_label TEXT,
+  note        TEXT,
+  PRIMARY KEY (user_id, rank)
+);
+
+CREATE TABLE IF NOT EXISTS ranked_jobs (
+  user_id  TEXT NOT NULL,
+  job_id   INTEGER NOT NULL REFERENCES jobs(id),
+  rank     INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  score    INTEGER,
+  PRIMARY KEY (user_id, job_id)
+);
