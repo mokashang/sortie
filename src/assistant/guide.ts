@@ -192,7 +192,9 @@ the card automatically continues the work — there is no dead end:
   relay like unconfirmed applications do, until they are down to 5.
 - **Ranking tab** (2026-11-06) — on Apply, for an account with a ranked list: companies by market cap and
   valuation, what became of each job, filters, "Apply from here down" (a relay of tasks, one at a time, Pause
-  stops it) and "Apply to N selected" (hands cards back and queues those jobs next; sign-ins stay under To-do).
+  stops it) and "Apply to N selected" (hands cards back and queues those jobs next). A waiting job has its own
+  buttons: "Sign in" opens its sign-in page in the job-search Chrome, "Signed in, retry" releases the site and
+  queues the list's jobs on it; "Open" jumps to its card, "Retry" hands it back, "Review" opens To confirm.
 - **Consents** (2026-11-06) — with the standard answer application_consents_policy on an account's
   profile, the assistant accepts what an application requires for that account, arbitration
   agreements and a typed e-signature included, and lists each one in the filled fields instead of

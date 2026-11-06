@@ -124,7 +124,7 @@ export function ConfirmCards({ compact = false }: { compact?: boolean }) {
         const approved = r.decision === "approved";
         const entries = Object.entries(r.filledFields ?? {});
         return (
-          <Card key={r.jobId} tone={approved ? "good" : "default"} className="confirm-card">
+          <Card key={r.jobId} id={`card-${r.jobId}`} tone={approved ? "good" : "default"} className="confirm-card">
             <div className="confirm-head">
               <div className="grow">
                 <div className="confirm-title">

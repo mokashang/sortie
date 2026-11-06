@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { openDb, DB } from "@/lib/db";
-import { RankingBusyError, rankedState, rankingBoard, startRankedFrom, startRankedPicked } from "@/apply/ranking";
+import { RankingBusyError, rankedLoginUrl, rankedState, rankingBoard, retryRankedLogin, startRankedFrom, startRankedPicked } from "@/apply/ranking";
 import { filterCompanies, filterCounts, pickable } from "@/app/lib/ranking";
 import { seedOwner } from "./helpers";
 
@@ -42,6 +42,8 @@ describe("rankedState", () => {
     [{ ...row, status: "submitted", submitted_at: "2026-11-05" }, "submitted"],
     [{ ...row, status: "archived" }, "archived"],
     [{ ...row, status: "prepared" }, "active"],
+    [{ ...row, status: "awaiting_confirm" }, "confirm"],
+    [{ ...row, status: "awaiting_confirm", confirm_decision: "approved" }, "active"],
     [{ ...row, needs_manual_reason: "retry: error: tab froze" }, "active"],
     [{ ...row, needs_manual_reason: "x", pending_questions: '[{"kind":"login","key":"l","label":"l"}]' }, "login"],
     [{ ...row, needs_manual_reason: "submit blocked: x", pending_questions: '[{"kind":"submit","key":"s","label":"s"}]' }, "submit"],
@@ -108,11 +110,44 @@ describe("投选中的", () => {
   });
 });
 
+describe("登好了,重试", () => {
+  it("brings the site's wall down and queues only the list's jobs", () => {
+    const { db, wall } = list();
+    const other = db
+      .prepare("INSERT INTO jobs (fingerprint, company, title, apply_url, source) VALUES (?,?,?,?,?)")
+      .run("fp-off-list", "Globex", "Off list", "https://globex.example/9", "manual").lastInsertRowid as number;
+    db.prepare("INSERT INTO applications (job_id, status, pending_questions, needs_manual_reason) VALUES (?,?,?,?)").run(
+      other,
+      "matched",
+      JSON.stringify([{ kind: "login", key: "login", label: "Log in", host: "globex.example" }]),
+      "Log in"
+    );
+    const r = retryRankedLogin(db, U, wall);
+    expect(r).toMatchObject({ released: 2, queued: 1 });
+    const o = JSON.parse((db.prepare("SELECT options FROM executor_runs WHERE id = ?").get(r.runId) as { options: string }).options);
+    expect(o.jobIds).toEqual([wall]);
+    expect(db.prepare("SELECT status, pending_questions, needs_manual_reason FROM applications WHERE job_id = ?").get(other)).toEqual({ status: "matched", pending_questions: null, needs_manual_reason: null });
+  });
+
+  it("a job with no wall does nothing", () => {
+    const { db, todo } = list();
+    expect(retryRankedLogin(db, U, todo)).toEqual({ released: 0, queued: 0, runId: null });
+  });
+
+  it("the sign-in page comes from the job's own login item", () => {
+    const { db, wall, todo } = list();
+    db.prepare("UPDATE applications SET pending_questions = ? WHERE job_id = ?").run(JSON.stringify([{ kind: "login", key: "login", label: "Log in", host: "globex.example", url: "https://globex.example/signin" }]), wall);
+    expect(rankedLoginUrl(db, U, wall)).toBe("https://globex.example/signin");
+    expect(rankedLoginUrl(db, U, todo)).toBeNull();
+    expect(rankingBoard(db, U).companies[1].jobs[0].loginHost).toBe("globex.example");
+  });
+});
+
 describe("the tab's filters", () => {
   const companies = [
-    { rank: 1, company: "Acme", value: "$1T", note: null, jobs: [{ jobId: 1, title: "A", score: 80, state: "submitted" as const, detail: null }, { jobId: 2, title: "B", score: 80, state: "login" as const, detail: null }] },
+    { rank: 1, company: "Acme", value: "$1T", note: null, jobs: [{ jobId: 1, title: "A", score: 80, state: "submitted" as const, detail: null, loginHost: null }, { jobId: 2, title: "B", score: 80, state: "login" as const, detail: null, loginHost: null }] },
     { rank: 2, company: "Globex", value: null, note: "skipped", jobs: [] },
-    { rank: 3, company: "Initech", value: null, note: null, jobs: [{ jobId: 3, title: "C", score: 70, state: "todo" as const, detail: null }] },
+    { rank: 3, company: "Initech", value: null, note: null, jobs: [{ jobId: 3, title: "C", score: 70, state: "todo" as const, detail: null, loginHost: null }] },
   ];
 
   it("keeps only the matching jobs, and note rows under 全部", () => {
@@ -126,7 +161,8 @@ describe("the tab's filters", () => {
     expect(filterCounts(companies)).toEqual({ all: 3, todo: 1, you: 1, submitted: 1, archived: 0 });
   });
 
-  it("a login wall can't be picked, a card can", () => {
+  it("a login wall or an unconfirmed fill can't be picked, a card can", () => {
+    expect(pickable("confirm")).toBe(false);
     expect(pickable("login")).toBe(false);
     expect(pickable("action")).toBe(true);
     expect(pickable("todo")).toBe(true);

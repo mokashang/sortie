@@ -509,7 +509,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       const t = m.apply.todo.tabClosed;
       const wasSubmit = row.questions.some((q) => kindOf(q) === "submit");
       return [
-        <Card key={row.jobId} tone="warn" className="todo-card">
+        <Card key={row.jobId} id={`card-${row.jobId}`} tone="warn" className="todo-card">
           <Head row={row} kindLabel={labelOf(m.labels.infoKind, wasSubmit ? "submit" : "action")} waiting={false} stateChip={<Chip tone="neutral">{t.chip}</Chip>} />
           <p className="small mt-3">{wasSubmit ? t.submitInstructions : t.instructions}</p>
           <div className="col gap-2 mt-3">
@@ -538,7 +538,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       const item = row.questions.find((q) => kindOf(q) === "submit")!;
       const t = m.apply.todo.submit;
       return [
-        <Card key={row.jobId} tone="warn" className="todo-card">
+        <Card key={row.jobId} id={`card-${row.jobId}`} tone="warn" className="todo-card">
           <Head row={row} kindLabel={labelOf(m.labels.infoKind, "submit")} waiting={false} stateChip={<Chip tone="good">{t.chip}</Chip>} />
           <div className="strong mt-3">{t.title}</div>
           {item.hint ? <p className="muted small todo-hint mt-1">{item.hint}</p> : null}
@@ -563,7 +563,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
       const url = first.url ?? row.applyUrl ?? "";
       const retryPrimary = first.key === "error" || first.key === "rejected" || first.key === "no_resume";
       return [
-        <Card key={row.jobId} tone="warn" className="todo-card">
+        <Card key={row.jobId} id={`card-${row.jobId}`} tone="warn" className="todo-card">
           <Head row={row} kindLabel={labelOf(m.labels.infoKind, "manual")} waiting={applyRunning} />
           <div className="col gap-2 mt-3">
             {items.map((q) => (
@@ -599,7 +599,7 @@ export function InfoCards({ compact = false }: { compact?: boolean }) {
     const kinds = new Set(answerable.map(kindOf));
     const kindLabel = kinds.has("file") ? labelOf(m.labels.infoKind, "file") : kinds.has("action") ? labelOf(m.labels.infoKind, "action") : labelOf(m.labels.infoKind, "text");
     return [
-      <Card key={row.jobId} tone="warn" className="todo-card">
+      <Card key={row.jobId} id={`card-${row.jobId}`} tone="warn" className="todo-card">
         <Head row={row} kindLabel={kindLabel} waiting={applyRunning} />
 
         <div className="col gap-3 mt-4">

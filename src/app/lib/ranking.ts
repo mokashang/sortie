@@ -4,13 +4,16 @@ import type { RankedCompany, RankedState } from "@/apply/ranking";
 export const RANKING_FILTERS = ["all", "todo", "you", "submitted", "archived"] as const;
 export type RankingFilter = (typeof RANKING_FILTERS)[number];
 
-const NEEDS_USER: ReadonlySet<RankedState> = new Set<RankedState>(["login", "submit", "action", "text", "manual"]);
+const NEEDS_USER: ReadonlySet<RankedState> = new Set<RankedState>(["login", "confirm", "submit", "action", "text", "manual"]);
 
 export const needsUser = (s: RankedState): boolean => NEEDS_USER.has(s);
 
 // What 投选中的 can do something with: a job not started, or a card it hands back. A login wall waits
 // for the user to sign in, and the rest are done or in hand.
-export const pickable = (s: RankedState): boolean => s === "todo" || (needsUser(s) && s !== "login");
+export const pickable = (s: RankedState): boolean => s === "todo" || (needsUser(s) && s !== "login" && s !== "confirm");
+
+// A card on the 待处理 tab that 重试 can hand back.
+export const onTodoCard = (s: RankedState): boolean => s === "submit" || s === "action" || s === "text" || s === "manual";
 
 function matches(s: RankedState, f: RankingFilter): boolean {
   if (f === "all") return true;

@@ -2,6 +2,7 @@ import { DB, logEvent } from "@/lib/db";
 import { AUTO_RETRY_PREFIX, InfoQuestion, infoKind, unpark } from "@/apply/queue";
 import { APPLY_CHUNK_SIZE, campaignLeft, campaignOptions } from "@/apply/continue";
 import { queueTargetedRun } from "@/apply/followup";
+import { resolveLogins } from "@/apply/info";
 import { retryBlockedSubmit } from "@/apply/submit-blocked";
 import { lastRunChannel, startExecutor } from "@/executor/runner";
 import { applyChannelFor } from "@/executor/channel";
@@ -12,7 +13,7 @@ import { applyChannelFor } from "@/executor/channel";
 // 投递 page's 天梯 tab shows every company with what became of each job. What a job's state means
 // comes straight from its application row; the list itself stores only the order.
 
-export const RANKED_STATES = ["todo", "active", "login", "submit", "action", "text", "manual", "submitted", "archived"] as const;
+export const RANKED_STATES = ["todo", "active", "login", "confirm", "submit", "action", "text", "manual", "submitted", "archived"] as const;
 export type RankedState = (typeof RANKED_STATES)[number];
 
 export interface RankedJob {
@@ -22,6 +23,8 @@ export interface RankedJob {
   state: RankedState;
   // Why it was archived, or what the card is about. Written by the assistant: shown, not translated.
   detail: string | null;
+  // The site to sign in to, on a job behind a login wall.
+  loginHost: string | null;
 }
 
 export interface RankedCompany {
@@ -52,6 +55,7 @@ interface StateFields {
   submitted_at: string | null;
   pending_questions: string | null;
   needs_manual_reason: string | null;
+  confirm_decision?: string | null;
 }
 
 // Pure (tests/apply-ranking.test.ts). Order matters: a submitted row can still carry an old reason.
@@ -71,8 +75,18 @@ export function rankedState(a: StateFields): RankedState {
   if (kinds.has("manual") || (a.needs_manual_reason && kinds.size === 0)) return "manual";
   if (kinds.has("action")) return "action";
   if (kinds.size > 0) return "text";
+  if (a.status === "awaiting_confirm" && a.confirm_decision !== "approved") return "confirm";
   if (a.status === "prepared" || a.status === "awaiting_confirm" || a.status === "needs_info") return "active";
   return "todo";
+}
+
+function loginItem(pending: string | null): InfoQuestion | null {
+  try {
+    const items = pending ? (JSON.parse(pending) as InfoQuestion[]) : [];
+    return items.find((q) => infoKind(q) === "login") ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function cardLabel(pending: string | null): string | null {
@@ -94,7 +108,7 @@ interface JobRow extends StateFields {
 function jobRows(db: DB, userId: string): JobRow[] {
   return db
     .prepare(
-      `SELECT r.rank, r.job_id, r.score, j.title, a.status, a.submitted_at, a.pending_questions, a.needs_manual_reason
+      `SELECT r.rank, r.job_id, r.score, j.title, a.status, a.submitted_at, a.pending_questions, a.needs_manual_reason, a.confirm_decision
        FROM ranked_jobs r JOIN jobs j ON j.id = r.job_id
        LEFT JOIN applications a ON a.job_id = r.job_id AND a.user_id = r.user_id
        WHERE r.user_id = ? ORDER BY r.rank, r.position`
@@ -135,6 +149,7 @@ export function rankingBoard(db: DB, userId: string): RankingBoard {
       score: r.score,
       state,
       detail: state === "archived" ? r.needs_manual_reason : cardLabel(r.pending_questions),
+      loginHost: state === "login" ? (loginItem(r.pending_questions)?.host ?? null) : null,
     });
   }
   const next = companies.find((c) => c.jobs.some((j) => j.state === "todo"));
@@ -193,4 +208,30 @@ export function startRankedPicked(db: DB, userId: string, jobIds: number[]): Sta
   }
   const follow = started.length > 0 ? queueTargetedRun(db, userId, started, "direct") : null;
   return { runId: follow?.runId ?? null, started, skipped };
+}
+
+// The sign-in page on this job's own login item. It comes from the account's data, never the request.
+export function rankedLoginUrl(db: DB, userId: string, jobId: number): string | null {
+  const row = db.prepare("SELECT pending_questions FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as { pending_questions: string | null } | undefined;
+  return loginItem(row?.pending_questions ?? null)?.url ?? null;
+}
+
+export interface LoginRetryResult {
+  // Every job that was waiting behind this site's wall.
+  released: number;
+  // The ones on the list, which go to the assistant now. The rest are back in the normal queue.
+  queued: number;
+  runId: number | null;
+}
+
+// 登好了,重试: the user signed in, so the site's wall comes down, as with 「我登好了」. Only the list's
+// jobs are queued here: the user is working the list, and a site can hold jobs that are not on it.
+export function retryRankedLogin(db: DB, userId: string, jobId: number): LoginRetryResult {
+  const row = db.prepare("SELECT pending_questions FROM applications WHERE user_id = ? AND job_id = ?").get(userId, jobId) as { pending_questions: string | null } | undefined;
+  const host = loginItem(row?.pending_questions ?? null)?.host;
+  if (!host) return { released: 0, queued: 0, runId: null };
+  const cleared = new Set(resolveLogins(db, userId, [host]).jobIds);
+  const onList = jobRows(db, userId).map((j) => j.job_id).filter((id) => cleared.has(id));
+  const follow = onList.length > 0 ? queueTargetedRun(db, userId, onList, "direct") : null;
+  return { released: cleared.size, queued: onList.length, runId: follow?.runId ?? null };
 }

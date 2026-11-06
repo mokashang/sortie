@@ -2,12 +2,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pause, Play } from "lucide-react";
-import { Button, Chip, ConfirmDialog, EmptyState, Input, LinkButton, Segmented, Skeleton, useToast } from "@/app/components/ui";
+import { Button, Chip, ConfirmDialog, EmptyState, Input, Segmented, Skeleton, useToast } from "@/app/components/ui";
 import { errorMessage, getJson, postJson } from "@/app/lib/api";
-import { RANKING_FILTERS, filterCompanies, filterCounts, needsUser, pickable, type RankingFilter } from "@/app/lib/ranking";
+import { RANKING_FILTERS, filterCompanies, filterCounts, needsUser, onTodoCard, pickable, type RankingFilter } from "@/app/lib/ranking";
 import { useOverview } from "@/app/components/overview-context";
 import { useMessages } from "@/i18n/client";
-import type { RankedCompany, RankedState, RankingBoard as Board } from "@/apply/ranking";
+import type { RankedCompany, RankedJob, RankedState, RankingBoard as Board } from "@/apply/ranking";
 
 const PAGE = 60;
 
@@ -20,7 +20,7 @@ function tone(s: RankedState): "good" | "warn" | "accent" | "neutral" {
 // 天梯: the ranked list in the App. Companies in rank order, what became of each job, and the two
 // ways to move it along: work down from a company (a relay of segments, one task at a time), or
 // queue the picked jobs next. The list's task shows here too, with 暂停.
-export function RankingBoard({ active }: { active: boolean }) {
+export function RankingBoard({ active, goTo }: { active: boolean; goTo: (tab: "todo" | "confirm", jobId: number) => void }) {
   const m = useMessages();
   const t = m.apply.ranking;
   const { toast } = useToast();
@@ -104,6 +104,46 @@ export function RankingBoard({ active }: { active: boolean }) {
     }
   }
 
+  // Opens this job's sign-in page as a tab of the job-search Chrome: that is where the assistant
+  // works, so a sign-in anywhere else would not help it.
+  async function openLogin(j: RankedJob) {
+    setBusy(true);
+    try {
+      await postJson("/api/ranking/login-open", { jobId: j.jobId });
+      toast({ title: t.loginOpened(j.loginHost ?? ""), description: t.loginOpenedDescription, tone: "good" });
+    } catch (e) {
+      toast({ title: t.loginOpenFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loginDone(j: RankedJob) {
+    setBusy(true);
+    try {
+      const r = await postJson<{ queued: number }>("/api/ranking/login-done", { jobId: j.jobId });
+      toast({ title: t.loginRetried(r.queued), tone: "good" });
+      await after();
+    } catch (e) {
+      toast({ title: t.startFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retry(j: RankedJob) {
+    setBusy(true);
+    try {
+      await postJson("/api/ranking/start", { jobIds: [j.jobId] });
+      toast({ title: t.retried, tone: "good" });
+      await after();
+    } catch (e) {
+      toast({ title: t.startFailed, description: errorMessage(e), tone: "danger" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function toggle(id: number) {
     setPicked((prev) => {
       const next = new Set(prev);
@@ -148,14 +188,6 @@ export function RankingBoard({ active }: { active: boolean }) {
           options={RANKING_FILTERS.map((f) => ({ value: f, label: t.filters[f], count: counts[f] }))}
         />
       </div>
-      {board.counts.login > 0 && (filter === "all" || filter === "you") ? (
-        <p className="muted small mb-2">
-          {t.loginHint(board.counts.login)}{" "}
-          <LinkButton href="/apply?tab=todo" size="sm" variant="ghost">
-            {t.goLogin}
-          </LinkButton>
-        </p>
-      ) : null}
 
       {companies.length === 0 ? <EmptyState compact title={t.emptyTitle} description={t.emptyDescription} /> : null}
       {companies.slice(0, shown).map((c) => (
@@ -180,6 +212,31 @@ export function RankingBoard({ active }: { active: boolean }) {
                   <span className="mono rank-score">{j.score ?? ""}</span>
                   <Link href={`/queue?job=${j.jobId}`}>{j.title}</Link>
                   <span className="grow" />
+                  {j.state === "login" ? (
+                    <>
+                      <Button size="sm" variant="primary" onClick={() => openLogin(j)} disabled={busy}>
+                        {t.goLogin}
+                      </Button>
+                      <Button size="sm" onClick={() => loginDone(j)} disabled={busy}>
+                        {t.loginDone}
+                      </Button>
+                    </>
+                  ) : null}
+                  {onTodoCard(j.state) ? (
+                    <>
+                      <Button size="sm" variant="primary" onClick={() => goTo("todo", j.jobId)}>
+                        {t.handle}
+                      </Button>
+                      <Button size="sm" onClick={() => retry(j)} disabled={busy}>
+                        {t.retry}
+                      </Button>
+                    </>
+                  ) : null}
+                  {j.state === "confirm" ? (
+                    <Button size="sm" variant="primary" onClick={() => goTo("confirm", j.jobId)}>
+                      {t.goConfirm}
+                    </Button>
+                  ) : null}
                   <Chip tone={tone(j.state)}>{t.states[j.state]}</Chip>
                 </li>
               ))}

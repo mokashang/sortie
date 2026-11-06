@@ -33,6 +33,13 @@ export function ApplyTabs({ tab: initialTab, counts: initialCounts, hasRanking, 
     window.history.replaceState(null, "", `/apply?tab=${key}`);
   }
 
+  // From a row on the 天梯 tab to the card it is waiting on. The panels stay mounted, so the card is
+  // already in the page once its tab shows.
+  function goTo(key: "todo" | "confirm", jobId: number) {
+    select(key);
+    requestAnimationFrame(() => document.getElementById(`card-${jobId}`)?.scrollIntoView({ block: "center" }));
+  }
+
   const labels: Record<ApplyTab, string> = {
     todo: m.apply.todo.sectionTitle,
     confirm: m.apply.confirm.sectionTitle,
@@ -45,7 +52,7 @@ export function ApplyTabs({ tab: initialTab, counts: initialCounts, hasRanking, 
     confirm: <ConfirmCards />,
     referrals: <ReferralBoard />,
     submitted,
-    ranking: <RankingBoard active={tab === "ranking"} />,
+    ranking: <RankingBoard active={tab === "ranking"} goTo={goTo} />,
   };
 
   // An account that can't look for referrals (no Chrome of its own on this server) gets no
