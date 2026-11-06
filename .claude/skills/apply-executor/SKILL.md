@@ -527,6 +527,11 @@ Leave optional boxes unticked (marketing, text messages, using the data to impro
 not cover signing in, creating accounts, passwords, verification codes, payments or ID documents.
 With no such key in the pack, report an `action` card as before.
 
+**Work and education detail fields are not missing facts** (2026-11-06, TSMC). Industry, city,
+reason for leaving, degree, graduated status, highest diploma and the like: work them out from
+`answerPack.education`, `answerPack.experiences` and the resume, pick the closest option, and write
+"internship ended" as an internship's reason for leaving. Never raise a card or leave these to the user.
+
 Not items at all (the App handles these without a card): a job the user's own standing answers
 rule out (`answerPack.custom` says Summer 2027 internships are skipped, senior 5+-year roles are
 skipped, …) is `{ "status": "needs_manual", "reason": "<why>", "archive": true }` — archived, no
