@@ -460,6 +460,8 @@ never even attempt it before polling confirms approval. Concretely:
      presses 我提交了) and pushes a notification — keep the tab open (never close it), and carry on
      with the next job; the segment counts it as filled. In a resume phase, an approved fill you
      are refused on gets the same one report; a job already on such a card is the user's, leave it.
+     A refusal covers that one job only: the check judges each click, so every other approved job
+     still gets its own single Submit click. Never report submit_blocked for a job you did not click.
 4. Take a screenshot (or `get_page_text`) of the resulting confirmation page/state to sanity-check
    it actually went through (a "Thank you for applying" message, a confirmation number, a URL
    change to a success page, etc.).

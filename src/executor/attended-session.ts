@@ -97,9 +97,10 @@ export const CLOSE_TAB =
 
 // The tail every Submit instruction carries since 2026-10-22: the session's own permission check
 // may refuse the click, and a session left to improvise stopped and waited for someone to allow
-// it in a terminal nobody sees.
+// it in a terminal nobody sees. The check judges each click on its own, so one refusal says nothing
+// about the next job: on 2026-11-04 a session refused once left 11 more approved forms unclicked.
 export const IF_SUBMIT_REFUSED =
-  "If the Submit click is refused by your own permission check (a denied tool call, Real-World Transactions), do not retry it and do not try another way: POST /api/apply/report {jobId, status:'submit_blocked', reason:'<what refused it, ASCII>'} - the App turns it into a card for the user to click Submit in that tab - keep that tab open (the App has it closed if nobody acts within an hour), and carry on.";
+  "If the Submit click is refused by your own permission check (a denied tool call, Real-World Transactions), do not retry it and do not try another way: POST /api/apply/report {jobId, status:'submit_blocked', reason:'<what refused it, ASCII>'} - the App turns it into a card for the user to click Submit in that tab - keep that tab open (the App has it closed if nobody acts within an hour), and carry on. A refusal covers that one job only: every other approved job still gets its own single Submit click, so never report submit_blocked for a job you did not click.";
 
 export function approvedNotice(jobId: number, company: string): string {
   const who = ascii(company);
